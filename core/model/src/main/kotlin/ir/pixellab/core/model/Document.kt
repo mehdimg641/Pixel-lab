@@ -42,6 +42,11 @@ data class Document(
     /** Bottom-most layer first, matching paint order. */
     val layers: List<Layer> = emptyList(),
     val globalLight: GlobalLight = GlobalLight(),
+    /**
+     * Working space, precision and blend transfer curve. Stored per document because a file
+     * imported from Photoshop must keep compositing the way Photoshop composited it.
+     */
+    val color: ColorSettings = ColorSettings(),
     val name: String = "Untitled",
     val schemaVersion: Int = SCHEMA_VERSION,
 ) {
