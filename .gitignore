@@ -11,3 +11,8 @@ local.properties
 *.keystore
 !debug.keystore
 .DS_Store
+
+# Gradle / build
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
