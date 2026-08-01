@@ -73,6 +73,7 @@
 | [PSD-FINDINGS](PSD-FINDINGS.md) | کالبدشکافی PSDهای واقعی و اصلاح اولویت سه‌بعدی |
 | [STYLE-ANATOMY](STYLE-ANATOMY.md) | تحلیل لایه‌به‌لایهٔ نمونه‌های مرجع |
 | [FONT-INVENTORY](FONT-INVENTORY.md) | ۳۱۲ فونت، محورهای متغیر، الزامات مدیر فونت |
+| [METHODS](METHODS.md) | الگوریتم واقعی هر قابلیت، و اینکه چقدرش بدون AI ممکن است |
 | [DEPTH-AUDIT](DEPTH-AUDIT.md) | ممیزی عمق، سطوح کیفیت، معماری ماژولار |
 | [CUTOUT](CUTOUT.md) | جداسازی سوژه در حد فوتوشاپ، از جمله مو |
 | [UI-ARCHITECTURE](UI-ARCHITECTURE.md) | تصمیم‌های رابط کاربری |
