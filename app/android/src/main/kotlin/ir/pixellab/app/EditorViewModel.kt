@@ -319,6 +319,29 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 ((layer as? Layer.Shape)?.geometry as? ShapeGeometry.Path)?.let { layer.id to it }
             }
 
+    // ---- library --------------------------------------------------------------------------------
+
+    /** Applies a saved effect stack to the selection, as one undo step. */
+    fun applyStyle(preset: ir.pixellab.core.editor.StylePreset) = edit {
+        val id = state.selection.primary ?: return@edit
+        applyStyle(id, preset.style)
+    }
+
+    /**
+     * Starts a new document at a template's size.
+     *
+     * History is cleared rather than recorded: an undo straight after starting a new document
+     * should not take the user back into the previous one, which is not the thing they are working
+     * on any more.
+     */
+    fun newFromTemplate(template: ir.pixellab.core.editor.TemplatePreset) {
+        assetStore.clear()
+        select.clear()
+        pen.reset()
+        warp.reset()
+        openDocument(ir.pixellab.core.editor.Library.documentFor(template, template.name))
+    }
+
     // ---- creating layers ---------------------------------------------------------------------
 
     /**
@@ -444,6 +467,18 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun openDocument(document: Document) = edit {
         replaceDocument(document, recordHistory = false)
         fitCanvas()
+    }
+
+    /**
+     * Opens an imported PSD.
+     *
+     * The warnings are surfaced rather than logged: an import that lost a drop shadow is something
+     * the user needs to know before they build on top of it, not after they export.
+     */
+    fun openImported(imported: ir.pixellab.core.codec.ImportedPsd) {
+        openDocument(imported.document)
+        for ((id, image) in imported.assets) assetStore.put(ir.pixellab.core.model.AssetId(id), image)
+        paint.bumpGeneration()
     }
 
     /** Opens a whole project: its document and the assets its masks and images refer to. */

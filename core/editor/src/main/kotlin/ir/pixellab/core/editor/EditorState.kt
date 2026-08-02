@@ -108,6 +108,9 @@ sealed interface SheetContent {
     /** The pen, node editing, variable width, Pathfinder and SVG. */
     data object Vector : SheetContent
 
+    /** Saved styles and starting templates. */
+    data object LibraryPanel : SheetContent
+
     /** The layer this sheet is about, if any — used to keep it out from under the sheet. */
     val subject: LayerId?
         get() = when (this) {

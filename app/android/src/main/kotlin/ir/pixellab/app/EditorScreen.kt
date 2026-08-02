@@ -183,6 +183,7 @@ fun EditorScreen(model: EditorViewModel) {
                         is SheetContent.Adjustments -> AdjustmentSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Retouch -> RetouchSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Vector -> VectorSheetBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.LibraryPanel -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
                         else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text("به‌زودی", color = Ink.TextMuted)
                         }
@@ -310,7 +311,9 @@ private fun Toolbar(state: EditorState, model: EditorViewModel) {
         ToolButton(Tool.PEN, Icons.Filled.Draw, "قلم", state, model) {
             model.act { openSheet(SheetContent.Vector, SheetDetent.FULL) }
         }
-        ToolButton(Tool.SHAPE, Icons.Filled.Star, "شکل", state, model) {}
+        ToolButton(Tool.SHAPE, Icons.Filled.Star, "کتابخانه", state, model) {
+            model.act { openSheet(SheetContent.LibraryPanel, SheetDetent.FULL) }
+        }
         ToolButton(Tool.SELECT, Icons.Filled.Highlight, "انتخاب", state, model) {
             model.act { openSheet(SheetContent.PixelSelection, SheetDetent.PEEK) }
         }

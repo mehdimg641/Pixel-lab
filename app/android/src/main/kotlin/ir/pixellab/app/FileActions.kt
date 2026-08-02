@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.codec.Codecs
+import ir.pixellab.core.model.with
 import ir.pixellab.core.codec.Format
 import ir.pixellab.core.codec.Project
 import ir.pixellab.core.model.Document
@@ -160,6 +161,74 @@ fun OpenDialog(projects: List<java.io.File>, onDismiss: () -> Unit, onOpen: (jav
             }
         },
     )
+}
+
+/**
+ * Imports a PSD.
+ *
+ * The reader recovers the file's structure and the importer decides what it means here; both report
+ * what they could not carry rather than dropping it silently. An import that quietly loses a drop
+ * shadow is one the user only discovers after exporting.
+ */
+suspend fun importPsd(bytes: ByteArray, name: String): Result<ir.pixellab.core.codec.ImportedPsd> =
+    withContext(Dispatchers.Default) {
+        runCatching { ir.pixellab.core.codec.PsdImport.convert(ir.pixellab.core.codec.PsdReader.read(bytes), name) }
+    }
+
+/**
+ * Writes the document as a layered PSD.
+ *
+ * Each layer is rendered on its own and written with its own bounds, blend mode and opacity, so the
+ * file reopens in Photoshop as layers rather than as a flattened picture. That reversibility is the
+ * whole reason to write PSD at all — a flattened export is a one-way door.
+ */
+suspend fun exportPsd(
+    context: Context,
+    handle: CanvasHandle,
+    document: ir.pixellab.core.model.Document,
+): FileOutcome {
+    val surface = handle.surface ?: return FileOutcome.Refused("بوم هنوز آماده نیست")
+
+    // Every layer rendered alone, by hiding the rest. Rendering the whole document once and slicing
+    // it would give each layer whatever was beneath it baked in.
+    val sources = ArrayList<ir.pixellab.core.codec.PsdLayerSource>()
+    for (layer in document.layers) {
+        if (!layer.visible) continue
+        val alone = document.copy(layers = document.layers.map { it.with(visible = it.id == layer.id) })
+        val rendered = suspendCoroutine { continuation ->
+            surface.export(alone, Format.PNG, 1f) { continuation.resume(it) }
+        }
+        val success = rendered as? ExportResult.Success ?: continue
+        val decoded = runCatching { Codecs.decode(success.bytes) }.getOrNull() ?: continue
+        sources += ir.pixellab.core.codec.PsdLayerSource(
+            name = layer.name,
+            left = 0,
+            top = 0,
+            image = decoded,
+            opacity = layer.opacity,
+            blendMode = layer.blendMode,
+            visible = layer.visible,
+            clipped = layer.clipped,
+        )
+    }
+
+    val composite = suspendCoroutine { continuation ->
+        surface.export(document, Format.PNG, 1f) { continuation.resume(it) }
+    }
+    val flat = (composite as? ExportResult.Success)?.let { runCatching { Codecs.decode(it.bytes) }.getOrNull() }
+        ?: return FileOutcome.Refused("خروجی تخت ساخته نشد")
+
+    return withContext(Dispatchers.IO) {
+        runCatching {
+            val bytes = ir.pixellab.core.codec.PsdWriter.write(document, sources, flat)
+            val file = java.io.File(
+                Storage.projectsDirectory(context),
+                Storage.sanitise(document.name) + ".psd",
+            )
+            file.writeBytes(bytes)
+            FileOutcome.Exported(file.name, flat.width, flat.height)
+        }.getOrElse { FileOutcome.Refused(it.message ?: "PSD نوشته نشد") }
+    }
 }
 
 /**

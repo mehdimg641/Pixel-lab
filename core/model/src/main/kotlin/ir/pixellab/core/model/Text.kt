@@ -83,6 +83,75 @@ data class ParagraphStyle(
     val persianDigits: Boolean = true,
 )
 
+/**
+ * Photoshop's Warp Text.
+ *
+ * Applied to the *outline* after shaping, not to the baseline before it. Warping the baseline bends
+ * where the letters sit and leaves each one upright, which is the flag-shaped result every naive
+ * implementation produces; warping the outline bends the letters themselves, which is what the
+ * panel actually does.
+ */
+@Serializable
+enum class WarpStyle {
+    NONE,
+    ARC, ARC_LOWER, ARC_UPPER, ARCH, BULGE,
+    SHELL_LOWER, SHELL_UPPER,
+    FLAG, WAVE, FISH, RISE,
+    FISHEYE, INFLATE, SQUEEZE, TWIST,
+    ;
+
+    /** Photoshop's own Persian wording, which is what the user already reads these as. */
+    val persianLabel: String
+        get() = when (this) {
+            NONE -> "بدون"
+            ARC -> "کمان"
+            ARC_LOWER -> "کمان پایین"
+            ARC_UPPER -> "کمان بالا"
+            ARCH -> "طاق"
+            BULGE -> "برآمدگی"
+            SHELL_LOWER -> "صدف پایین"
+            SHELL_UPPER -> "صدف بالا"
+            FLAG -> "پرچم"
+            WAVE -> "موج"
+            FISH -> "ماهی"
+            RISE -> "خیزش"
+            FISHEYE -> "چشم‌ماهی"
+            INFLATE -> "باد شده"
+            SQUEEZE -> "فشرده"
+            TWIST -> "پیچش"
+        }
+}
+
+/** The Warp Text panel: a style and its three sliders. */
+@Serializable
+data class TextWarp(
+    val style: WarpStyle = WarpStyle.NONE,
+    /** -1..1, Photoshop's Bend. */
+    val bend: Float = 0.5f,
+    /** -1..1, horizontal distortion. */
+    val horizontal: Float = 0f,
+    /** -1..1, vertical distortion. */
+    val vertical: Float = 0f,
+    /** False warps down the page instead of across it. */
+    val horizontalAxis: Boolean = true,
+) {
+    val isActive: Boolean get() = style != WarpStyle.NONE
+
+    companion object {
+        val NONE = TextWarp()
+    }
+}
+
+/**
+ * How a text box behaves.
+ *
+ * Point type grows with the string; area type wraps inside a fixed box and is what a paragraph
+ * actually needs. The distinction is not cosmetic — it decides whether typing makes the layer wider
+ * or makes it taller.
+ */
+@Serializable
+enum class TextBoxMode { POINT, AREA }
+
 /** Text laid out along a path rather than a straight baseline. */
 @Serializable
 sealed interface TextPath {
@@ -174,4 +243,12 @@ data class TextSpec(
     /** Fixed layout box; null lets the text size itself. */
     val boxSize: Vec2? = null,
     val autoFit: Boolean = false,
+    val warp: TextWarp = TextWarp.NONE,
+    /**
+     * Point type grows with the string; area type wraps inside [boxSize].
+     *
+     * Kept separate from whether [boxSize] is set, because an area frame with no size yet is a real
+     * state — it is what exists between the user starting a drag and finishing it.
+     */
+    val boxMode: TextBoxMode = TextBoxMode.POINT,
 )
