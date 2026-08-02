@@ -85,6 +85,104 @@ object PixelFilters {
         return out
     }
 
+    /** Directional blur — Photoshop's Motion Blur. [angle] is degrees, 0 to the right. */
+    fun motion(
+        source: RasterImage,
+        angle: Float,
+        distance: Float,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        if (distance <= 1f) return source
+        val smeared = ir.pixellab.core.imaging.MotionBlur
+            .apply(source.toRaster().premultiplied(), angle, distance)
+        return blend(source, smeared.unpremultiplied().toImage(), selection)
+    }
+
+    /** Lens blur with a real aperture shape, which is what gives bokeh its recognisable discs. */
+    fun lens(
+        source: RasterImage,
+        radius: Float,
+        blades: Int = 0,
+        rotation: Float = 0f,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        if (radius < 1f) return source
+        val blurred = ir.pixellab.core.imaging.LensBlur
+            .apply(source.toRaster().premultiplied(), radius, blades, rotation)
+        return blend(source, blurred.unpremultiplied().toImage(), selection)
+    }
+
+    /**
+     * Blur that varies across the frame — tilt-shift and iris.
+     *
+     * The focal region is centred on the selection when there is one, for the same reason the
+     * radial blurs are: a user who has drawn a marquee round a face has already said where the
+     * sharp part is.
+     */
+    fun gradientBlur(
+        source: RasterImage,
+        shape: ir.pixellab.core.imaging.GradientBlur.Shape,
+        radius: Float,
+        focus: Float,
+        transition: Float,
+        angle: Float = 0f,
+        centre: Vec2 = Vec2(source.width / 2f, source.height / 2f),
+    ): RasterImage {
+        if (radius <= 0f) return source
+        return ir.pixellab.core.imaging.GradientBlur
+            .apply(source.toRaster().premultiplied(), shape, centre, radius, focus, transition, angle)
+            .unpremultiplied()
+            .toImage()
+    }
+
+    /** Unsharp mask. [threshold] leaves flat areas alone so noise is not amplified with detail. */
+    fun sharpen(
+        source: RasterImage,
+        amount: Float,
+        radius: Float,
+        threshold: Float = 0f,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        if (amount <= 0f) return source
+        // Straight colour, not premultiplied: sharpening is a per-pixel contrast operation and
+        // weighting it by alpha would sharpen the matte's shape into the colours.
+        val sharper = ir.pixellab.core.imaging.Sharpen
+            .unsharpMask(source.toRaster(), amount, radius, threshold)
+        return blend(source, sharper.toImage(), selection)
+    }
+
+    /** Darkens or lightens towards the corners, following the frame's own proportions. */
+    fun vignette(source: RasterImage, amount: Float, midpoint: Float = 0.5f): RasterImage {
+        if (amount == 0f) return source
+        return ir.pixellab.core.imaging.Stylise
+            .vignette(source.toRaster(), amount, midpoint)
+            .toImage()
+    }
+
+    fun pixelate(source: RasterImage, blockSize: Int, selection: PixelSelection? = null): RasterImage {
+        if (blockSize <= 1) return source
+        val blocks = ir.pixellab.core.imaging.Stylise.pixelate(source.toRaster(), blockSize)
+        return blend(source, blocks.toImage(), selection)
+    }
+
+    /**
+     * Film grain.
+     *
+     * The seed comes from the caller so the same layer grained twice is identical — an effect that
+     * changed on every application would make undo and redo produce different pictures.
+     */
+    fun grain(
+        source: RasterImage,
+        amount: Float,
+        monochrome: Boolean = true,
+        seed: Int = 0,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        if (amount <= 0f) return source
+        val grained = ir.pixellab.core.imaging.Stylise.noise(source.toRaster(), amount, monochrome, seed)
+        return blend(source, grained.toImage(), selection)
+    }
+
     /**
      * Fills with a colour.
      *

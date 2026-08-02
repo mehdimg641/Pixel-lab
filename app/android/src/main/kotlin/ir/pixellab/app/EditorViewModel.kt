@@ -841,6 +841,100 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    suspend fun motionBlur(angle: Float, distance: Float) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters.motion(image, angle, distance, select.selection)
+    }
+
+    suspend fun lensBlur(radius: Float, blades: Int) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters.lens(image, radius, blades, selection = select.selection)
+    }
+
+    /**
+     * Tilt-shift or iris blur, focused on the selection when there is one.
+     *
+     * Not narrowed by the selection the way the other filters are — the whole point is a gradual
+     * transition from sharp to blurred, and clipping that to a selection's edge would put a hard
+     * boundary in the middle of the softest thing in the picture.
+     */
+    suspend fun gradientBlur(
+        shape: ir.pixellab.core.imaging.GradientBlur.Shape,
+        radius: Float,
+        focus: Float,
+        transition: Float,
+    ) {
+        val box = select.selection?.bounds
+        transform { image ->
+            val centre = if (box != null) {
+                Vec2((box.left + box.right) / 2f, (box.top + box.bottom) / 2f)
+            } else {
+                Vec2(image.width / 2f, image.height / 2f)
+            }
+            ir.pixellab.engine.android.PixelFilters
+                .gradientBlur(image, shape, radius, focus, transition, centre = centre)
+        }
+    }
+
+    suspend fun unsharpMask(amount: Float, radius: Float, threshold: Float) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters.sharpen(image, amount, radius, threshold, select.selection)
+    }
+
+    suspend fun vignette(amount: Float) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters.vignette(image, amount)
+    }
+
+    suspend fun pixelate(blockSize: Int) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters.pixelate(image, blockSize, select.selection)
+    }
+
+    /**
+     * Film grain.
+     *
+     * The seed is bumped per application rather than fixed, so grain applied twice is not the same
+     * pattern laid over itself — which would double its contrast instead of adding texture.
+     */
+    suspend fun grain(amount: Float, monochrome: Boolean) {
+        val seed = grainSeed++
+        transform { image ->
+            ir.pixellab.engine.android.PixelFilters.grain(image, amount, monochrome, seed, select.selection)
+        }
+    }
+
+    private var grainSeed = 0
+
+    // ---- measuring -------------------------------------------------------------------------------
+
+    /**
+     * The tone distribution of the selected image layer.
+     *
+     * Computed on demand rather than kept live: it costs a full pass over the pixels, and a
+     * histogram recomputed every frame while a slider is dragged would be the slowest thing on
+     * screen for a readout nobody is watching mid-drag.
+     */
+    fun histogram(channel: ir.pixellab.core.imaging.HistogramChannel): ir.pixellab.core.imaging.Histogram? {
+        val image = sampledPixels() ?: return null
+        return ir.pixellab.core.imaging.Histogram.of(image.pixels, channel)
+    }
+
+    /**
+     * Adds a Levels layer set from the image's own histogram — Photoshop's Auto Levels.
+     *
+     * As an adjustment *layer* rather than baked into the pixels, so it stays adjustable: auto is a
+     * starting point that is usually nearly right and occasionally wrong, and one that could not be
+     * nudged afterwards would be worse than none.
+     */
+    fun autoLevels(): Boolean {
+        val histogram = histogram(ir.pixellab.core.imaging.HistogramChannel.LUMINANCE) ?: return false
+        val (black, white) = ir.pixellab.core.imaging.Histogram.autoLevels(histogram) ?: return false
+        addAdjustment(
+            ir.pixellab.core.model.Adjustment.Levels(
+                inputBlack = black / MAX_CHANNEL,
+                inputWhite = white / MAX_CHANNEL,
+            ),
+            name = "سطوح خودکار",
+        )
+        return true
+    }
+
     /** Where a fill lands: the selected image layer, or a new one made for the purpose. */
     private fun paintTarget(): ir.pixellab.core.model.AssetId? {
         (state.primaryLayer as? Layer.Image)?.let { return it.asset }
