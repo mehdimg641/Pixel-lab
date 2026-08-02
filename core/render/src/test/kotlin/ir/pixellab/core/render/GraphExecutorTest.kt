@@ -38,6 +38,8 @@ private class FakeGlDevice(override val maxTextureSize: Int = 4096) : GlDevice {
     /** Handles this device has handed out and not yet seen deleted. */
     val issued = LinkedHashSet<TextureHandle>()
 
+    val uploads = ArrayList<TextureHandle>()
+
     /** Programs that fail to compile, so the failure path can be exercised. */
     val brokenPrograms = HashSet<String>()
 
@@ -47,6 +49,20 @@ private class FakeGlDevice(override val maxTextureSize: Int = 4096) : GlDevice {
     override fun createTexture(width: Int, height: Int, bytesPerPixel: Int): TextureHandle {
         created++
         return TextureHandle(nextId++).also { issued += it }
+    }
+
+    override fun uploadArgb(handle: TextureHandle, width: Int, height: Int, pixels: IntArray) {
+        uploads += handle
+    }
+
+    override fun uploadFloats(
+        handle: TextureHandle,
+        width: Int,
+        height: Int,
+        channels: Int,
+        values: FloatArray,
+    ) {
+        uploads += handle
     }
 
     override fun deleteTexture(handle: TextureHandle) {
@@ -154,6 +170,20 @@ class TexturePoolTest {
     }
 }
 
+/**
+ * Hands out one distinct texture per sampler name, standing in for the fills and curve tables the
+ * host uploads. Distinct so a test can tell which sampler a pass actually received.
+ */
+private class FakeTextureSource : TextureSource {
+    val issued = LinkedHashMap<String, TextureHandle>()
+    val requested = ArrayList<Pair<String, String?>>()
+
+    override fun textureFor(effect: Effect?, sampler: String): TextureHandle {
+        requested += sampler to effect?.let(EffectRegistry::idOf)
+        return issued.getOrPut(sampler) { TextureHandle(900 + issued.size) }
+    }
+}
+
 class GraphExecutorTest {
 
     private val bounds = Rect(0f, 0f, 256f, 128f)
@@ -161,7 +191,8 @@ class GraphExecutorTest {
     private fun run(
         style: Style,
         device: FakeGlDevice = FakeGlDevice(),
-        executor: GraphExecutor = GraphExecutor(device),
+        source: TextureSource = FakeTextureSource(),
+        executor: GraphExecutor = GraphExecutor(device, textures = source),
     ): Triple<FakeGlDevice, GraphExecutor, ExecutionResult> {
         val graph = RenderGraphBuilder.build(RenderPlanner.plan(style), bounds)
         return Triple(device, executor, executor.execute(graph, TextureHandle(0)))
@@ -276,7 +307,7 @@ class GraphExecutorTest {
     @Test
     fun `rendering many layers reuses buffers instead of allocating per layer`() {
         val device = FakeGlDevice()
-        val executor = GraphExecutor(device)
+        val executor = GraphExecutor(device, textures = FakeTextureSource())
         val graph = RenderGraphBuilder.build(
             RenderPlanner.plan(Style(effects = listOf(Effect.DropShadow(blur = 12f)))),
             bounds,
@@ -290,7 +321,7 @@ class GraphExecutorTest {
     @Test
     fun `the caller's layer texture is never taken into the pool`() {
         val device = FakeGlDevice()
-        val executor = GraphExecutor(device)
+        val executor = GraphExecutor(device, textures = FakeTextureSource())
         val layer = TextureHandle(0)
         val graph = RenderGraphBuilder.build(RenderPlanner.plan(Style()), bounds)
         executor.execute(graph, layer)
@@ -322,11 +353,13 @@ class GraphExecutorTest {
     @Test
     fun `a glass layer without a backdrop is reported rather than rendered wrong`() {
         val graph = RenderGraphBuilder.build(RenderPlanner.plan(Style(effects = listOf(Effect.BackdropBlur()))), bounds)
-        val missing = GraphExecutor(FakeGlDevice()).execute(graph, TextureHandle(0))
+        val missing = GraphExecutor(FakeGlDevice(), textures = FakeTextureSource())
+            .execute(graph, TextureHandle(0))
         missing.succeeded shouldBe false
 
         val device = FakeGlDevice()
-        val supplied = GraphExecutor(device).execute(graph, TextureHandle(0), backdropTexture = TextureHandle(77))
+        val supplied = GraphExecutor(device, textures = FakeTextureSource())
+            .execute(graph, TextureHandle(0), backdropTexture = TextureHandle(77))
         supplied.succeeded shouldBe true
         device.passes.single { it.shaderId == Shaders.BACKDROP_BLUR.id }
             .inputs["uBackdrop"] shouldBe TextureHandle(77)
@@ -335,13 +368,77 @@ class GraphExecutorTest {
     @Test
     fun `a supplied backdrop is never taken into the pool`() {
         val device = FakeGlDevice()
-        val executor = GraphExecutor(device)
+        val executor = GraphExecutor(device, textures = FakeTextureSource())
         val graph = RenderGraphBuilder.build(RenderPlanner.plan(Style(effects = listOf(Effect.BackdropBlur()))), bounds)
         val backdrop = TextureHandle(77)
         executor.execute(graph, TextureHandle(0), backdropTexture = backdrop)
         // Only the composite is pooled; recycling the backdrop would scribble over the document
         // beneath this layer.
         executor.poolAllocations shouldBe 1
+    }
+
+    @Test
+    fun `an effect's own textures are bound alongside the graph's buffers`() {
+        val device = FakeGlDevice()
+        val source = FakeTextureSource()
+        run(Style(effects = listOf(Effect.Stroke(6f, Fill.Solid(Color.BLACK)))), device, source)
+
+        val stroke = device.passes.single { it.shaderId == Shaders.STROKE.id }
+        // uSource and uSdf come from the graph; uFill is the stroke's own paint and nothing in the
+        // graph knows about it.
+        stroke.inputs.keys shouldBe setOf("uSource", "uSdf", "uFill")
+        stroke.inputs["uFill"] shouldBe source.issued["uFill"]
+        source.requested.contains("uFill" to "stroke") shouldBe true
+    }
+
+    @Test
+    fun `a sampler with no texture is reported rather than left reading black`() {
+        val device = FakeGlDevice()
+        val result = GraphExecutor(device, textures = TextureSource.NONE)
+            .execute(
+                RenderGraphBuilder.build(
+                    RenderPlanner.plan(Style(effects = listOf(Effect.Stroke(6f, Fill.Solid(Color.BLACK))))),
+                    bounds,
+                ),
+                TextureHandle(0),
+            )
+        // Texture zero is black, so an unbound fill renders as an effect that ran and did nothing —
+        // indistinguishable from a badly chosen colour unless it is reported.
+        result.succeeded shouldBe false
+        result.errors.any { it.reason.contains("uFill") } shouldBe true
+    }
+
+    @Test
+    fun `a bevel receives both of its curve tables`() {
+        val device = FakeGlDevice()
+        val source = FakeTextureSource()
+        run(Style(effects = listOf(Effect.Bevel())), device, source)
+        val bevel = device.passes.single { it.shaderId == Shaders.BEVEL.id }
+        // The profile shapes the shoulder and the gloss contour is what turns a plain highlight
+        // into metal; a bevel missing either is a different effect.
+        bevel.inputs.keys shouldBe setOf("uSource", "uSdf", "uProfile", "uGloss")
+    }
+
+    @Test
+    fun `an extrusion receives its near and far paints`() {
+        val device = FakeGlDevice()
+        val source = FakeTextureSource()
+        run(Style(effects = listOf(Effect.Extrude(steps = 8))), device, source)
+        val extrude = device.passes.single { it.shaderId == Shaders.EXTRUDE_STEP.id }
+        extrude.inputs.keys shouldBe setOf("uSource", "uNearFill", "uFarFill")
+    }
+
+    @Test
+    fun `the graph's buffers win over the source for a sampler both could fill`() {
+        val device = FakeGlDevice()
+        val source = FakeTextureSource()
+        run(Style(effects = listOf(Effect.DropShadow(blur = 10f))), device, source)
+        val shadow = device.passes.single { it.shaderId == Shaders.SHADOW.id }
+        val blurs = device.passes.filter { it.shaderId == Shaders.BLUR.id }
+        // uBlurred is a real intermediate; asking the source for it would hand the shadow a static
+        // texture and the blur radius would stop mattering.
+        shadow.inputs["uBlurred"] shouldBe blurs.last().target
+        source.requested.none { it.first == "uBlurred" } shouldBe true
     }
 
     @Test
@@ -354,7 +451,7 @@ class GraphExecutorTest {
             readsBackdrop = false,
             tiles = 1,
         )
-        val result = GraphExecutor(device).execute(graph, TextureHandle(0))
+        val result = GraphExecutor(device, textures = FakeTextureSource()).execute(graph, TextureHandle(0))
         result.errors.single().reason.contains("missing") shouldBe true
         result.passesRun shouldBe 0
     }

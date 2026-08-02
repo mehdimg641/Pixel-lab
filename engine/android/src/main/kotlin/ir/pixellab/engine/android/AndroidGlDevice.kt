@@ -7,6 +7,7 @@ import ir.pixellab.core.render.ShaderProgram
 import ir.pixellab.core.render.Shaders
 import ir.pixellab.core.render.TextureHandle
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * The OpenGL ES 3.0 implementation of [GlDevice].
@@ -89,6 +90,54 @@ class AndroidGlDevice(private val context: GlContext) : GlDevice {
             GLES30.GL_RGBA8
         }
         else -> GLES30.GL_RGBA8
+    }
+
+    /**
+     * Uploads ARGB pixels, converting to the RGBA byte order GL expects.
+     *
+     * Android packs a pixel as ARGB in an `Int`; `GL_RGBA` with `GL_UNSIGNED_BYTE` reads four
+     * consecutive bytes as R, G, B, A. On a little-endian device those are B, G, R, A — so handing
+     * the array over untouched swaps red and blue, which is the classic "everything is teal" bug.
+     */
+    override fun uploadArgb(handle: TextureHandle, width: Int, height: Int, pixels: IntArray) {
+        val bytes = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder())
+        for (pixel in pixels) {
+            bytes.put(((pixel shr 16) and 0xFF).toByte())
+            bytes.put(((pixel shr 8) and 0xFF).toByte())
+            bytes.put((pixel and 0xFF).toByte())
+            bytes.put(((pixel ushr 24) and 0xFF).toByte())
+        }
+        bytes.rewind()
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, handle.id)
+        GLES30.glTexSubImage2D(
+            GLES30.GL_TEXTURE_2D, 0, 0, 0, width, height,
+            GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, bytes,
+        )
+    }
+
+    override fun uploadFloats(
+        handle: TextureHandle,
+        width: Int,
+        height: Int,
+        channels: Int,
+        values: FloatArray,
+    ) {
+        val buffer = ByteBuffer
+            .allocateDirect(values.size * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .put(values)
+        buffer.rewind()
+        val format = when (channels) {
+            1 -> GLES30.GL_RED
+            2 -> GLES30.GL_RG
+            3 -> GLES30.GL_RGB
+            else -> GLES30.GL_RGBA
+        }
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, handle.id)
+        GLES30.glTexSubImage2D(
+            GLES30.GL_TEXTURE_2D, 0, 0, 0, width, height, format, GLES30.GL_FLOAT, buffer,
+        )
     }
 
     override fun deleteTexture(handle: TextureHandle) {

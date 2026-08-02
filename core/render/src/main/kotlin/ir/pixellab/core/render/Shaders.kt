@@ -189,6 +189,7 @@ object Shaders {
         id = "shadow",
         body = """
             uniform sampler2D uBlurred;
+            uniform sampler2D uFill;
             uniform vec2 uOffset;
             uniform float uBlur;
             uniform float uSpread;
@@ -200,19 +201,23 @@ object Shaders {
                 float layerAlpha = texture(uSource, vUv).a;
                 // The layer punches a hole through its own shadow unless told otherwise.
                 if (uKnockOut == 1) shadowAlpha *= (1.0 - layerAlpha);
-                fragColor = vec4(0.0, 0.0, 0.0, shadowAlpha);
+                // The shadow's own colour. Writing black here is the obvious implementation and it
+                // silently discards every coloured shadow a style asks for.
+                vec4 fill = texture(uFill, vUv);
+                fragColor = premultiply(vec4(fill.rgb, fill.a * shadowAlpha));
             }
         """,
         floats = setOf("uBlur", "uSpread"),
         vec2s = setOf("uOffset"),
         ints = setOf("uKnockOut"),
-        samplers = setOf("uSource", "uBlurred"),
+        samplers = setOf("uSource", "uBlurred", "uFill"),
     )
 
     val GLOW = program(
         id = "glow",
         body = """
             uniform sampler2D uBlurred;
+            uniform sampler2D uFill;
             uniform float uBlur;
             uniform float uSpread;
             uniform int uInner;
@@ -225,18 +230,20 @@ object Shaders {
                 float coverage = uInner == 1 ? (1.0 - blurred) * layer : blurred * (1.0 - layer);
                 // Sourced from the centre, the glow fills the shape and fades towards the edge.
                 if (uInner == 1 && uGlowSource == 0) coverage = blurred * layer;
-                fragColor = vec4(0.0, 0.0, 0.0, clamp(coverage, 0.0, 1.0));
+                vec4 fill = texture(uFill, vUv);
+                fragColor = premultiply(vec4(fill.rgb, fill.a * clamp(coverage, 0.0, 1.0)));
             }
         """,
         floats = setOf("uBlur", "uSpread"),
         ints = setOf("uInner", "uGlowSource"),
-        samplers = setOf("uSource", "uBlurred"),
+        samplers = setOf("uSource", "uBlurred", "uFill"),
     )
 
     val INNER_SHADOW = program(
         id = "inner_shadow",
         body = """
             uniform sampler2D uBlurred;
+            uniform sampler2D uFill;
             uniform vec2 uOffset;
             uniform float uBlur;
             uniform float uChoke;
@@ -244,12 +251,13 @@ object Shaders {
             void main() {
                 float outside = 1.0 - texture(uBlurred, vUv - uOffset * uTexelSize).a;
                 float layer = texture(uSource, vUv).a;
-                fragColor = vec4(0.0, 0.0, 0.0, clamp(outside * layer, 0.0, 1.0));
+                vec4 fill = texture(uFill, vUv);
+                fragColor = premultiply(vec4(fill.rgb, fill.a * clamp(outside * layer, 0.0, 1.0)));
             }
         """,
         floats = setOf("uBlur", "uChoke"),
         vec2s = setOf("uOffset"),
-        samplers = setOf("uSource", "uBlurred"),
+        samplers = setOf("uSource", "uBlurred", "uFill"),
     )
 
     /**
@@ -308,6 +316,7 @@ object Shaders {
         id = "satin",
         body = """
             uniform sampler2D uBlurred;
+            uniform sampler2D uFill;
             uniform float uDistance;
             uniform float uBlur;
             uniform int uInvert;
@@ -318,12 +327,13 @@ object Shaders {
                 float b = texture(uBlurred, vUv - o).a;
                 float v = abs(a - b);
                 if (uInvert == 1) v = 1.0 - v;
-                fragColor = vec4(0.0, 0.0, 0.0, v * texture(uSource, vUv).a);
+                vec4 fill = texture(uFill, vUv);
+                fragColor = premultiply(vec4(fill.rgb, fill.a * v * texture(uSource, vUv).a));
             }
         """,
         floats = setOf("uDistance", "uBlur"),
         ints = setOf("uInvert"),
-        samplers = setOf("uSource", "uBlurred"),
+        samplers = setOf("uSource", "uBlurred", "uFill"),
     )
 
     val OVERLAY = program(

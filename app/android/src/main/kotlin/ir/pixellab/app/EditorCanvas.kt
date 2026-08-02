@@ -8,13 +8,13 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color as UiColor
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.viewinterop.AndroidView
 import ir.pixellab.core.canvas.Axis
 import ir.pixellab.core.canvas.Handle
 import ir.pixellab.core.canvas.HandleConfig
@@ -23,8 +23,8 @@ import ir.pixellab.core.canvas.SnapGuide
 import ir.pixellab.core.canvas.Viewport
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.editor.LayerBounds
-import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.Vec2
+import ir.pixellab.engine.android.CanvasSurface
 import ir.pixellab.engine.android.TouchBridge
 
 /**
@@ -59,53 +59,20 @@ fun EditorCanvas(
                 true
             },
     ) {
+        // The artwork runs the effect pipeline on its own GL thread, so opening a sheet never
+        // stalls on a ten-shadow stack.
+        AndroidView(
+            factory = { CanvasSurface(it) },
+            modifier = Modifier.fillMaxSize(),
+            update = { surface -> surface.submit(state.document, state.effectsBypassed) },
+        )
+
+        // Chrome on top, in a separate pass: it must keep a constant size as the canvas zooms, it
+        // must not appear in an export, and redrawing a handle must not re-run the effect stack.
         Canvas(Modifier.fillMaxSize()) {
-            drawSurround()
-            drawCanvasSheet(state)
-            drawArtwork(state, bounds)
             drawGuides(state)
             drawSelection(state, bounds)
         }
-    }
-}
-
-/** Neutral grey around the artboard; a tint here would shift how the artwork's colours read. */
-private fun DrawScope.drawSurround() {
-    drawRect(UiColor(0xFF2A2A2A))
-}
-
-private fun DrawScope.drawCanvasSheet(state: EditorState) {
-    val sheet = state.viewport.screenBounds(state.document.canvas.size)
-    drawRect(
-        color = UiColor.White,
-        topLeft = Offset(sheet.left, sheet.top),
-        size = Size(sheet.width, sheet.height),
-    )
-    drawRect(
-        color = UiColor(0xFF3C3C3C),
-        topLeft = Offset(sheet.left, sheet.top),
-        size = Size(sheet.width, sheet.height),
-        style = Stroke(width = 1f),
-    )
-}
-
-/**
- * A placeholder pass for the artwork.
- *
- * The GL pipeline in `core:render` composites the real thing once layers can be rasterised to
- * textures. Drawing the silhouettes here in the meantime keeps selection, handles and snapping
- * exercisable against something visible, and the swap is confined to this one function.
- */
-private fun DrawScope.drawArtwork(state: EditorState, bounds: LayerBounds) {
-    for (layer in state.document.walk()) {
-        if (!layer.visible || layer is Layer.Group) continue
-        val corners = cornersOf(layer, bounds, state.viewport)
-        val path = androidx.compose.ui.graphics.Path().apply {
-            moveTo(corners[0].x, corners[0].y)
-            for (i in 1 until corners.size) lineTo(corners[i].x, corners[i].y)
-            close()
-        }
-        drawPath(path, UiColor(0xFF1A1A1A), alpha = layer.opacity)
     }
 }
 
@@ -161,14 +128,6 @@ private fun DrawScope.drawSelection(state: EditorState, bounds: LayerBounds) {
             )
         }
     }
-}
-
-private fun cornersOf(layer: Layer, bounds: LayerBounds, viewport: Viewport): List<Vec2> {
-    val local = bounds.of(layer)
-    return listOf(
-        Vec2(local.left, local.top), Vec2(local.right, local.top),
-        Vec2(local.right, local.bottom), Vec2(local.left, local.bottom),
-    ).map { viewport.toScreen(Handles.localToCanvas(it, local, layer.transform)) }
 }
 
 /** A guide is a canvas-space line; its ends have to travel through the camera like anything else. */

@@ -21,6 +21,18 @@ interface GlDevice {
 
     fun createTexture(width: Int, height: Int, bytesPerPixel: Int): TextureHandle
 
+    /**
+     * Replaces a texture's contents with straight (non-premultiplied) ARGB pixels.
+     *
+     * Straight, not premultiplied: the shaders premultiply where they need to, and a value that
+     * arrives already multiplied cannot be un-multiplied once alpha has quantised to eight bits —
+     * the error shows up as dark fringing on every soft edge.
+     */
+    fun uploadArgb(handle: TextureHandle, width: Int, height: Int, pixels: IntArray)
+
+    /** Uploads float samples, [channels] per pixel. Used for curve lookup tables. */
+    fun uploadFloats(handle: TextureHandle, width: Int, height: Int, channels: Int, values: FloatArray)
+
     fun deleteTexture(handle: TextureHandle)
 
     /** Directs subsequent draws at [handle], or at the screen when null. */
@@ -103,6 +115,22 @@ class TexturePool(private val device: GlDevice) {
     }
 }
 
+/**
+ * Supplies the textures an effect owns rather than the graph.
+ *
+ * A stroke's fill, a bevel's profile curve, an extrusion's near and far paints: none of these are
+ * intermediate buffers, so the graph never allocates them, and the shaders would otherwise sample
+ * texture zero — which is black, and reads as an effect that simply did not work.
+ */
+fun interface TextureSource {
+    fun textureFor(effect: Effect?, sampler: String): TextureHandle?
+
+    companion object {
+        /** Supplies nothing; every effect-owned sampler is then reported as missing. */
+        val NONE = TextureSource { _, _ -> null }
+    }
+}
+
 /** Reports a pass that could not run, so a failure surfaces instead of rendering nothing. */
 data class ExecutionError(val shaderId: String, val reason: String)
 
@@ -125,6 +153,7 @@ data class ExecutionResult(
 class GraphExecutor(
     private val device: GlDevice,
     private val registry: EffectRegistry = builtinEffectRegistry,
+    private val textures: TextureSource = TextureSource.NONE,
 ) {
     private val pool = TexturePool(device)
 
@@ -145,7 +174,7 @@ class GraphExecutor(
         color: ColorSettings = ColorSettings(),
     ): ExecutionResult {
         val errors = ArrayList<ExecutionError>()
-        val textures = HashMap<String, TextureHandle>()
+        val buffers = HashMap<String, TextureHandle>()
 
         // The layer's content and the backdrop are supplied; everything else comes from the pool.
         val supplied = HashSet<TextureHandle>()
@@ -155,7 +184,7 @@ class GraphExecutor(
                 spec.role == BufferRole.BACKDROP && backdropTexture != null -> backdropTexture
                 else -> pool.acquire(spec)
             }
-            textures[spec.id] = handle
+            buffers[spec.id] = handle
             if (handle == layerTexture || handle == backdropTexture) supplied += handle
         }
         if (graph.readsBackdrop && backdropTexture == null) {
@@ -173,14 +202,14 @@ class GraphExecutor(
 
         // The composite comes out of the pool with the previous layer still in it. Every other
         // buffer is fully overwritten by its own pass, so only this one needs clearing.
-        textures[TARGET_BUFFER]?.let {
+        buffers[TARGET_BUFFER]?.let {
             device.bindTarget(it)
             device.clearTarget()
         }
 
         var run = 0
         for (pass in graph.passes) {
-            val target = textures[pass.output]
+            val target = buffers[pass.output]
             if (target == null) {
                 errors += ExecutionError(pass.shaderId, "unknown output buffer '${pass.output}'")
                 continue
@@ -195,14 +224,29 @@ class GraphExecutor(
             device.setBlend(roles[pass.output] == BufferRole.TARGET)
 
             val shader = Shaders[pass.shaderId]
+            val bound = HashSet<String>()
             for (id in pass.inputs) {
-                val handle = textures[id]
+                val handle = buffers[id]
                 val role = roles[id]
                 val name = if (role == null) null else samplerFor(role, shader)
                 if (handle == null || name == null) {
                     errors += ExecutionError(pass.shaderId, "cannot bind input '$id'")
                 } else {
                     device.bindInput(name, handle)
+                    bound += name
+                }
+            }
+
+            // Whatever the graph did not supply belongs to the effect: its fill, its curve tables,
+            // its pattern. An unbound sampler reads black, which looks like an effect that ran and
+            // did nothing rather than one that could not run.
+            for (sampler in shader?.samplers.orEmpty()) {
+                if (sampler in bound) continue
+                val supplied = textures.textureFor(pass.effect, sampler)
+                if (supplied == null) {
+                    errors += ExecutionError(pass.shaderId, "no texture for sampler '$sampler'")
+                } else {
+                    device.bindInput(sampler, supplied)
                 }
             }
 
@@ -217,8 +261,8 @@ class GraphExecutor(
 
         // Everything except the final target goes back for the next layer to reuse. Textures the
         // caller supplied are never pooled — handing one out as scratch would overwrite live content.
-        val output = textures[TARGET_BUFFER]
-        for ((id, handle) in textures) {
+        val output = buffers[TARGET_BUFFER]
+        for ((id, handle) in buffers) {
             if (id != TARGET_BUFFER && handle !in supplied) pool.release(handle)
         }
 
