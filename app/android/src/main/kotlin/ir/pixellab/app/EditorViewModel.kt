@@ -325,6 +325,20 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun setCanvasDpi(dpi: Int) = edit { setCanvasDpi(dpi.coerceIn(MIN_DPI, MAX_DPI)) }
 
+    /**
+     * Re-reads the user's own folders.
+     *
+     * Fonts and everything else in one call, because from the user's side it is one action: they
+     * copied files in and want the app to notice. Splitting it into a button per folder would make
+     * them press five.
+     */
+    fun rescanAssets() {
+        viewModelScope.launch {
+            fontStore.rescan()
+            bounds.fonts = fontStore.resolver
+        }
+    }
+
     fun setSnapEnabled(enabled: Boolean) {
         editor.setSnapEnabled(enabled)
         state = editor.state

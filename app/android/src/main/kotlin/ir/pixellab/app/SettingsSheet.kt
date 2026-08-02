@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import ir.pixellab.core.editor.EditorState
 
 /**
@@ -24,6 +26,7 @@ import ir.pixellab.core.editor.EditorState
 @Composable
 fun SettingsSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
     val preferences = model.preferences
+    val context = LocalContext.current
 
     fun update(body: (Preferences) -> Preferences) {
         model.setPreferences(body(preferences))
@@ -114,11 +117,53 @@ fun SettingsSheetBody(state: EditorState, model: EditorViewModel, modifier: Modi
         SheetHint("${model.fontStore.catalog.size} قلم از ${model.fontStore.catalog.fileCount} فایل")
         SheetAction("مدیریت فونت") { model.act { openSheet(ir.pixellab.core.editor.SheetContent.FontPicker) } }
 
+        // ---- the user's own files ----------------------------------------------------------
+
+        SheetSection("فایل‌های شما")
+        // Rescanned every time this sheet opens, because the whole point is that the file arrived
+        // from *outside* the app — there is no event to react to, so it has to look.
+        val inventory = remember { AssetLibrary.scan(context) }
+        SheetHint("این پوشه‌ها ساخته شده‌اند و منتظرند. با هر فایل‌منیجری بازشان کنید — اجازهٔ خاصی نمی‌خواهند.")
+        for (found in inventory) {
+            AssetRow(found)
+        }
+        SheetAction("جست‌وجوی دوباره") { model.rescanAssets() }
+
         SheetSection("دربارهٔ برنامه")
         SheetHint("PixelLab — متن‌باز، بدون واترمارک، بدون اشتراک، بدون نیاز به اینترنت")
         SheetAction("بازگرداندن پیش‌فرض‌ها") { model.setPreferences(Preferences()) }
     }
 }
+
+/**
+ * One folder: what it is for, where it is, and what is in it.
+ *
+ * The path is shown even when the folder is empty, and that is the point of the row. A user who
+ * has been told "put the model somewhere" and not told where has been told nothing.
+ */
+@Composable
+private fun AssetRow(found: AssetInventory) {
+    SheetHint(
+        buildString {
+            append("${found.kind.label} — ")
+            if (found.isEmpty) {
+                append("خالی")
+            } else {
+                append("${found.count} فایل")
+                // Size only where it is the deciding fact: a segmentation model is larger than the
+                // whole application, and a user should see that before wondering where the space went.
+                if (found.bytes > SIZE_WORTH_SHOWING) {
+                    append(" · ${found.bytes / (1024 * 1024)} مگابایت")
+                }
+            }
+        },
+    )
+    SheetHint(found.kind.purpose)
+    SheetHint(AssetLibrary.readablePath(found.path))
+}
+
+/** Below a few megabytes the number is noise; above it, it is the answer to "why is storage full". */
+private const val SIZE_WORTH_SHOWING = 4L * 1024 * 1024
 
 /** Where covers actually get posted, at the sizes those places actually use. */
 private data class CanvasPreset(val label: String, val width: Int, val height: Int)

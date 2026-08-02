@@ -21,6 +21,10 @@ class MainActivity : ComponentActivity() {
         // Before anything can open a file. Which formats exist is a property of the device — HEIF
         // needs API 28 — so the registry is filled in here rather than declared statically.
         PlatformCodecs.register()
+        // Made on every launch, not on first use. An empty folder with the right name sitting in the
+        // file manager is documentation that cannot get out of date — and a user told to "put the
+        // model somewhere" with no folder to put it in has been told nothing.
+        AssetKind.entries.forEach { it.directoryIn(this) }
         enableEdgeToEdge()
         setContent {
             PixelLabTheme {
