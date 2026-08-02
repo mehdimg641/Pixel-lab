@@ -145,6 +145,18 @@ fun CanvasSheetBody(
         }
 
         SheetSection("باز کردن فایل")
+        SheetSection("تفکیک‌پذیری")
+        SheetNumberField("DPI", canvas.dpi.toString()) { typed ->
+            typed.toIntOrNull()?.let { model.setCanvasDpi(it) }
+        }
+        SheetChips {
+            for (preset in listOf(72, 150, 300, 600)) {
+                SheetChip("$preset", chosen = canvas.dpi == preset) { model.setCanvasDpi(preset) }
+            }
+        }
+        // What DPI does and does not do, because it is the number people expect to resize the file.
+        SheetHint("DPI اندازهٔ فیزیکی خروجی PDF را می‌سازد — تعداد پیکسل‌ها را عوض نمی‌کند")
+
         SheetAction("تصویر را به‌عنوان لایه بیاور", onClick = onPickImage)
         SheetHint("تصویر بزرگ‌تر از بوم کوچک می‌شود تا دستگیره‌هایش روی صفحه بماند")
 

@@ -187,6 +187,12 @@ fun EditorScreen(model: EditorViewModel) {
         if (exporting) {
             ExportDialog(onDismiss = { exporting = false }) { format, scale ->
                 exporting = false
+                if (format == ir.pixellab.core.codec.Format.PDF) {
+                    scope.launch {
+                        outcome = exportPdf(context, handle, state.document, scale)
+                    }
+                    return@ExportDialog
+                }
                 scope.launch { outcome = exportImage(context, handle, state.document, format, scale) }
             }
         }

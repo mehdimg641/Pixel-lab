@@ -110,6 +110,33 @@ fun ArrangeSheetBody(
             Placement(state, model, modifier = Modifier.padding(top = 8.dp))
         }
 
+        // ---- linking and comps ---------------------------------------------------------------
+
+        SheetSection("پیوند")
+        val linked = state.selection.ids.count { state.document.links.isLinked(it) }
+        SheetAction("پیوند دادن انتخاب", enabled = state.selection.size >= 2) {
+            model.act { linkSelected() }
+        }
+        SheetAction("برداشتن پیوند", enabled = linked > 0) { model.act { unlinkSelected() } }
+        // The distinction that gets confused with grouping, said once and plainly.
+        SheetHint("لایه‌های پیوندخورده با هم جابه‌جا می‌شوند — ولی گروه نمی‌شوند، پس افکت هرکدام مال خودش می‌ماند")
+
+        SheetSection("ترکیب‌های لایه")
+        var compName by remember { mutableStateOf("") }
+        SheetNumberField("نام ترکیب", compName) { compName = it }
+        SheetAction("ثبت وضعیت فعلی", enabled = compName.isNotBlank()) {
+            model.act { captureComp(compName) }
+            compName = ""
+        }
+        SheetChips {
+            for (comp in state.document.comps) {
+                SheetChip(comp.name) { model.act { applyComp(comp.name) } }
+            }
+        }
+        if (state.document.comps.isNotEmpty()) {
+            SheetHint("یک ترکیب فقط دیده‌شدن و جای لایه‌ها را برمی‌گرداند — نه رنگ و متن، پس کار بعدی‌تان را پاک نمی‌کند")
+        }
+
         SheetSection("ادغام")
         SheetAction("ادغام با لایهٔ زیر", enabled = id != null) {
             scope.launch { model.mergeDown(render) }

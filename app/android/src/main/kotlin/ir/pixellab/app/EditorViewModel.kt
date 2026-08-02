@@ -316,6 +316,15 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    /**
+     * The canvas's resolution, in pixels per inch.
+     *
+     * Metadata rather than a resample: it decides the physical size of a PDF page and the number a
+     * print shop reads, and changing it must not touch a single pixel. Users expect it to resize
+     * the file and it does not, which is why the control says so.
+     */
+    fun setCanvasDpi(dpi: Int) = edit { setCanvasDpi(dpi.coerceIn(MIN_DPI, MAX_DPI)) }
+
     fun setSnapEnabled(enabled: Boolean) {
         editor.setSnapEnabled(enabled)
         state = editor.state
@@ -1500,6 +1509,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
          * A fixed twenty pixels of depth is a slab on a caption and invisible on a poster headline;
          * a fifth of the cap height reads as the same amount of depth at every size.
          */
+        /** Below 30 nothing prints; above 1200 the number is larger than any device can output. */
+        const val MIN_DPI = 30
+        const val MAX_DPI = 1200
+
         const val DEPTH_FRACTION = 0.2f
         const val BEVEL_FRACTION = 0.04f
 

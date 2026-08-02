@@ -50,6 +50,20 @@ data class Document(
      */
     val guides: List<Guide> = emptyList(),
     /**
+     * Layers that move together.
+     *
+     * Not a group and deliberately not stored as one: a group is a place in the tree that clips and
+     * composites, while a link is only an agreement about movement.
+     */
+    val links: LinkGroups = LinkGroups(),
+    /**
+     * Named arrangements of visibility and position — Photoshop's Layer Comps.
+     *
+     * On a cover this is what holds the Persian title and the Latin one in a single file, instead
+     * of two documents that drift apart the moment either is edited.
+     */
+    val comps: List<LayerComp> = emptyList(),
+    /**
      * Working space, precision and blend transfer curve. Stored per document because a file
      * imported from Photoshop must keep compositing the way Photoshop composited it.
      */

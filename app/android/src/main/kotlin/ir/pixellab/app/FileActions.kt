@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.codec.Codecs
+import ir.pixellab.core.codec.PdfWriter
 import ir.pixellab.core.model.with
 import ir.pixellab.core.codec.Format
 import ir.pixellab.core.codec.Project
@@ -91,6 +92,48 @@ suspend fun exportImage(
                 Storage.publishExport(context, name, result.bytes, format.mime)
                 FileOutcome.Exported(name, result.width, result.height)
             }.getOrElse { FileOutcome.Refused(it.message ?: "خروجی نوشته نشد") }
+        }
+        is ExportResult.TooLarge -> FileOutcome.Refused(
+            "این خروجی به ${result.requiredBytes / MEGABYTE} مگابایت حافظه نیاز دارد و " +
+                "${result.availableBytes / MEGABYTE} مگابایت آزاد است",
+            result.advice,
+        )
+        is ExportResult.Failed -> FileOutcome.Refused(result.reason)
+    }
+}
+
+/**
+ * Renders the document and writes it as a single-page PDF.
+ *
+ * A separate path from [exportImage] because PDF is not a raster format the encoder registry can
+ * take: the page has a *physical* size, taken from the canvas's DPI, and that is the entire reason
+ * to use it over a PNG. A print shop receiving a PDF is told how big the design is; one receiving a
+ * PNG has to be told separately and often is not.
+ */
+suspend fun exportPdf(
+    context: Context,
+    handle: CanvasHandle,
+    document: Document,
+    scale: Float = 1f,
+): FileOutcome {
+    val surface = handle.surface ?: return FileOutcome.Refused("بوم هنوز آماده نیست")
+    val result = suspendCoroutine<ExportResult> { continuation ->
+        // Rendered through the ordinary PNG path first: the pixels are the same either way, and a
+        // second render path for one format is a second place for the composite to disagree.
+        surface.export(document, Format.PNG, scale, availableBytes(context)) { continuation.resume(it) }
+    }
+    return when (result) {
+        is ExportResult.Success -> withContext(Dispatchers.IO) {
+            runCatching {
+                val decoded = Codecs.decode(result.bytes)
+                // Scaled exports carry a proportionally higher resolution, so the page keeps its
+                // real size rather than growing — which is what the user means by "export at ×2".
+                val dpi = (document.canvas.dpi * scale).toInt().coerceAtLeast(1)
+                val bytes = PdfWriter.write(decoded, dpi, document.name)
+                val name = Storage.sanitise(document.name) + ".pdf"
+                Storage.publishExport(context, name, bytes, Format.PDF.mime)
+                FileOutcome.Exported(name, decoded.width, decoded.height)
+            }.getOrElse { FileOutcome.Refused(it.message ?: "PDF نوشته نشد") }
         }
         is ExportResult.TooLarge -> FileOutcome.Refused(
             "این خروجی به ${result.requiredBytes / MEGABYTE} مگابایت حافظه نیاز دارد و " +
@@ -348,7 +391,9 @@ fun ExportDialog(onDismiss: () -> Unit, onExport: (Format, Float) -> Unit) {
     val formats = remember {
         // Ordered by what a cover design is actually exported as, not alphabetically.
         val preferred = listOf(Format.PNG, Format.JPEG, Format.WEBP, Format.TIFF, Format.BMP, Format.TGA, Format.ICO)
-        preferred.filter { it in Codecs.writable } + (Codecs.writable - preferred.toSet())
+        // PDF is appended rather than filtered through the registry: it is not a raster encoder and
+        // never will be, because its page carries a physical size that a pixel buffer cannot.
+        preferred.filter { it in Codecs.writable } + (Codecs.writable - preferred.toSet()) + Format.PDF
     }
 
     AlertDialog(

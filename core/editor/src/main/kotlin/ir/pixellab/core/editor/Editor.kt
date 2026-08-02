@@ -11,6 +11,7 @@ import ir.pixellab.core.model.Guide
 import ir.pixellab.core.model.Effect
 import ir.pixellab.core.model.History
 import ir.pixellab.core.model.Layer
+import ir.pixellab.core.model.LayerComp
 import ir.pixellab.core.model.LayerId
 import ir.pixellab.core.model.LayerMask
 import ir.pixellab.core.model.Rect
@@ -182,7 +183,15 @@ class Editor(
         if (layer.locked) return
         history.record(state.document)
         state = state.copy(
-            drag = DragSession(handle, layer.id, layer.transform, state.viewport.toCanvas(screen)),
+            drag = DragSession(
+                handle = handle,
+                layer = layer.id,
+                startTransform = layer.transform,
+                startCanvas = state.viewport.toCanvas(screen),
+                linkedStart = (state.document.links.partners(layer.id) - layer.id)
+                    .mapNotNull { id -> state.document.findLayer(id)?.let { id to it.transform.translation } }
+                    .toMap(),
+            ),
             canUndo = history.canUndo,
             canRedo = history.canRedo,
         )
@@ -234,10 +243,25 @@ class Editor(
         } else {
             moved
         }
-        state = state.copy(
-            document = state.document.mapLayer(session.layer) { it.withTransform(settled) },
-            guides = snap?.guides.orEmpty(),
-        )
+        // Linked layers follow by the same delta rather than being transformed themselves: they
+        // may be rotated or scaled differently, and copying the dragged layer's whole transform
+        // onto them would snap every partner to its shape.
+        var document = state.document.mapLayer(session.layer) { it.withTransform(settled) }
+        val followers = state.document.links.partners(session.layer) - session.layer
+        if (followers.isNotEmpty()) {
+            val delta = settled.translation - session.startTransform.translation
+            for (id in followers) {
+                document = document.mapLayer(id) { layer ->
+                    // The partner's *own* start is unknown mid-drag, so the delta is applied to the
+                    // live value each frame. Recomputed rather than accumulated, because
+                    // accumulating a per-frame delta drifts over a long drag.
+                    val start = session.linkedStart[id] ?: layer.transform.translation
+                    layer.withTransform(layer.transform.copy(translation = start + delta))
+                }
+            }
+        }
+
+        state = state.copy(document = document, guides = snap?.guides.orEmpty())
     }
 
     fun endDrag() {
@@ -570,7 +594,9 @@ class Editor(
         if (state.document.findLayer(id) == null) return
         history.record(state.document)
         state = state.copy(
-            document = state.document.removeLayer(id),
+            // The link is dropped with the layer. A link holding a deleted id would keep reporting
+            // its survivors as linked to something that is no longer in the document.
+            document = state.document.removeLayer(id).let { it.copy(links = it.links.forget(id)) },
             canUndo = history.canUndo,
             canRedo = history.canRedo,
         )
@@ -605,6 +631,99 @@ class Editor(
         edit(id) { it.with(visible = visible) }
 
     fun setLayerLocked(id: LayerId, locked: Boolean) = edit(id) { it.with(locked = locked) }
+
+    // ---- linking and comps ---------------------------------------------------------------------
+
+    /**
+     * Links the selection so the layers move together.
+     *
+     * Fewer than two selected does nothing rather than reporting an error: the button is visible
+     * whatever is selected, and a link of one is not a state worth having.
+     */
+    fun linkSelected(): Boolean {
+        val ids = state.selection.ids
+        if (ids.size < 2) return false
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(links = state.document.links.link(ids)),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return true
+    }
+
+    fun unlinkSelected(): Boolean {
+        val ids = state.selection.ids
+        if (ids.none { state.document.links.isLinked(it) }) return false
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(links = state.document.links.unlink(ids)),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return true
+    }
+
+    /** Everything that would move with [id], for the canvas to outline. */
+    fun linkPartners(id: LayerId): Set<LayerId> = state.document.links.partners(id)
+
+    /**
+     * Saves the current visibility and positions under [name].
+     *
+     * Replaces a comp of the same name rather than adding a second. Two comps called "Persian
+     * title" is a state a user cannot resolve, since the panel shows them by name alone.
+     */
+    fun captureComp(name: String, visibility: Boolean = true, positions: Boolean = true): Boolean {
+        if (name.isBlank()) return false
+        val comp = LayerComp.capture(name, state.document.walk(), visibility, positions)
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(
+                comps = state.document.comps.filterNot { it.name == name } + comp,
+            ),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return true
+    }
+
+    /**
+     * Restores a comp.
+     *
+     * Only what the comp captured, and only for layers that still exist. A layer added since the
+     * comp was saved keeps whatever it has — a comp is a layout switch, not a version of the
+     * document, and hiding new work because an old comp did not know about it would be the worse
+     * of the two behaviours.
+     */
+    fun applyComp(name: String): Boolean {
+        val comp = state.document.comps.firstOrNull { it.name == name } ?: return false
+        history.record(state.document)
+        var document = state.document
+        for (layer in state.document.walk().toList()) {
+            val key = layer.id.value
+            comp.visibility[key]?.let { visible ->
+                document = document.mapLayer(layer.id) { it.with(visible = visible) }
+            }
+            comp.positions[key]?.let { at ->
+                document = document.mapLayer(layer.id) {
+                    it.withTransform(it.transform.copy(translation = at))
+                }
+            }
+        }
+        state = state.copy(document = document, canUndo = history.canUndo, canRedo = history.canRedo)
+        return true
+    }
+
+    fun deleteComp(name: String): Boolean {
+        if (state.document.comps.none { it.name == name }) return false
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(comps = state.document.comps.filterNot { it.name == name }),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return true
+    }
 
     fun setLayerOpacity(id: LayerId, opacity: Float, continuous: Boolean = false) =
         scrub(id, continuous) { it.with(opacity = opacity.coerceIn(0f, 1f)) }
@@ -828,6 +947,23 @@ class Editor(
         history.record(state.document)
         state = state.copy(
             document = state.document.copy(canvas = state.document.canvas.copy(background = fill)),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+    }
+
+    /**
+     * The canvas's resolution, in pixels per inch.
+     *
+     * Metadata only. It decides the physical size of an exported page and nothing about the pixels,
+     * so it goes through its own path rather than [applyCanvas] — which moves layers and refits the
+     * viewport, neither of which a change of DPI has any business doing.
+     */
+    fun setCanvasDpi(dpi: Int) {
+        if (dpi == state.document.canvas.dpi) return
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(canvas = state.document.canvas.copy(dpi = dpi)),
             canUndo = history.canUndo,
             canRedo = history.canRedo,
         )

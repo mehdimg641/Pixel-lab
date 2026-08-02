@@ -166,6 +166,14 @@ data class DragSession(
     val layer: LayerId,
     val startTransform: Transform,
     val startCanvas: Vec2,
+    /**
+     * Where every linked partner sat when the drag began.
+     *
+     * Captured once rather than accumulated per frame. Adding a small delta each frame drifts over
+     * a long drag — sixty tiny rounding errors a second — and the partners end up visibly offset
+     * from the layer they are supposed to be pinned to.
+     */
+    val linkedStart: Map<LayerId, Vec2> = emptyMap(),
 )
 
 /**
