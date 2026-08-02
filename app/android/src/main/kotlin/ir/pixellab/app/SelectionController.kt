@@ -86,7 +86,19 @@ class SelectionController {
         anchor = null
         draft = emptyList()
         if (region == null) return
+        use(region)
+    }
 
+    fun selectAll(width: Int, height: Int) = replace(PixelSelection.everything(width, height))
+
+    /**
+     * Adopts a selection computed somewhere else, honouring the combining mode.
+     *
+     * Through the mode rather than replacing outright: subject selection is exactly the tool a user
+     * runs and then corrects — take the subject, then subtract the arm it grabbed with it — and a
+     * result that always replaced would throw away the correction on every re-run.
+     */
+    fun use(region: PixelSelection) {
         val existing = selection
         replace(
             if (existing == null || mode == SelectionMode.REPLACE) {
@@ -96,8 +108,6 @@ class SelectionController {
             },
         )
     }
-
-    fun selectAll(width: Int, height: Int) = replace(PixelSelection.everything(width, height))
 
     fun clear() {
         selection = null

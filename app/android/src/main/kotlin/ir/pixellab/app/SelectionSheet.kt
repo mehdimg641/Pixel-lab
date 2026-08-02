@@ -13,13 +13,20 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.editor.EditorState
+import ir.pixellab.core.model.Layer
 import ir.pixellab.core.paint.SelectionMode
 import ir.pixellab.core.render.ParameterSpec
+import kotlinx.coroutines.launch
 
 /**
  * The selection sheet.
@@ -33,6 +40,8 @@ import ir.pixellab.core.render.ParameterSpec
 fun SelectionSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
     val select = model.select
     val canvas = state.document.canvas
+    val scope = rememberCoroutineScope()
+    var sensitivity by remember { mutableStateOf(DEFAULT_SENSITIVITY) }
 
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         ChipRow("ابزار") {
@@ -56,6 +65,25 @@ fun SelectionSheetBody(state: EditorState, model: EditorViewModel, modifier: Mod
         }
 
         Slider("پَر", select.feather, 0f..60f) { select.feather = it }
+
+        ChipRow("سوژه") {
+            Chip("انتخاب سوژه", chosen = false, enabled = state.primaryLayer is Layer.Image) {
+                scope.launch { model.selectSubject(sensitivity) }
+            }
+        }
+        Slider("حساسیت", sensitivity, 0f..1f) { sensitivity = it }
+        Text(
+            if (state.primaryLayer is Layer.Image) {
+                // Said plainly: this is a classical algorithm, not a model, and it has a shape of
+                // failure the user can work with once they know what it assumes.
+                "لبهٔ کادر را پس‌زمینه فرض می‌کند — بعدش با «کم‌کردن» اصلاحش کنید"
+            } else {
+                "یک لایهٔ تصویر انتخاب کنید"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = Ink.TextMuted,
+            modifier = Modifier.padding(horizontal = 16.dp),
+        )
 
         ChipRow("عملیات") {
             Chip("همه", chosen = false) {
@@ -110,15 +138,19 @@ private fun ChipRow(label: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun Chip(label: String, chosen: Boolean, onClick: () -> Unit) {
+private fun Chip(label: String, chosen: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     Text(
         label,
         style = MaterialTheme.typography.labelLarge,
-        color = if (chosen) Ink.Accent else Ink.Text,
+        color = when {
+            !enabled -> Ink.Divider
+            chosen -> Ink.Accent
+            else -> Ink.Text
+        },
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
             .background(if (chosen) Ink.Accent.copy(alpha = 0.18f) else Ink.Chrome)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     )
 }
@@ -156,3 +188,6 @@ private fun labelOf(mode: SelectionMode) = when (mode) {
 private const val GROW_STEP = 8
 
 private const val SOFTEN_RADIUS = 4f
+
+/** The middle of the range: takes the subject on a plain background without eating into it. */
+private const val DEFAULT_SENSITIVITY = 0.5f

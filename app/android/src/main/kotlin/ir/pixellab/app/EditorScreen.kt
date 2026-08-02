@@ -1,5 +1,7 @@
 package ir.pixellab.app
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -21,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Draw
@@ -82,6 +85,19 @@ fun EditorScreen(model: EditorViewModel) {
     var exporting by remember { mutableStateOf(false) }
     var opening by remember { mutableStateOf<List<java.io.File>?>(null) }
     var editingText by remember { mutableStateOf<LayerId?>(null) }
+
+    // Registered once for the screen rather than inside the sheet: a launcher created inside a
+    // conditionally composed subtree is unregistered the moment that subtree leaves, and the result
+    // then arrives with nowhere to go.
+    val picking = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                loadImage(context, uri)
+                    .onSuccess { (image, name) -> model.placeImage(image, name) }
+                    .onFailure { outcome = FileOutcome.Refused(it.message ?: "تصویر خوانده نشد") }
+            }
+        }
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink.Chrome)) {
         val screenHeight = maxHeight
@@ -184,9 +200,20 @@ fun EditorScreen(model: EditorViewModel) {
                         is SheetContent.Retouch -> RetouchSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Vector -> VectorSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.LibraryPanel -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
-                        else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("به‌زودی", color = Ink.TextMuted)
-                        }
+                        is SheetContent.LayerParameters ->
+                            LayerParametersSheetBody(state, content, model, Modifier.fillMaxHeight())
+                        is SheetContent.CanvasTools -> CanvasSheetBody(
+                            state = state,
+                            model = model,
+                            onPickImage = { picking.launch(IMAGE_MIME) },
+                            modifier = Modifier.fillMaxHeight(),
+                        )
+                        is SheetContent.ShapeTools -> ShapeSheetBody(state, model, Modifier.fillMaxHeight())
+                        SheetContent.StyleLibrary -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
+                        // The sheet is open, so the content is never null; the branch is here
+                        // because the type says it could be and a silent `else` would swallow a
+                        // future case that genuinely needs a screen.
+                        null -> Box(Modifier.fillMaxSize())
                     }
                 }
             }
@@ -232,6 +259,11 @@ private fun TopBar(
         )
         Row {
             BarButton(Icons.Filled.FitScreen, "اندازهٔ صفحه") { model.act { fitCanvas() } }
+            // Up here rather than on the toolbar: a template replaces the whole document, which is
+            // exactly the kind of expensive, rare action the top bar exists for.
+            BarButton(Icons.Filled.Star, "کتابخانه") {
+                model.act { openSheet(SheetContent.LibraryPanel, SheetDetent.FULL) }
+            }
             BarButton(Icons.Filled.FolderOpen, "باز کردن", onClick = onOpen)
             BarButton(Icons.Filled.Save, "ذخیره", onClick = onSave)
             BarButton(Icons.Filled.IosShare, "خروجی", onClick = onExport)
@@ -261,8 +293,10 @@ private fun ContextualBar(state: EditorState, model: EditorViewModel, onEditText
         if (isText) {
             BarButton(Icons.Filled.TextFields, "متن") { onEditText(id) }
         }
-        BarButton(Icons.Filled.Star, "استایل") {
-            model.act { openSheet(SheetContent.LayerParameters(id), SheetDetent.HALF) }
+        BarButton(Icons.Filled.Tune, "لایه") {
+            // Blend mode, both opacities, clipping and masking — the panel that used to be a
+            // placeholder, and the one people open most often after moving something.
+            model.act { openSheet(SheetContent.LayerParameters(id), SheetDetent.FULL) }
         }
         BarButton(Icons.Filled.Add, "افکت") {
             // A stroke is the effect people reach for first, and it is immediately visible, so the
@@ -307,12 +341,14 @@ private fun Toolbar(state: EditorState, model: EditorViewModel) {
         ToolButton(Tool.RETOUCH, Icons.Filled.AutoFixHigh, "ترمیم", state, model) {
             model.act { openSheet(SheetContent.Retouch, SheetDetent.FULL) }
         }
-        ToolButton(Tool.IMAGE, Icons.Filled.Image, "تصویر", state, model) {}
+        ToolButton(Tool.IMAGE, Icons.Filled.Image, "بوم", state, model) {
+            model.act { openSheet(SheetContent.CanvasTools, SheetDetent.FULL) }
+        }
         ToolButton(Tool.PEN, Icons.Filled.Draw, "قلم", state, model) {
             model.act { openSheet(SheetContent.Vector, SheetDetent.FULL) }
         }
-        ToolButton(Tool.SHAPE, Icons.Filled.Star, "کتابخانه", state, model) {
-            model.act { openSheet(SheetContent.LibraryPanel, SheetDetent.FULL) }
+        ToolButton(Tool.SHAPE, Icons.Filled.Category, "شکل", state, model) {
+            model.act { openSheet(SheetContent.ShapeTools, SheetDetent.FULL) }
         }
         ToolButton(Tool.SELECT, Icons.Filled.Highlight, "انتخاب", state, model) {
             model.act { openSheet(SheetContent.PixelSelection, SheetDetent.PEEK) }
@@ -411,3 +447,6 @@ private fun BarButton(
         )
     }
 }
+
+/** What the picker accepts. Every still image; video is deliberately not part of this app. */
+private const val IMAGE_MIME = "image/*"

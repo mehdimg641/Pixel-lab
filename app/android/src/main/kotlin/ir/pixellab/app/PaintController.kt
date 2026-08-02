@@ -50,6 +50,15 @@ class PaintController(private val assets: AssetStore) {
     /** True once the stamp knows where to copy from, so the UI can stop asking. */
     val cloneReady: Boolean get() = anchor != null
 
+    /**
+     * True while the next canvas tap means "copy from here" rather than "paint here".
+     *
+     * A touch screen has no alt-click, and the alternative — a long press — is already the gesture
+     * that picks a buried layer. An explicitly armed state is slower by one press and is never
+     * ambiguous about what the next touch will do.
+     */
+    var armingCloneSource: Boolean by mutableStateOf(false)
+
     private var cloneOffset: Vec2? = null
 
     /**
@@ -70,6 +79,7 @@ class PaintController(private val assets: AssetStore) {
     fun setCloneSource(at: Vec2?) {
         anchor = at
         cloneOffset = null
+        armingCloneSource = false
     }
 
     /**

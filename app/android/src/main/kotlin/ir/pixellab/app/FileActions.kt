@@ -120,6 +120,89 @@ private fun availableBytes(context: Context): Long {
 
 private const val MEGABYTE = 1024L * 1024L
 
+/**
+ * Reads an image the user picked, as pixels and a name.
+ *
+ * Through the project's own decoders rather than through `BitmapFactory`, so a file that this app
+ * can open in its file list is a file it can also place as a layer — the two would otherwise
+ * disagree, and the disagreement would show up as "this app supports TGA but will not let me use
+ * one".
+ *
+ * Downsampled if it is enormous. A 48-megapixel photograph placed at full resolution is nearly two
+ * hundred megabytes of pixels before anything is drawn, and the user asked for a layer, not for the
+ * app to be killed.
+ */
+suspend fun loadImage(
+    context: Context,
+    uri: android.net.Uri,
+): Result<Pair<ir.pixellab.core.codec.RasterImage, String>> = withContext(Dispatchers.IO) {
+    runCatching {
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: throw java.io.IOException("فایل باز نشد")
+        val decoded = Codecs.decode(bytes)
+        val name = displayName(context, uri) ?: "تصویر"
+        downsampled(decoded) to name
+    }
+}
+
+/**
+ * Halves the image until it fits, rather than resampling to an exact size.
+ *
+ * Whole-pixel steps average a fixed block, which is both fast and free of the ringing a general
+ * resampler leaves on a photograph. The layer's own scale then does the rest, on the GPU, at
+ * whatever zoom the user is actually looking at.
+ */
+private fun downsampled(image: ir.pixellab.core.codec.RasterImage): ir.pixellab.core.codec.RasterImage {
+    var step = 1
+    while ((image.width / step).toLong() * (image.height / step) > MAX_PLACED_PIXELS) step *= 2
+    if (step == 1) return image
+
+    val width = (image.width / step).coerceAtLeast(1)
+    val height = (image.height / step).coerceAtLeast(1)
+    val pixels = IntArray(width * height)
+    for (y in 0 until height) {
+        for (x in 0 until width) {
+            var a = 0
+            var r = 0
+            var g = 0
+            var b = 0
+            var count = 0
+            for (dy in 0 until step) {
+                val sy = y * step + dy
+                if (sy >= image.height) break
+                for (dx in 0 until step) {
+                    val sx = x * step + dx
+                    if (sx >= image.width) break
+                    val p = image[sx, sy]
+                    // Weighted by alpha, so averaging a cut-out's edge does not drag transparent
+                    // black into the colours that survive.
+                    val pa = (p ushr 24) and 0xFF
+                    a += pa
+                    r += ((p shr 16) and 0xFF) * pa
+                    g += ((p shr 8) and 0xFF) * pa
+                    b += (p and 0xFF) * pa
+                    count++
+                }
+            }
+            pixels[y * width + x] = if (count == 0 || a == 0) {
+                0
+            } else {
+                ((a / count) shl 24) or ((r / a) shl 16) or ((g / a) shl 8) or (b / a)
+            }
+        }
+    }
+    return ir.pixellab.core.codec.RasterImage(width, height, pixels)
+}
+
+private fun displayName(context: Context, uri: android.net.Uri): String? =
+    context.contentResolver
+        .query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+        ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+        ?.substringBeforeLast('.')
+
+/** About twelve megapixels: more than any phone screen resolves, and a quarter of a gigabyte less. */
+private const val MAX_PLACED_PIXELS = 12L * 1024 * 1024
+
 /** Reads a saved project back. */
 suspend fun openProject(file: java.io.File): Result<Project> = withContext(Dispatchers.IO) {
     runCatching { Storage.loadProject(file) }

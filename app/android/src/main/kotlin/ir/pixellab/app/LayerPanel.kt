@@ -20,7 +20,12 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.FolderOff
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.NorthWest
+import androidx.compose.material.icons.filled.SubdirectoryArrowRight
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Masks
@@ -37,6 +42,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.editor.EditorState
+import ir.pixellab.core.editor.SheetContent
+import ir.pixellab.core.editor.SheetDetent
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.ShapeGeometry
 import ir.pixellab.core.model.Vec2
@@ -57,6 +64,7 @@ import ir.pixellab.core.model.VectorMask
 fun LayerPanel(state: EditorState, model: EditorViewModel) {
     Column(Modifier.fillMaxWidth()) {
         StructureBar(state, model)
+        OrderBar(state, model)
         LazyColumn(Modifier.fillMaxWidth()) {
             items(flatten(state.document.layers), key = { it.layer.id.value }) { row ->
                 LayerRow(row, selected = row.layer.id in state.selection, state = state, model = model)
@@ -157,6 +165,68 @@ private fun StructureBar(state: EditorState, model: EditorViewModel) {
             model.act { addInstance(primary!!, nextLayerId("instance")) }
         }
     }
+}
+
+/**
+ * Where a layer sits, and how it blends.
+ *
+ * Buttons rather than drag-to-reorder. A drag inside a sheet on a phone competes with the sheet's
+ * own vertical scroll and with the drag that dismisses it; two of the three gestures then feel
+ * unreliable. One press moving one place is slower to think about and never wrong.
+ */
+@Composable
+private fun OrderBar(state: EditorState, model: EditorViewModel) {
+    val primary = state.selection.primary
+    val layer = primary?.let { state.document.findLayer(it) }
+    val target = primary?.let { groupBelow(state.document.layers, it) }
+    val nested = primary != null && state.document.layers.none { it.id == primary }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Ink.Chrome)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        StructureButton(Icons.Filled.KeyboardArrowUp, "بالا", enabled = layer != null) {
+            model.act { raiseLayer(primary!!) }
+        }
+        StructureButton(Icons.Filled.KeyboardArrowDown, "پایین", enabled = layer != null) {
+            model.act { lowerLayer(primary!!) }
+        }
+        StructureButton(Icons.Filled.SubdirectoryArrowRight, "به گروه", enabled = target != null) {
+            model.act { moveIntoGroup(primary!!, target!!) }
+        }
+        StructureButton(Icons.Filled.NorthWest, "از گروه بیرون", enabled = nested) {
+            model.act { moveOutOfGroup(primary!!) }
+        }
+        StructureButton(Icons.Filled.Tune, "پارامترها", enabled = layer != null) {
+            model.act { openSheet(SheetContent.LayerParameters(primary!!), SheetDetent.FULL) }
+        }
+    }
+}
+
+/**
+ * The group a layer would drop into: the nearest one below it among its own siblings.
+ *
+ * Below rather than above, because "into the group" on a stack read front-to-back means the group
+ * the layer is currently sitting on top of. Only siblings are considered — moving a layer into a
+ * group somewhere else in the tree is a different intent, and guessing at it moves the user's work
+ * somewhere they did not ask for.
+ */
+private fun groupBelow(layers: List<Layer>, id: ir.pixellab.core.model.LayerId): ir.pixellab.core.model.LayerId? {
+    val index = layers.indexOfFirst { it.id == id }
+    if (index >= 0) {
+        for (below in index - 1 downTo 0) {
+            (layers[below] as? Layer.Group)?.let { return it.id }
+        }
+        return null
+    }
+    for (layer in layers) {
+        if (layer is Layer.Group) groupBelow(layer.children, id)?.let { return it }
+    }
+    return null
 }
 
 @Composable

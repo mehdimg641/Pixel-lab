@@ -43,8 +43,23 @@ import ir.pixellab.core.render.ParameterSpec
 @Composable
 fun AdjustmentSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
     val selected = state.primaryLayer as? Layer.AdjustmentLayer
+    // Local rather than editor state: which of the two tabs is open is not something the document
+    // knows about, and it is not worth an undo step.
+    var filters by remember { mutableStateOf(false) }
 
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+        // Two tabs, and the label on each says which kind of change it makes. A user who has just
+        // spent an hour on non-destructive adjustment layers needs to be told, once, that the
+        // things on the other tab are permanent.
+        SheetChips {
+            SheetChip("تنظیم‌های برگشت‌پذیر", chosen = !filters) { filters = false }
+            SheetChip("فیلترهای پیکسلی", chosen = filters) { filters = true }
+        }
+        if (filters) {
+            FilterSheetBody(state, model)
+            return@Column
+        }
+
         AddRow(model)
         if (selected != null) {
             Text(

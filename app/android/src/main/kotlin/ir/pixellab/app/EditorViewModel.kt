@@ -26,6 +26,8 @@ import ir.pixellab.core.model.Vec2
 import ir.pixellab.engine.android.AssetSource
 import ir.pixellab.engine.android.FontResolver
 import ir.pixellab.engine.android.LayerMeasure
+import ir.pixellab.engine.android.toMaskImage
+import ir.pixellab.engine.android.toRaster
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -403,6 +405,18 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun routeToBrush(gesture: CanvasGesture): Boolean {
         if (state.tool != Tool.BRUSH) return false
         val canvasPoint = { screen: Vec2 -> state.viewport.toCanvas(screen) }
+
+        // The armed clone source swallows the whole gesture, including the drag that would otherwise
+        // paint. Letting a drag through would set the source and then immediately paint over it.
+        if (paint.armingCloneSource) {
+            when (gesture) {
+                is CanvasGesture.Tap -> paint.setCloneSource(canvasPoint(gesture.position))
+                is CanvasGesture.DragEnd -> paint.setCloneSource(canvasPoint(gesture.position))
+                else -> Unit
+            }
+            return true
+        }
+
         return when (gesture) {
             is CanvasGesture.DragStart -> paint.begin(state.primaryLayer, canvasPoint(gesture.position), 1f)
             is CanvasGesture.Drag -> {
@@ -576,6 +590,205 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         undone.clear()
     }
 
+    // ---- the canvas ------------------------------------------------------------------------------
+
+    fun resizeCanvas(width: Int, height: Int, anchor: ir.pixellab.core.editor.CanvasAnchor) = edit {
+        resizeCanvas(width, height, anchor)
+    }
+
+    /**
+     * Crops to whatever the user has selected.
+     *
+     * To the selection's bounding box rather than to its shape: a crop produces a rectangular canvas
+     * by definition, and the coverage outside the shape is still wanted — cropping to an ellipse
+     * would have to decide whether to erase the corners, which is a different operation entirely.
+     */
+    fun cropToSelection(): Boolean {
+        val box = select.selection?.bounds ?: return false
+        edit { cropCanvas(box) }
+        // The selection was in the old canvas's coordinates and now means somewhere else entirely.
+        select.clear()
+        paint.selection = null
+        return true
+    }
+
+    /** The colour behind everything — Photoshop's background layer, without the layer. */
+    fun setCanvasBackground(fill: Fill?) = edit { setCanvasBackground(fill) }
+
+    // ---- pixels ----------------------------------------------------------------------------------
+
+    /**
+     * Fills the selection, or the whole layer when nothing is selected.
+     *
+     * On a paint layer, creating one if the selected layer cannot hold pixels. A fill that reported
+     * "select an image layer first" would be right and useless: what the user wants is the colour on
+     * the canvas, and the layer is an implementation detail they did not ask about.
+     */
+    suspend fun fillSelection(color: Color, preserveTransparency: Boolean = false) {
+        val target = paintTarget() ?: return
+        val source = assetStore.source.load(target) ?: return
+        val chosen = select.selection
+        val result = withContext(kotlinx.coroutines.Dispatchers.Default) {
+            ir.pixellab.engine.android.PixelFilters.fill(source, color, chosen, preserveTransparency)
+        }
+        commitPixels(target, source, result)
+    }
+
+    /** Clears the selection to transparent — the delete key. */
+    suspend fun eraseSelection() {
+        val layer = state.primaryLayer as? Layer.Image ?: return
+        val source = assetStore.source.load(layer.asset) ?: return
+        val chosen = select.selection
+        val result = withContext(kotlinx.coroutines.Dispatchers.Default) {
+            ir.pixellab.engine.android.PixelFilters.clear(source, chosen)
+        }
+        commitPixels(layer.asset, source, result)
+    }
+
+    suspend fun blur(radius: Float) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters.gaussian(image, radius, select.selection)
+    }
+
+    /**
+     * Spin or zoom blur, centred on the selection when there is one.
+     *
+     * On the selection rather than always on the middle of the layer: the centre is the whole effect,
+     * and a user who has drawn a marquee around a face has already told us where it is.
+     */
+    suspend fun radialBlur(amount: Float, kind: ir.pixellab.core.imaging.RadialBlur.Kind) {
+        val chosen = select.selection
+        val box = chosen?.bounds
+        transform { image ->
+            val centre = if (box != null) {
+                Vec2((box.left + box.right) / 2f, (box.top + box.bottom) / 2f)
+            } else {
+                Vec2(image.width / 2f, image.height / 2f)
+            }
+            ir.pixellab.engine.android.PixelFilters.radial(image, amount, kind, centre, chosen)
+        }
+    }
+
+    /** Where a fill lands: the selected image layer, or a new one made for the purpose. */
+    private fun paintTarget(): ir.pixellab.core.model.AssetId? {
+        (state.primaryLayer as? Layer.Image)?.let { return it.asset }
+        addPaintLayer(name = "پر شده")
+        return (state.primaryLayer as? Layer.Image)?.asset
+    }
+
+    // ---- selection -------------------------------------------------------------------------------
+
+    /**
+     * Finds the subject of the selected image, with no model involved.
+     *
+     * Off the main thread: the saliency pass walks every pixel twice, which on a full-resolution
+     * photograph is long enough to drop frames.
+     */
+    suspend fun selectSubject(sensitivity: Float = 0.5f): Boolean {
+        val image = sampledPixels() ?: return false
+        val found = withContext(kotlinx.coroutines.Dispatchers.Default) {
+            ir.pixellab.core.paint.SubjectSelection.select(image.pixels, image.width, image.height, sensitivity)
+        }
+        if (found.isEmpty) return false
+        select.use(found)
+        paint.selection = select.selection
+        return true
+    }
+
+    /** Turns the current selection into a mask on the selected layer, non-destructively. */
+    fun maskFromSelection(): Boolean {
+        val id = state.selection.primary ?: return false
+        val chosen = select.selection ?: return false
+        val asset = ir.pixellab.core.model.AssetId("$MASK_PREFIX${id.value}")
+        assetStore.put(asset, chosen.toRaster().toMaskImage())
+        paint.bumpGeneration()
+        edit { setMask(id, ir.pixellab.core.model.LayerMask(asset = asset)) }
+        return true
+    }
+
+    fun removeMask() {
+        val id = state.selection.primary ?: return
+        edit { setMask(id, null) }
+    }
+
+    // ---- layers ----------------------------------------------------------------------------------
+
+    /**
+     * Replaces a text layer with its outlines.
+     *
+     * The same id, so everything referring to the layer — a clipped layer above it, an instance of
+     * it — keeps working. Giving the shape a new id would silently break every one of those.
+     */
+    fun convertTextToShape(): Boolean {
+        val layer = state.primaryLayer as? Layer.Text ?: return false
+        val shape = ir.pixellab.engine.android.TextToShape.convert(layer, fonts) ?: return false
+        edit { replaceLayer(layer.id) { shape } }
+        bounds.invalidate(layer.id)
+        return true
+    }
+
+    fun canConvertToShape(): Boolean =
+        state.primaryLayer?.let { ir.pixellab.engine.android.TextToShape.canConvert(it, fonts) } == true
+
+    /**
+     * Places an image from storage as a new layer.
+     *
+     * Scaled to fit rather than placed at its own pixel size: photographs are routinely larger than
+     * the canvas, and a layer that arrives four times the size of the artboard has its handles
+     * somewhere off screen where the user cannot reach them.
+     */
+    fun placeImage(image: ir.pixellab.core.codec.RasterImage, name: String): LayerId = edit {
+        val id = nextLayerId("image")
+        val asset = ir.pixellab.core.model.AssetId(id.value)
+        assetStore.put(asset, image)
+        paint.bumpGeneration()
+
+        val canvas = state.document.canvas
+        val scale = minOf(
+            canvas.width.toFloat() / image.width,
+            canvas.height.toFloat() / image.height,
+            1f,
+        )
+        addLayer(
+            Layer.Image(
+                id = id,
+                asset = asset,
+                name = name,
+                transform = Transform(
+                    translation = Vec2(
+                        (canvas.width - image.width * scale) / 2f,
+                        (canvas.height - image.height * scale) / 2f,
+                    ),
+                    scale = Vec2(scale, scale),
+                ),
+            ),
+        )
+    }
+
+    /** Adds a shape at a readable size in the middle of the canvas. */
+    fun addShape(geometry: ShapeGeometry, name: String): LayerId = edit {
+        val canvas = state.document.canvas
+        val layer = Layer.Shape(id = nextLayerId("shape"), geometry = geometry, name = name)
+        val box = bounds.of(layer)
+        addLayer(
+            layer.copy(
+                transform = Transform(
+                    translation = Vec2(
+                        (canvas.width - box.width) / 2f,
+                        (canvas.height - box.height) / 2f,
+                    ),
+                ),
+            ),
+        )
+    }
+
+    /** Edits the selected shape's geometry in place, as one undo step. */
+    fun updateShape(change: (ShapeGeometry) -> ShapeGeometry) {
+        val id = state.selection.primary ?: return
+        val layer = state.document.findLayer(id) as? Layer.Shape ?: return
+        bounds.invalidate(id)
+        edit { replaceLayer(id) { (it as Layer.Shape).copy(geometry = change(layer.geometry)) } }
+    }
+
     // ---- creating layers ---------------------------------------------------------------------
 
     /**
@@ -700,6 +913,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         /** A full turn of the slider gives a quarter turn of the image, which is already a lot. */
         const val TWIRL_DEGREES = 90f
+
+        /**
+         * Namespaces a mask asset against the layer's own pixels.
+         *
+         * Without it a mask made for an image layer would be stored under the same id as the image
+         * and overwrite it — the layer would become its own mask.
+         */
+        const val MASK_PREFIX = "mask-"
 
         /** The platform's 48dp minimum, in screen pixels, before the zoom is divided out. */
         const val TOUCH_RADIUS = 24f

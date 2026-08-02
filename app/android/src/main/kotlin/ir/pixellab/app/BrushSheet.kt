@@ -67,9 +67,50 @@ fun BrushSheetBody(model: EditorViewModel, modifier: Modifier = Modifier) {
             model.paint.preset = preset.copy(smoothing = it.coerceIn(0f, 0.95f))
         }
 
-        if (!preset.erase) {
+        if (preset.clone) {
+            CloneSource(model)
+        } else if (!preset.erase) {
             ColorRow(preset.color) { model.paint.preset = preset.copy(color = it) }
         }
+    }
+}
+
+/**
+ * Where the clone stamp copies from.
+ *
+ * Photoshop sets the source with alt-click, which a touch screen has no equivalent of. A button that
+ * arms the *next* tap is the honest substitute: the user is told what the next thing they do will
+ * mean, rather than discovering it by painting something they did not intend.
+ */
+@Composable
+private fun CloneSource(model: EditorViewModel) {
+    val source = model.paint.cloneSource
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Text(
+            when {
+                model.paint.armingCloneSource -> "حالا روی بوم، جایی که می‌خواهید از آن کپی شود را بزنید"
+                source == null -> "هنوز مبدأیی انتخاب نشده"
+                else -> "مبدأ: ${source.x.toInt()}، ${source.y.toInt()}"
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (model.paint.armingCloneSource) Ink.Accent else Ink.Text,
+        )
+        Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            SheetChip(
+                "انتخاب مبدأ",
+                chosen = model.paint.armingCloneSource,
+            ) {
+                model.paint.armingCloneSource = !model.paint.armingCloneSource
+            }
+            SheetChip("پاک‌کردن مبدأ", enabled = source != null) { model.paint.setCloneSource(null) }
+        }
+        Text(
+            // The behaviour people rely on and the reason the offset is not re-taken every stroke.
+            "فاصلهٔ انگشت تا مبدأ ثابت می‌ماند، پس چند پاس پشت سر هم با هم جور درمی‌آید",
+            style = MaterialTheme.typography.labelSmall,
+            color = Ink.TextMuted,
+            modifier = Modifier.padding(top = 6.dp),
+        )
     }
 }
 

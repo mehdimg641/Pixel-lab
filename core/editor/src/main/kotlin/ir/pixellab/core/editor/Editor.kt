@@ -664,6 +664,23 @@ class Editor(
         )
     }
 
+    /**
+     * The colour behind everything.
+     *
+     * On the canvas rather than as a bottom layer, which is what Photoshop's Background layer is and
+     * why that layer is special-cased everywhere in it — it cannot be moved, reordered or given
+     * transparency. Keeping it a property of the canvas removes all of those exceptions, and null is
+     * a real value meaning a transparent document.
+     */
+    fun setCanvasBackground(fill: ir.pixellab.core.model.Fill?) {
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(canvas = state.document.canvas.copy(background = fill)),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+    }
+
     private fun applyCanvas(canvas: ir.pixellab.core.model.CanvasSpec, offset: Vec2) {
         history.record(state.document)
         // Top-level layers only: a layer inside a group already moves with its parent, and shifting
@@ -677,6 +694,9 @@ class Editor(
         }
         state = state.copy(
             document = state.document.copy(canvas = canvas, layers = moved),
+            // The stored camera was framed for a canvas that no longer exists; restoring it when the
+            // sheet closes would jump the user somewhere off the new artboard.
+            viewportBeforeSheet = null,
             canUndo = history.canUndo,
             canRedo = history.canRedo,
         )
