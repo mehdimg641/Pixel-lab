@@ -22,6 +22,7 @@ import ir.pixellab.core.model.ShapeGeometry
 import ir.pixellab.core.model.TextSpec
 import ir.pixellab.core.model.Transform
 import ir.pixellab.core.model.Vec2
+import ir.pixellab.engine.android.AssetSource
 import ir.pixellab.engine.android.FontResolver
 import ir.pixellab.engine.android.LayerMeasure
 import kotlinx.coroutines.launch
@@ -53,7 +54,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      * second implementation for the chrome is the standard way this goes wrong: the handles end up
      * drawn around a box the editor never used.
      */
-    val bounds = LayerMeasure()
+    /** Decoded masks and placed images, shared by the renderer and the measurer. */
+    val assetStore = AssetStore()
+
+    val assets: AssetSource get() = assetStore.source
+
+    val bounds = LayerMeasure(images = assetStore.sizes)
 
     private val editor = Editor(startingDocument(), bounds)
 
@@ -61,6 +67,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         private set
 
     init {
+        // A smart object is measured through its source, and the source is wherever the document
+        // currently has it — a captured copy would size an instance from a layer that has since
+        // been resized.
+        bounds.sources = { id -> editor.state.document.findLayer(id) }
+
         // Off the main thread from the first frame: the canvas has to draw before the library is
         // known, and text arrives when it is.
         viewModelScope.launch {
@@ -128,6 +139,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         replaceDocument(document, recordHistory = false)
         fitCanvas()
     }
+
+    /** Opens a whole project: its document and the assets its masks and images refer to. */
+    fun openProject(project: ir.pixellab.core.codec.Project) {
+        openDocument(project.document)
+        viewModelScope.launch { assetStore.load(project) }
+    }
+
+    /** What a save writes: the document plus every asset it refers to. */
+    fun currentProject(): ir.pixellab.core.codec.Project =
+        ir.pixellab.core.codec.Project(state.document, assets = assetStore.encoded())
 
     // ---- creating layers ---------------------------------------------------------------------
 

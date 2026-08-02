@@ -57,6 +57,24 @@ class CanvasSurface @JvmOverloads constructor(
     private val fontsChanged = AtomicBoolean(false)
 
     /**
+     * Where masks and patterns come from.
+     *
+     * Separate from the fonts for the same reason: assets are decoded off the main thread and
+     * arrive after the first frame, so the canvas has to be able to draw without them and redraw
+     * once they land.
+     */
+    @Volatile
+    var assets: AssetSource = AssetSource.NONE
+        set(value) {
+            if (value === field) return
+            field = value
+            assetsChanged.set(true)
+            synchronized(this) { (this as Object).notifyAll() }
+        }
+
+    private val assetsChanged = AtomicBoolean(false)
+
+    /**
      * Renders the document to a file, on the thread that owns the GL context.
      *
      * An export needs the same programs, the same texture pool and the same context the canvas is
@@ -153,6 +171,7 @@ class CanvasSurface @JvmOverloads constructor(
         try {
             while (running.get()) {
                 if (fontsChanged.getAndSet(false)) renderer.setFonts(fonts)
+                if (assetsChanged.getAndSet(false)) renderer.assets = assets
                 drainExports(exporter)
 
                 val frame = pending.getAndSet(null)

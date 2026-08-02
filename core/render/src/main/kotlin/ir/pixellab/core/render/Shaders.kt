@@ -544,9 +544,9 @@ object Shaders {
     val COMPOSITE = ShaderProgram(
         id = "composite",
         fragment = BlendShaders.compositeFragment,
-        floatUniforms = setOf("uOpacity"),
-        intUniforms = setOf("uBlendMode"),
-        samplers = setOf("uSource", "uBackdrop"),
+        floatUniforms = setOf("uOpacity", "uMaskDensity"),
+        intUniforms = setOf("uBlendMode", "uMaskFlags"),
+        samplers = setOf("uSource", "uBackdrop", "uMask", "uVectorMask", "uClip"),
     )
 
     /**
@@ -602,11 +602,28 @@ object Shaders {
         vec2s = setOf("uDirection"),
     )
 
+    /**
+     * A straight copy, alpha included.
+     *
+     * Needed because [PRESENT] deliberately flattens onto the surround colour and so cannot be used
+     * to duplicate a buffer: an isolated group and a clipping group both have to keep a buffer's
+     * alpha exactly as it was, and a copy that returns opaque pixels turns a group's transparent
+     * margin into a grey rectangle.
+     */
+    val COPY = program(
+        id = "copy",
+        body = """
+            void main() {
+                fragColor = texture(uSource, vUv);
+            }
+        """,
+    )
+
     /** Every program, keyed by the id an effect module puts in its descriptor. */
     val ALL: Map<String, ShaderProgram> = listOf(
         SDF_SEED, SDF_FLOOD, SDF_RESOLVE, STROKE, SHADOW, GLOW, INNER_SHADOW, BEVEL, SATIN, OVERLAY,
         EXTRUDE_STEP, REFLECTION, CHROMATIC_OFFSET, BACKDROP_BLUR, NOISE, EDGE_ROUGHEN, BLUR, FILL,
-        COMPOSITE, PRESENT,
+        COMPOSITE, PRESENT, COPY,
     ).associateBy { it.id }
 
     operator fun get(id: String): ShaderProgram? = ALL[id]

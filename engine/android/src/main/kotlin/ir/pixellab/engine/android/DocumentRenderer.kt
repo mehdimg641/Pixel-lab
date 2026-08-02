@@ -1,13 +1,19 @@
 package ir.pixellab.engine.android
 
+import ir.pixellab.core.canvas.Viewport
 import ir.pixellab.core.fonts.FontFile
+import ir.pixellab.core.model.BlendMode
 import ir.pixellab.core.model.Document
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.LayerId
+import ir.pixellab.core.model.LayerMask
 import ir.pixellab.core.model.Rect
 import ir.pixellab.core.model.ShapeGeometry
+import ir.pixellab.core.model.Transform
 import ir.pixellab.core.model.Vec2
-import ir.pixellab.core.canvas.Viewport
+import ir.pixellab.core.model.VectorMask
+import ir.pixellab.core.model.with
+import ir.pixellab.core.model.withStyle
 import ir.pixellab.core.render.Affine
 import ir.pixellab.core.render.BlendShaders
 import ir.pixellab.core.render.Compositing
@@ -30,17 +36,6 @@ import ir.pixellab.core.render.TextureHandle
  */
 data class LayerContent(val bounds: Rect, val texture: TextureHandle, val revision: Int, val key: Int)
 
-/**
- * Composites a whole document.
- *
- * The division of labour is the point: `core:render` decides *what* to draw, `AndroidGlDevice` knows
- * *how* to issue it, and this class only decides *when* — which layers need re-rasterising, which
- * order they composite in, and when a silhouette can be reused rather than rebuilt.
- *
- * Reuse is the difference between an editor that tracks the finger and one that does not. Dragging
- * a layer changes its transform, not its pixels: re-rasterising text on every frame of a drag would
- * re-shape a paragraph sixty times a second for no visible gain.
- */
 /**
  * Supplies the font a text layer should be shaped with.
  *
@@ -68,6 +63,33 @@ fun interface FontResolver {
     }
 }
 
+/**
+ * Where a mask's pixels come from.
+ *
+ * A mask is stored in the document as an asset id rather than as pixels, because a mask is often
+ * the largest thing in a project and the same one is often shared between layers. The store that
+ * owns decoded assets supplies them through this.
+ */
+fun interface AssetSource {
+    /** Straight ARGB pixels, or null when the asset has not been loaded. */
+    fun load(id: ir.pixellab.core.model.AssetId): ir.pixellab.core.codec.RasterImage?
+
+    companion object {
+        val NONE = AssetSource { null }
+    }
+}
+
+/**
+ * Composites a whole document.
+ *
+ * The division of labour is the point: `core:render` decides *what* to draw, `AndroidGlDevice` knows
+ * *how* to issue it, and this class only decides *when* — which layers need re-rasterising, which
+ * order they composite in, and when a silhouette can be reused rather than rebuilt.
+ *
+ * Reuse is the difference between an editor that tracks the finger and one that does not. Dragging
+ * a layer changes its transform, not its pixels: re-rasterising text on every frame of a drag would
+ * re-shape a paragraph sixty times a second for no visible gain.
+ */
 class DocumentRenderer(
     private val device: GlDevice,
     private val text: TextRasterizer = TextRasterizer(),
@@ -88,19 +110,55 @@ class DocumentRenderer(
         content.keys.toList().forEach(::invalidate)
         measured.clear()
     }
+
+    /** Where masks and patterns come from. Replacing it drops every cached mask texture. */
+    var assets: AssetSource = AssetSource.NONE
+        set(value) {
+            if (value === field) return
+            field = value
+            clearMasks()
+        }
+
     private val executor = GraphExecutor(device, textures = effectTextures)
     private val content = HashMap<LayerId, LayerContent>()
 
     /**
-     * Two canvas-sized buffers, swapped after every layer.
+     * A pair of buffers a stack of layers composites into, swapped after every layer.
      *
      * A layer has to *read* what is beneath it: the four non-separable blend modes are functions of
      * the destination, and frosted glass samples it outright. Fixed-function blending cannot express
      * either, so the composite reads one buffer and writes the other.
+     *
+     * There is one of these per isolation level rather than one per document. An isolating group,
+     * and every clipping group, needs its children composited among themselves before the result
+     * meets the backdrop — which is precisely a second pair.
      */
-    private var canvasFront: TextureHandle? = null
-    private var canvasBack: TextureHandle? = null
+    private class Surface(val front: TextureHandle, val back: TextureHandle) {
+        /** Which of the two currently holds the result. */
+        var flipped = false
+
+        val read: TextureHandle get() = if (flipped) back else front
+        val write: TextureHandle get() = if (flipped) front else back
+
+        fun swap() {
+            flipped = !flipped
+        }
+    }
+
+    private var canvas: Surface? = null
     private var canvasSize = Vec2.ZERO
+    private var canvasBytesPerPixel = 4
+
+    /**
+     * Spare canvas-sized surfaces, reused across frames.
+     *
+     * Allocating a pair per isolating group per frame is two texture allocations and two clears at
+     * sixty hertz; a design with nested groups would spend more time allocating than drawing.
+     */
+    private val freeSurfaces = ArrayDeque<Surface>()
+    private val freeTextures = ArrayDeque<TextureHandle>()
+    private val liveSurfaces = ArrayList<Surface>()
+    private val liveTextures = ArrayList<TextureHandle>()
 
     /** Bumped when a layer's *pixels* change, as opposed to where it sits. */
     private val revisions = HashMap<LayerId, Int>()
@@ -119,10 +177,30 @@ class DocumentRenderer(
     }
 
     /**
+     * Everything one frame needs that does not change inside it.
+     *
+     * Threaded through rather than held in fields because the walk is recursive — groups nest, and
+     * an instance re-enters the walk somewhere else in the tree entirely.
+     */
+    private class Frame(
+        val document: Document,
+        val scale: Float,
+        val effectsBypassed: Boolean,
+        val errors: MutableList<ExecutionError>,
+    ) {
+        /** Sources currently being rendered, so an instance pointing at its own ancestor stops. */
+        val instances = ArrayList<LayerId>()
+
+        val bytesPerPixel: Int get() = document.color.precision.bytesPerPixel
+
+        /** The artboard in canvas units, which is the extent of every isolated buffer. */
+        val canvasRect: Rect get() = Rect(0f, 0f, document.canvas.width.toFloat(), document.canvas.height.toFloat())
+    }
+
+    /**
      * Renders every layer of [document] into the bound target.
      *
      * @param scale export multiplier; 1 for the on-screen canvas
-     * @param fonts resolved fonts by layer, since shaping is the caller's concern
      */
     fun render(
         document: Document,
@@ -130,21 +208,22 @@ class DocumentRenderer(
         effectsBypassed: Boolean = false,
         viewport: Viewport? = null,
     ) {
-        val errors = ArrayList<ExecutionError>()
+        val frame = Frame(document, scale, effectsBypassed, ArrayList())
         val width = kotlin.math.ceil(document.canvas.width * scale).toInt().coerceAtLeast(1)
         val height = kotlin.math.ceil(document.canvas.height * scale).toInt().coerceAtLeast(1)
-        prepareCanvas(width, height, document.color.precision.bytesPerPixel)
+        prepareCanvas(width, height, frame.bytesPerPixel)
 
-        device.bindTarget(canvasFront)
+        val surface = canvas ?: return
+        surface.flipped = false
+        device.bindTarget(surface.read)
         device.clearTarget()
-        for (layer in document.layers) {
-            renderLayer(document, layer, scale, effectsBypassed, errors)
-        }
+        renderStack(frame, document.layers, surface)
 
         // The camera applies once, here, rather than to every layer: panning re-runs one textured
         // quad instead of every effect stack, which is what keeps the canvas under the finger.
         present(document, viewport)
-        lastErrors = errors
+        lastErrors = frame.errors
+        recycleAll()
     }
 
     /**
@@ -164,11 +243,11 @@ class DocumentRenderer(
     fun blitTo(document: Document, target: TextureHandle) = present(document, viewport = null, target = target)
 
     private fun present(document: Document, viewport: Viewport?, target: TextureHandle?) {
-        val canvas = canvasFront ?: return
+        val source = canvas?.read ?: return
         device.bindTarget(target)
         device.setBlend(false)
         if (!device.useProgram(Shaders.PRESENT.id)) return
-        device.bindInput("uSource", canvas)
+        device.bindInput("uSource", source)
 
         val map = if (viewport == null || viewport.screenSize == Vec2.ZERO) {
             Affine.IDENTITY
@@ -192,54 +271,259 @@ class DocumentRenderer(
     /** Allocates or resizes the composite buffers. */
     private fun prepareCanvas(width: Int, height: Int, bytesPerPixel: Int) {
         val size = Vec2(width.toFloat(), height.toFloat())
-        if (canvasFront != null && canvasSize == size) return
-        canvasFront?.let(device::deleteTexture)
-        canvasBack?.let(device::deleteTexture)
-        canvasFront = device.createTexture(width, height, bytesPerPixel)
-        canvasBack = device.createTexture(width, height, bytesPerPixel)
+        if (canvas != null && canvasSize == size && canvasBytesPerPixel == bytesPerPixel) return
+        canvas?.let { device.deleteTexture(it.front); device.deleteTexture(it.back) }
+        // Every spare surface is the old size, so keeping them would hand a group a buffer that
+        // does not line up with the canvas it composites onto.
+        discardPools()
+        canvas = Surface(
+            device.createTexture(width, height, bytesPerPixel),
+            device.createTexture(width, height, bytesPerPixel),
+        )
         canvasSize = size
+        canvasBytesPerPixel = bytesPerPixel
     }
 
-    /** Peak memory the current document would need, so a big export can be refused before it starts. */
+    /**
+     * Peak memory the current document would need, so a big export can be refused before it starts.
+     *
+     * Isolation is counted: every nested isolating or clipping group holds a pair of canvas-sized
+     * buffers plus a clip source for as long as its children are being drawn, and on a large export
+     * those dominate everything the effect graphs ask for.
+     */
     fun estimateBytes(document: Document, scale: Float = 1f): Long {
-        val graphs = document.layers.mapNotNull { layer ->
+        val graphs = document.walk().mapNotNull { layer ->
             graphFor(document, layer, scale, effectsBypassed = false)
+        }.toList()
+        val width = kotlin.math.ceil(document.canvas.width * scale).toDouble()
+        val height = kotlin.math.ceil(document.canvas.height * scale).toDouble()
+        val buffer = (width * height * document.color.precision.bytesPerPixel).toLong()
+        val isolation = buffer * SURFACE_BUFFERS * isolationDepth(document.layers)
+        return MemoryBudget.estimate(graphs, document.canvas, document.color) + isolation
+    }
+
+    /** How many isolated surfaces can be live at once, which is the deepest nesting in the tree. */
+    private fun isolationDepth(layers: List<Layer>): Int {
+        var deepest = 0
+        var index = 0
+        while (index < layers.size) {
+            val layer = layers[index]
+            var next = index + 1
+            while (next < layers.size && layers[next].clipped) next++
+            val clips = next > index + 1
+
+            val inner = if (layer is Layer.Group) {
+                isolationDepth(layer.children) + if (isolating(layer)) 1 else 0
+            } else {
+                0
+            }
+            deepest = maxOf(deepest, inner + if (clips) 1 else 0)
+            index = next
         }
-        return MemoryBudget.estimate(graphs, document.canvas, document.color)
+        return deepest
     }
 
     fun dispose() {
         content.values.forEach { device.deleteTexture(it.texture) }
         content.clear()
-        canvasFront?.let(device::deleteTexture)
-        canvasBack?.let(device::deleteTexture)
-        canvasFront = null
-        canvasBack = null
+        canvas?.let { device.deleteTexture(it.front); device.deleteTexture(it.back) }
+        canvas = null
         canvasSize = Vec2.ZERO
+        discardPools()
+        clearMasks()
+        whiteTexture?.let(device::deleteTexture)
+        whiteTexture = null
         effectTextures.dispose()
         executor.dispose()
     }
 
-    private fun renderLayer(
-        document: Document,
-        layer: Layer,
-        scale: Float,
-        effectsBypassed: Boolean,
-        errors: MutableList<ExecutionError>,
-    ) {
-        if (!layer.visible || layer.opacity <= 0f) return
-        if (layer is Layer.Group) {
-            // Pass-through groups composite their children straight onto the target; an isolating
-            // group needs its own buffer and is a separate step.
-            for (child in layer.children) {
-                renderLayer(document, child, scale, effectsBypassed, errors)
+    // ---- the walk --------------------------------------------------------------------------
+
+    /**
+     * Renders one stack of siblings, honouring clipping groups.
+     *
+     * A clipping group is a run in the list rather than a nesting in the tree: a layer marked
+     * clipped attaches to the first unclipped layer *below* it, and every clipped layer above that
+     * one joins the same group. Walking the list one layer at a time — the obvious implementation —
+     * cannot express that, because the base has to be rendered before its followers and then
+     * composited after them.
+     */
+    private fun renderStack(frame: Frame, layers: List<Layer>, surface: Surface) {
+        var index = 0
+        while (index < layers.size) {
+            val base = layers[index]
+            var next = index + 1
+            while (next < layers.size && layers[next].clipped) next++
+
+            if (next == index + 1) {
+                renderLayer(frame, base, surface, clip = null)
+            } else {
+                renderClippingGroup(frame, base, layers.subList(index + 1, next), surface)
             }
+            index = next
+        }
+    }
+
+    /**
+     * Photoshop's clipping group: a base and everything clipped to it.
+     *
+     * Rendered as its own unit, which is what "blend clipped layers as group" means and what
+     * Photoshop does by default. The alternative — clipping each follower straight onto the canvas
+     * with the base's alpha as an extra mask — gives a different picture as soon as the base has a
+     * blend mode or an opacity below full, because the followers would then blend with the document
+     * instead of with the base.
+     *
+     * The base's own alpha is copied aside first. It is what the followers are clipped to, and it
+     * would otherwise be overwritten by the first follower composited on top of it.
+     */
+    private fun renderClippingGroup(frame: Frame, base: Layer, clipped: List<Layer>, surface: Surface) {
+        // A hidden base hides the whole group; the followers have nothing to be clipped to.
+        if (!base.visible || base.opacity <= 0f) return
+
+        val isolated = obtainSurface(frame.bytesPerPixel)
+        // The base goes in at full strength: its opacity and blend belong to the finished group,
+        // not to the pixels its followers are clipped against.
+        renderLayer(frame, base.with(opacity = 1f, blendMode = BlendMode.NORMAL), isolated, clip = null)
+
+        val clipSource = obtainTexture(frame.bytesPerPixel)
+        copy(isolated.read, clipSource)
+
+        for (layer in clipped) {
+            renderLayer(frame, layer.with(clipped = false), isolated, clip = clipSource)
+        }
+
+        compositeTexture(
+            frame = frame,
+            source = isolated.read,
+            textureBounds = frame.canvasRect,
+            transform = Transform.IDENTITY,
+            opacity = base.opacity,
+            blendMode = base.blendMode,
+            mask = null,
+            clip = null,
+            surface = surface,
+        )
+    }
+
+    private fun renderLayer(frame: Frame, layer: Layer, surface: Surface, clip: TextureHandle?) {
+        if (!layer.visible || layer.opacity <= 0f) return
+        when (layer) {
+            is Layer.Group -> renderGroup(frame, layer, surface, clip)
+            is Layer.Instance -> renderInstance(frame, layer, surface, clip)
+            // An adjustment layer changes what is beneath it rather than adding to it, which is a
+            // different pass entirely. Drawing it as an empty layer is the honest placeholder.
+            is Layer.AdjustmentLayer -> Unit
+            else -> renderContent(frame, layer, surface, clip)
+        }
+    }
+
+    /**
+     * A group.
+     *
+     * Pass-through is not a style, it is the absence of isolation: the children composite straight
+     * onto whatever is beneath the group, so a Multiply child multiplies with the document. The
+     * moment the group has a blend mode, an opacity, a mask or an effect of its own, its children
+     * have to be flattened among themselves first — otherwise the group's opacity would be applied
+     * to each child separately and overlapping children would show through one another.
+     */
+    private fun renderGroup(frame: Frame, group: Layer.Group, surface: Surface, clip: TextureHandle?) {
+        if (!isolating(group) && clip == null) {
+            renderStack(frame, group.children, surface)
             return
         }
 
+        val isolated = obtainSurface(frame.bytesPerPixel)
+        renderStack(frame, group.children, isolated)
+
+        // The group's own effects apply to the flattened result, over the whole artboard: a drop
+        // shadow on a group is cast by the group's silhouette, not by each child's.
+        val flattened = groupAppearance(frame, group, isolated.read)
+
+        compositeTexture(
+            frame = frame,
+            source = flattened,
+            textureBounds = frame.canvasRect,
+            // A group's transform applies to the flattened artboard, so it pivots on the artboard
+            // rather than on the group's content. Photoshop has no group transform at all; this is
+            // the interpretation that keeps a transformed group predictable.
+            transform = group.transform,
+            opacity = group.opacity,
+            blendMode = group.blendMode,
+            mask = maskFor(frame, group, frame.canvasRect),
+            clip = clip,
+            surface = surface,
+        )
+    }
+
+    private fun groupAppearance(frame: Frame, group: Layer.Group, flattened: TextureHandle): TextureHandle {
+        if (frame.effectsBypassed || group.style.activeEffects.isEmpty()) return flattened
+        val plan = RenderPlanner.plan(group.style, frame.document.globalLight.angle, frame.canvasRect.height)
+        val graph = RenderGraphBuilder.build(
+            plan = plan,
+            shapeBounds = frame.canvasRect,
+            scale = frame.scale,
+            color = frame.document.color,
+            maxTextureSize = device.maxTextureSize,
+        )
+        effectTextures.layerFill = group.style.fill
+        val result = executor.execute(
+            graph = graph,
+            layerTexture = flattened,
+            backdropTexture = canvas?.read,
+            scale = frame.scale,
+            globalLightAngle = frame.document.globalLight.angle,
+            color = frame.document.color,
+        )
+        frame.errors += result.errors
+        return result.output ?: flattened
+    }
+
+    /**
+     * A smart object: a live reference to another layer.
+     *
+     * Rendered by borrowing the source's content and overriding what the instance owns — where it
+     * sits, how opaque it is, how it blends, its masks and its effects. Deliberately *not* a copy:
+     * the silhouette cache is keyed on the source's id, so twenty-nine instances of one shape
+     * rasterise once between them. That is the whole reason the reference PSDs are built this way.
+     */
+    private fun renderInstance(frame: Frame, instance: Layer.Instance, surface: Surface, clip: TextureHandle?) {
+        if (instance.source in frame.instances) {
+            // An instance whose source contains it would otherwise recurse until the stack ends.
+            frame.errors += ExecutionError(
+                Shaders.COMPOSITE.id,
+                "'${instance.name}' refers to a layer that contains it",
+            )
+            return
+        }
+        val source = frame.document.findLayer(instance.source)
+        if (source == null) {
+            frame.errors += ExecutionError(Shaders.COMPOSITE.id, "'${instance.name}' has no source layer")
+            return
+        }
+
+        val effective = source
+            .with(
+                transform = instance.transform,
+                opacity = instance.opacity,
+                blendMode = instance.blendMode,
+                visible = true,
+                mask = instance.mask ?: source.mask,
+                vectorMask = instance.vectorMask ?: source.vectorMask,
+                clipped = false,
+            )
+            // An instance with no effects of its own shows the source's; one with effects replaces
+            // them, which is how a single shape becomes twenty-nine differently-lit copies.
+            .let { if (instance.style.activeEffects.isEmpty()) it else it.withStyle(instance.style) }
+
+        frame.instances += instance.source
+        renderLayer(frame, effective, surface, clip)
+        frame.instances.removeAt(frame.instances.lastIndex)
+    }
+
+    private fun renderContent(frame: Frame, layer: Layer, surface: Surface, clip: TextureHandle?) {
         val font = fontFor(layer)
-        val graph = graphFor(document, layer, scale, effectsBypassed, font) ?: return
-        val silhouette = silhouetteFor(layer, graph.textureBounds, scale, font)
+        val graph = graphFor(frame.document, layer, frame.scale, frame.effectsBypassed, font) ?: return
+        val silhouette = silhouetteFor(layer, graph.textureBounds, frame.scale, font)
 
         effectTextures.layerFill = layer.style.fill
         val result = executor.execute(
@@ -247,67 +531,338 @@ class DocumentRenderer(
             layerTexture = silhouette,
             // Frosted glass samples what is already composited beneath, which is exactly the
             // buffer being read from this frame.
-            backdropTexture = canvasFront,
-            scale = scale,
-            globalLightAngle = document.globalLight.angle,
-            color = document.color,
+            backdropTexture = surface.read,
+            scale = frame.scale,
+            globalLightAngle = frame.document.globalLight.angle,
+            color = frame.document.color,
         )
-        errors += result.errors
+        frame.errors += result.errors
 
         val appearance = result.output
         if (appearance == null) {
-            errors += ExecutionError(Shaders.COMPOSITE.id, "layer '${layer.name}' produced nothing")
+            frame.errors += ExecutionError(Shaders.COMPOSITE.id, "layer '${layer.name}' produced nothing")
             return
         }
-        composite(document, layer, graph.textureBounds, appearance, scale, errors)
+        compositeTexture(
+            frame = frame,
+            source = appearance,
+            textureBounds = graph.textureBounds,
+            transform = layer.transform,
+            opacity = layer.opacity,
+            blendMode = layer.blendMode,
+            mask = maskFor(frame, layer, graph.textureBounds),
+            clip = clip,
+            surface = surface,
+        )
         executor.recycle(appearance)
     }
 
+    // ---- compositing -----------------------------------------------------------------------
+
     /**
-     * Draws a finished layer onto the canvas.
+     * Draws a finished layer onto a surface.
      *
-     * The step that carries the three things a layer has that its effects do not: where it sits,
-     * how opaque it is, and how it blends. Without it every layer renders correctly into a buffer
-     * that is then thrown away, which looks exactly like a renderer that does nothing at all.
+     * The step that carries the four things a layer has that its effects do not: where it sits, how
+     * opaque it is, how it blends, and what hides it. Without it every layer renders correctly into
+     * a buffer that is then thrown away, which looks exactly like a renderer that does nothing.
      */
-    private fun composite(
-        document: Document,
-        layer: Layer,
+    private fun compositeTexture(
+        frame: Frame,
+        source: TextureHandle,
         textureBounds: Rect,
-        appearance: TextureHandle,
-        scale: Float,
-        errors: MutableList<ExecutionError>,
+        transform: Transform,
+        opacity: Float,
+        blendMode: BlendMode,
+        mask: MaskBinding?,
+        clip: TextureHandle?,
+        surface: Surface,
     ) {
-        val front = canvasFront ?: return
-        val back = canvasBack ?: return
         if (!device.useProgram(Shaders.COMPOSITE.id)) {
-            errors += ExecutionError(Shaders.COMPOSITE.id, "composite program unavailable")
+            frame.errors += ExecutionError(Shaders.COMPOSITE.id, "composite program unavailable")
             return
         }
 
-        device.bindTarget(back)
+        device.bindTarget(surface.write)
         // The blend is done in the shader, so fixed-function blending has to be off or it would
         // be applied a second time on top.
         device.setBlend(false)
-        device.bindInput("uSource", appearance)
-        device.bindInput("uBackdrop", front)
+        device.bindInput("uSource", source)
+        device.bindInput("uBackdrop", surface.read)
         device.setMat3(
             "uMap",
+            // Both in canvas units. Scaling the canvas here and not the bounds is the classic
+            // export bug: everything lands in the right place on screen and in the wrong place at
+            // any export multiplier.
             Compositing.canvasUvToLayerUv(
-                canvasSize = document.canvas.size * scale,
+                canvasSize = frame.document.canvas.size,
                 textureBounds = textureBounds,
-                transform = layer.transform,
+                transform = transform,
             ).values,
         )
-        device.setFloat("uOpacity", layer.opacity)
-        device.setInt("uBlendMode", BlendShaders.uniformValue(layer.blendMode))
+        device.setFloat("uOpacity", opacity)
+        device.setInt("uBlendMode", BlendShaders.uniformValue(blendMode))
+        bindMasks(mask, clip)
         device.setVec2("uTexelSize", 1f / canvasSize.x, 1f / canvasSize.y)
         device.draw(1)
 
         // What was just written becomes what the next layer reads.
-        canvasFront = back
-        canvasBack = front
+        surface.swap()
     }
+
+    /** Copies one canvas-sized buffer into another, alpha included. */
+    private fun copy(source: TextureHandle, target: TextureHandle) {
+        if (!device.useProgram(Shaders.COPY.id)) return
+        device.bindTarget(target)
+        device.setBlend(false)
+        device.bindInput("uSource", source)
+        device.setVec2("uTexelSize", 1f / canvasSize.x, 1f / canvasSize.y)
+        device.draw(1)
+    }
+
+    // ---- masks -----------------------------------------------------------------------------
+
+    /** Everything the composite pass needs to narrow a layer's coverage. */
+    private class MaskBinding(
+        val raster: TextureHandle?,
+        val rasterMap: Affine,
+        val rasterInverted: Boolean,
+        val density: Float,
+        val vector: TextureHandle?,
+        val vectorMap: Affine,
+        val vectorInverted: Boolean,
+    )
+
+    private val maskTextures = HashMap<Any, TextureHandle>()
+    private var whiteTexture: TextureHandle? = null
+
+    private fun maskFor(frame: Frame, layer: Layer, textureBounds: Rect): MaskBinding? {
+        val raster = layer.mask?.takeIf { it.enabled && it.density > 0f }
+        val vector = layer.vectorMask?.takeIf { it.enabled }
+        if (raster == null && vector == null) return null
+
+        return MaskBinding(
+            raster = raster?.let { rasterMaskTexture(it, frame.scale) },
+            // A linked mask travels with the layer, so it is sampled through the layer's own frame;
+            // an unlinked one stays pinned to the artboard while the layer slides underneath it,
+            // which is what makes a mask usable for a reveal.
+            rasterMap = when {
+                raster == null -> Affine.IDENTITY
+                raster.unlinked -> Affine.IDENTITY
+                else -> Compositing.canvasUvToLayerUv(
+                    frame.document.canvas.size, textureBounds, layer.transform,
+                )
+            },
+            rasterInverted = raster?.inverted ?: false,
+            density = raster?.density ?: 1f,
+            vector = vector?.let { vectorMaskTexture(it, frame.scale) },
+            vectorMap = if (vector == null) {
+                Affine.IDENTITY
+            } else {
+                Compositing.canvasUvToLayerUv(
+                    frame.document.canvas.size, vectorMaskBounds(vector), layer.transform,
+                )
+            },
+            vectorInverted = vector?.inverted ?: false,
+        )
+    }
+
+    private fun bindMasks(mask: MaskBinding?, clip: TextureHandle?) {
+        val white = whiteTexture ?: solidWhite().also { whiteTexture = it }
+        var flags = 0
+        if (mask?.raster != null) {
+            flags = flags or MASK_RASTER
+            if (mask.rasterInverted) flags = flags or MASK_RASTER_INVERTED
+        }
+        if (mask?.vector != null) {
+            flags = flags or MASK_VECTOR
+            if (mask.vectorInverted) flags = flags or MASK_VECTOR_INVERTED
+        }
+        if (clip != null) flags = flags or MASK_CLIP
+
+        // Every sampler is bound whether it is used or not: an unbound sampler in GL ES reads
+        // texture unit zero, which is whatever the previous layer happened to leave there.
+        device.bindInput("uMask", mask?.raster ?: white)
+        device.bindInput("uVectorMask", mask?.vector ?: white)
+        device.bindInput("uClip", clip ?: white)
+        device.setMat3("uMaskMap", (mask?.rasterMap ?: Affine.IDENTITY).values)
+        device.setMat3("uVectorMaskMap", (mask?.vectorMap ?: Affine.IDENTITY).values)
+        device.setInt("uMaskFlags", flags)
+        device.setFloat("uMaskDensity", mask?.density ?: 1f)
+    }
+
+    /**
+     * A raster mask's pixels, feathered if it asks to be.
+     *
+     * Cached on the asset *and* the feather, because feathering is a blur over the whole mask and
+     * a mask is often the largest image in a project. Recomputing it per frame would cost more than
+     * everything the layer's own effects do.
+     */
+    private fun rasterMaskTexture(mask: LayerMask, scale: Float): TextureHandle? {
+        val key = MaskKey(mask.asset.value, mask.feather, scale)
+        maskTextures[key]?.let { return it }
+
+        val image = assets.load(mask.asset) ?: return null
+        val handle = device.createTexture(image.width, image.height, bytesPerPixel = 4)
+        // A mask is greyscale, and the composite pass reads alpha. Copying the luminance into the
+        // alpha channel here means one sampling rule for both kinds of mask.
+        device.uploadArgb(handle, image.width, image.height, luminanceToAlpha(image.pixels))
+        val finished = if (mask.feather > 0f) {
+            feather(handle, image.width, image.height, mask.feather * scale).also {
+                if (it != handle) device.deleteTexture(handle)
+            }
+        } else {
+            handle
+        }
+        maskTextures[key] = finished
+        return finished
+    }
+
+    /**
+     * A vector mask, rasterised.
+     *
+     * Drawn rather than sampled, at the scale the frame is being rendered at, which is what makes
+     * it resolution-independent: an export at four times size gets a mask edge four times sharper
+     * instead of an upscaled one.
+     */
+    private fun vectorMaskTexture(mask: VectorMask, scale: Float): TextureHandle? {
+        val key = MaskKey(mask.path.hashCode().toString(), mask.feather, scale)
+        maskTextures[key]?.let { return it }
+
+        val bounds = vectorMaskBounds(mask)
+        val bitmap = rasterizer.mask(mask.path, bounds, scale, mask.feather)
+        val handle = device.createTexture(bitmap.width, bitmap.height, bytesPerPixel = 4)
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        device.uploadArgb(handle, bitmap.width, bitmap.height, pixels)
+        bitmap.recycle()
+        maskTextures[key] = handle
+        return handle
+    }
+
+    private data class MaskKey(val id: String, val feather: Float, val scale: Float)
+
+    /**
+     * The extent a vector mask is drawn over.
+     *
+     * Grown by the feather so a soft edge is not cut off by the very rectangle it fades inside —
+     * the failure that turns a feathered mask into a hard-edged one at exactly the radius chosen.
+     */
+    private fun vectorMaskBounds(mask: VectorMask): Rect {
+        val size = shapeSize(mask.path)
+        val pad = mask.feather
+        return Rect(-pad, -pad, size.x + pad, size.y + pad)
+    }
+
+    private fun feather(source: TextureHandle, width: Int, height: Int, radius: Float): TextureHandle {
+        if (!device.useProgram(Shaders.BLUR.id)) return source
+        val horizontal = device.createTexture(width, height, bytesPerPixel = 4)
+        val vertical = device.createTexture(width, height, bytesPerPixel = 4)
+
+        for ((input, output, dx, dy) in listOf(
+            Blur(source, horizontal, 1f, 0f),
+            Blur(horizontal, vertical, 0f, 1f),
+        )) {
+            device.useProgram(Shaders.BLUR.id)
+            device.bindTarget(output)
+            device.setBlend(false)
+            device.bindInput("uSource", input)
+            device.setVec2("uDirection", dx, dy)
+            device.setFloat("uRadius", radius)
+            device.setVec2("uTexelSize", 1f / width, 1f / height)
+            device.draw(1)
+        }
+        device.deleteTexture(horizontal)
+        return vertical
+    }
+
+    private data class Blur(
+        val input: TextureHandle,
+        val output: TextureHandle,
+        val dx: Float,
+        val dy: Float,
+    )
+
+    /** Greyscale to alpha, so both kinds of mask are sampled the same way. */
+    private fun luminanceToAlpha(pixels: IntArray): IntArray {
+        val out = IntArray(pixels.size)
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            val r = (p shr 16) and 0xFF
+            val g = (p shr 8) and 0xFF
+            val b = p and 0xFF
+            // Rec. 709 luma. A plain average would make a mask painted in pure blue far lighter
+            // than it looks, and masks are read by eye.
+            val luma = ((r * 2126 + g * 7152 + b * 722) / 10000).coerceIn(0, 255)
+            out[i] = (luma shl 24) or 0xFFFFFF
+        }
+        return out
+    }
+
+    private fun solidWhite(): TextureHandle {
+        val handle = device.createTexture(1, 1, bytesPerPixel = 4)
+        device.uploadArgb(handle, 1, 1, intArrayOf(-1))
+        return handle
+    }
+
+    private fun clearMasks() {
+        maskTextures.values.forEach(device::deleteTexture)
+        maskTextures.clear()
+    }
+
+    /** Drops every cached mask, for when an asset behind one has been repainted. */
+    fun invalidateMasks() = clearMasks()
+
+    // ---- buffers ---------------------------------------------------------------------------
+
+    private fun obtainSurface(bytesPerPixel: Int): Surface {
+        val surface = freeSurfaces.removeLastOrNull() ?: Surface(
+            device.createTexture(canvasSize.x.toInt(), canvasSize.y.toInt(), bytesPerPixel),
+            device.createTexture(canvasSize.x.toInt(), canvasSize.y.toInt(), bytesPerPixel),
+        )
+        surface.flipped = false
+        // Both halves, not just the one that will be read: the other becomes the read buffer after
+        // the first composite, and a stale one would show the previous group through this one.
+        device.bindTarget(surface.front)
+        device.clearTarget()
+        device.bindTarget(surface.back)
+        device.clearTarget()
+        liveSurfaces += surface
+        return surface
+    }
+
+    private fun obtainTexture(bytesPerPixel: Int): TextureHandle {
+        val handle = freeTextures.removeLastOrNull()
+            ?: device.createTexture(canvasSize.x.toInt(), canvasSize.y.toInt(), bytesPerPixel)
+        device.bindTarget(handle)
+        device.clearTarget()
+        liveTextures += handle
+        return handle
+    }
+
+    /**
+     * Returns every borrowed buffer at the end of a frame.
+     *
+     * At the end rather than as each group finishes, because a group's buffer is still being read
+     * while its result is composited, and handing it to the next group mid-frame would have that
+     * group draw into the very texture being sampled.
+     */
+    private fun recycleAll() {
+        freeSurfaces.addAll(liveSurfaces)
+        freeTextures.addAll(liveTextures)
+        liveSurfaces.clear()
+        liveTextures.clear()
+    }
+
+    private fun discardPools() {
+        (freeSurfaces + liveSurfaces).forEach { device.deleteTexture(it.front); device.deleteTexture(it.back) }
+        (freeTextures + liveTextures).forEach(device::deleteTexture)
+        freeSurfaces.clear()
+        liveSurfaces.clear()
+        freeTextures.clear()
+        liveTextures.clear()
+    }
+
+    // ---- measurement -----------------------------------------------------------------------
 
     private fun graphFor(
         document: Document,
@@ -369,19 +924,19 @@ class DocumentRenderer(
         else -> 0
     }
 
-    /**
-     * Where a layer's content sits before its transform.
-     *
-     * Text has to be shaped to be measured, so the answer is cached against the same revision the
-     * silhouette uses — otherwise laying out a paragraph would happen twice per frame, once to find
-     * the bounds and once to draw into them.
-     */
     /** The font a text layer shapes with, or null for every other kind. */
     private fun fontFor(layer: Layer): FontFile? =
         (layer as? Layer.Text)?.let { fonts.resolve(it.spec.font) }
 
+    /**
+     * Where a layer's content sits before its transform.
+     *
+     * Text has to be shaped to be measured, so the answer is cached against the same key the
+     * silhouette uses — otherwise laying out a paragraph would happen twice per frame, once to find
+     * the bounds and once to draw into them.
+     */
     fun bounds(layer: Layer, font: FontFile? = null): Rect? = when (layer) {
-        is Layer.Shape -> Rect.of(sizeOf(layer))
+        is Layer.Shape -> Rect.of(shapeSize(layer.geometry))
         is Layer.Text -> {
             val key = contentKey(layer, font)
             val cached = measured[layer.id]
@@ -403,7 +958,7 @@ class DocumentRenderer(
 
     private val measured = HashMap<LayerId, Pair<Int, Rect>>()
 
-    private fun sizeOf(shape: Layer.Shape) = when (val geometry = shape.geometry) {
+    private fun shapeSize(geometry: ShapeGeometry) = when (geometry) {
         is ShapeGeometry.Rectangle -> geometry.size
         is ShapeGeometry.Ellipse -> geometry.size
         is ShapeGeometry.Polygon -> geometry.size
@@ -429,5 +984,27 @@ class DocumentRenderer(
 
         /** 0x2A as a linear fraction — the same neutral grey the Compose chrome uses. */
         const val SURROUND_GREY = 42f / 255f
+
+        /** A surface is a ping-pong pair, plus the clip source a clipping group copies aside. */
+        const val SURFACE_BUFFERS = 3
+
+        const val MASK_RASTER = 1
+        const val MASK_RASTER_INVERTED = 2
+        const val MASK_VECTOR = 4
+        const val MASK_VECTOR_INVERTED = 8
+        const val MASK_CLIP = 16
+
+        /**
+         * Whether a group has to flatten its children before meeting the backdrop.
+         *
+         * Photoshop isolates for any of these, and getting the list wrong is visible immediately:
+         * a group at 50% whose children were composited individually shows every overlap.
+         */
+        fun isolating(group: Layer.Group): Boolean =
+            !group.passThrough ||
+                group.style.activeEffects.isNotEmpty() ||
+                group.opacity < 1f ||
+                group.mask != null ||
+                group.vectorMask != null
     }
 }

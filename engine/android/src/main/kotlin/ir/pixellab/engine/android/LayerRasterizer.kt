@@ -15,6 +15,7 @@ import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.GradientType
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.Rect
+import ir.pixellab.core.model.ShapeGeometry
 import ir.pixellab.core.model.TileMode
 import ir.pixellab.core.model.Vec2
 import ir.pixellab.core.render.Luts
@@ -33,6 +34,32 @@ data class RasterizedLayer(val bitmap: Bitmap, val bounds: Rect, val scale: Floa
  * coloured image.
  */
 class LayerRasterizer(private val text: TextRasterizer = TextRasterizer()) {
+
+    /**
+     * Renders a vector mask's path into a coverage bitmap.
+     *
+     * White with the coverage in alpha, matching how a raster mask is uploaded, so the composite
+     * pass has one sampling rule for both. [feather] is applied with a blur mask filter rather than
+     * by blurring the finished bitmap: Skia feathers the *path*, so a soft edge stays centred on
+     * the outline instead of eating into the shape by half the radius.
+     */
+    fun mask(geometry: ShapeGeometry, bounds: Rect, scale: Float = 1f, feather: Float = 0f): Bitmap {
+        val width = pixels(bounds.width, scale)
+        val height = pixels(bounds.height, scale)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.scale(scale, scale)
+        canvas.translate(-bounds.left, -bounds.top)
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            if (feather > 0f) {
+                maskFilter = android.graphics.BlurMaskFilter(feather, android.graphics.BlurMaskFilter.Blur.NORMAL)
+            }
+        }
+        canvas.drawPath(ShapeRasterizer.path(geometry), paint)
+        return bitmap
+    }
 
     /**
      * Renders a layer's coverage into white pixels with correct alpha.

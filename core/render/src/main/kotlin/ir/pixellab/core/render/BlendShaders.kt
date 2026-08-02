@@ -31,6 +31,22 @@ object BlendShaders {
         // Where in the layer texture this canvas pixel comes from; see Compositing.
         uniform mat3  uMap;
 
+        // --- masking ----------------------------------------------------------------------
+        //
+        // Three independent things narrow a layer's coverage, and Photoshop multiplies all of
+        // them: a raster mask, a vector mask, and the alpha of the layer a clipping group is
+        // clipped to. They are separate samplers rather than one pre-combined mask because
+        // combining them on the CPU would mean rebuilding a canvas-sized texture whenever any
+        // one of them moved.
+        uniform sampler2D uMask;
+        uniform sampler2D uVectorMask;
+        uniform sampler2D uClip;
+        uniform mat3  uMaskMap;
+        uniform mat3  uVectorMaskMap;
+        uniform int   uMaskFlags;
+        // Photoshop's mask density: how far the mask is allowed to hide, 0 disabling it entirely.
+        uniform float uMaskDensity;
+
         in  vec2 vUv;
         out vec4 fragColor;
 
@@ -141,6 +157,28 @@ object BlendShaders {
             return cs;
         }
 
+        const int MASK_RASTER          = 1;
+        const int MASK_RASTER_INVERTED = 2;
+        const int MASK_VECTOR          = 4;
+        const int MASK_VECTOR_INVERTED = 8;
+        const int MASK_CLIP            = 16;
+
+        /**
+         * One mask's contribution at this canvas pixel.
+         *
+         * Outside the mask's own rectangle the answer is 0, not the clamped edge pixel: a mask
+         * covers a region, and clamping would smear its border across the rest of the document.
+         * Inversion is applied after that, so an inverted mask correctly reveals everything its
+         * rectangle does not cover.
+         */
+        float maskAt(sampler2D tex, mat3 map, bool inverted) {
+            vec2 uv = (map * vec3(vUv, 1.0)).xy;
+            float m = (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+                ? 0.0
+                : texture(tex, uv).a;
+            return inverted ? 1.0 - m : m;
+        }
+
         void main() {
             vec4 backdrop = texture(uBackdrop, vUv);
 
@@ -150,8 +188,22 @@ object BlendShaders {
             if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { fragColor = backdrop; return; }
             vec4 source = texture(uSource, uv);
 
+            float coverage = 1.0;
+            if ((uMaskFlags & MASK_RASTER) != 0) {
+                float m = maskAt(uMask, uMaskMap, (uMaskFlags & MASK_RASTER_INVERTED) != 0);
+                coverage *= mix(1.0, m, uMaskDensity);
+            }
+            if ((uMaskFlags & MASK_VECTOR) != 0) {
+                coverage *= maskAt(uVectorMask, uVectorMaskMap, (uMaskFlags & MASK_VECTOR_INVERTED) != 0);
+            }
+            // The clip source is a canvas-sized buffer holding the base of the clipping group, so
+            // it is sampled in canvas space rather than through a map.
+            if ((uMaskFlags & MASK_CLIP) != 0) {
+                coverage *= texture(uClip, vUv).a;
+            }
+
             float ab = backdrop.a;
-            float as = source.a * uOpacity;
+            float as = source.a * uOpacity * coverage;
             float ao = as + ab * (1.0 - as);
             if (ao <= 0.0) { fragColor = vec4(0.0); return; }
 

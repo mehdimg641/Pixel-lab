@@ -35,6 +35,14 @@ class LayerMeasure(
     private val images: ImageSizes = ImageSizes.NONE,
 ) : LayerBounds {
 
+    /**
+     * Resolves a smart object's source.
+     *
+     * Supplied rather than held, because the document changes on every edit and a measurer holding
+     * a stale copy would size an instance from a layer that has since been resized.
+     */
+    var sources: (LayerId) -> Layer? = { null }
+
     /** Replaced when the font library is rescanned; every cached text measurement then goes stale. */
     var fonts: FontResolver = FontResolver.NONE
         set(value) {
@@ -56,6 +64,11 @@ class LayerMeasure(
         }
         is Layer.Text -> measure(layer)
         is Layer.Image -> images.sizeOf(layer.asset)?.let(Rect::of) ?: Rect.of(PLACEHOLDER)
+        // An instance is its source's shape wearing its own transform, so it measures the source.
+        // Falling back to the placeholder would put the selection box around the wrong thing on
+        // every one of the reference file's 125 instances.
+        is Layer.Instance -> sources(layer.source)?.takeIf { it.id != layer.id }?.let(::of)
+            ?: Rect.of(PLACEHOLDER)
         // A group has no extent of its own; it is exactly what its children cover, each in the
         // group's space rather than in its own.
         is Layer.Group -> layer.children

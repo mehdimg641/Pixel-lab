@@ -11,9 +11,11 @@ import ir.pixellab.core.model.Effect
 import ir.pixellab.core.model.History
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.LayerId
+import ir.pixellab.core.model.LayerMask
 import ir.pixellab.core.model.Rect
 import ir.pixellab.core.model.Style
 import ir.pixellab.core.model.Vec2
+import ir.pixellab.core.model.VectorMask
 import ir.pixellab.core.model.with
 import ir.pixellab.core.model.withId
 import ir.pixellab.core.model.withStyle
@@ -347,6 +349,95 @@ class Editor(
         var n = 1
         while ("$prefix-$n" in used) n++
         return LayerId("$prefix-$n")
+    }
+
+    // ---- structure ------------------------------------------------------------------------------
+
+    /**
+     * Wraps the selected layers in a group, in place of the topmost of them.
+     *
+     * In place of the topmost, not appended: a group that jumps to the front of the stack changes
+     * what covers what, and the user grouped those layers precisely because of how they already sit.
+     *
+     * Only top-level layers are gathered. Grouping across two different parents would have to move
+     * layers between them, which is a reparent rather than a group, and doing it silently loses the
+     * arrangement the user had.
+     */
+    fun groupLayers(ids: Collection<LayerId>, newId: LayerId, name: String = "گروه"): LayerId? {
+        val members = state.document.layers.filter { it.id in ids }
+        if (members.isEmpty()) return null
+
+        history.record(state.document)
+        val anchor = members.last().id
+        val group = Layer.Group(id = newId, children = members, name = name)
+        val remaining = state.document.layers.filter { it.id !in ids || it.id == anchor }
+        state = state.copy(
+            document = state.document.copy(
+                layers = remaining.map { if (it.id == anchor) group else it },
+            ),
+            selection = Selection.of(newId),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return newId
+    }
+
+    /**
+     * Dissolves a group, leaving its children where the group was.
+     *
+     * The children keep their own transforms. A group's transform is folded into nothing here,
+     * which is the one lossy part — and it is why the group's transform is left alone by every
+     * gesture rather than being something the user can set from the canvas.
+     */
+    fun ungroup(id: LayerId): List<LayerId> {
+        val group = state.document.layers.firstOrNull { it.id == id } as? Layer.Group ?: return emptyList()
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(
+                layers = state.document.layers.flatMap { if (it.id == id) group.children else listOf(it) },
+            ),
+            selection = Selection(group.children.map { it.id }),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return group.children.map { it.id }
+    }
+
+    /** Clips a layer to the first unclipped layer beneath it, or releases it. */
+    fun setClipped(id: LayerId, clipped: Boolean) = edit(id) { it.with(clipped = clipped) }
+
+    /** Whether a group flattens its children before meeting what is beneath it. */
+    fun setGroupPassThrough(id: LayerId, passThrough: Boolean) {
+        val group = state.document.findLayer(id) as? Layer.Group ?: return
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.mapLayer(id) { (it as Layer.Group).copy(passThrough = passThrough) },
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+    }
+
+    fun setMask(id: LayerId, mask: LayerMask?) = edit(id) { it.with(mask = mask) }
+
+    fun setVectorMask(id: LayerId, mask: VectorMask?) = edit(id) { it.with(vectorMask = mask) }
+
+    /**
+     * Adds a live copy of a layer rather than a duplicate of its pixels.
+     *
+     * The difference is the whole reason smart objects exist: editing the source updates every
+     * instance. The reference PSDs build one effect out of twenty-nine instances of a single shape,
+     * and duplicating instead would mean twenty-nine layers to fix when the wording changes.
+     */
+    fun addInstance(source: LayerId, newId: LayerId): LayerId? {
+        val layer = state.document.findLayer(source) ?: return null
+        return addLayer(
+            Layer.Instance(
+                id = newId,
+                source = source,
+                name = "${layer.name} ↗",
+                transform = layer.transform,
+            ),
+        )
     }
 
     // ---- the contextual bar ---------------------------------------------------------------------

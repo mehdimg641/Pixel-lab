@@ -24,6 +24,7 @@ import ir.pixellab.core.canvas.Viewport
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.editor.LayerBounds
 import ir.pixellab.core.model.Vec2
+import ir.pixellab.engine.android.AssetSource
 import ir.pixellab.engine.android.CanvasSurface
 import ir.pixellab.engine.android.FontResolver
 import ir.pixellab.engine.android.TouchBridge
@@ -42,6 +43,7 @@ fun EditorCanvas(
     state: EditorState,
     bounds: LayerBounds,
     fonts: FontResolver,
+    assets: AssetSource,
     handle: CanvasHandle,
     onGesture: (ir.pixellab.core.canvas.CanvasGesture) -> Unit,
     onSize: (Vec2) -> Unit,
@@ -71,6 +73,7 @@ fun EditorCanvas(
             modifier = Modifier.fillMaxSize(),
             update = { surface ->
                 surface.fonts = fonts
+                surface.assets = assets
                 surface.submit(state.document, state.viewport, state.effectsBypassed)
             },
         )

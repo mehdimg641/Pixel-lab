@@ -52,14 +52,15 @@ sealed interface FileOutcome {
 /**
  * Writes the project to private storage.
  *
- * Fonts are *not* bundled yet — the document references them by identity, and a project opened on a
- * device without a face falls back with a warning rather than failing. Bundling is what makes a
- * project portable and it belongs with the sharing flow, not with an ordinary save, which has to
- * stay fast enough that the user does it without thinking.
+ * Assets travel with it — a mask is a reference, and a project that lost its masks would open with
+ * every layer unmasked and no way to tell. Fonts do not: the document references them by identity,
+ * and one opened on a device without a face falls back with a warning rather than failing.
+ * Bundling fonts belongs with the sharing flow, not with an ordinary save, which has to stay fast
+ * enough that the user does it without thinking.
  */
-suspend fun saveProject(context: Context, document: Document): FileOutcome = withContext(Dispatchers.IO) {
+suspend fun saveProject(context: Context, project: Project): FileOutcome = withContext(Dispatchers.IO) {
     runCatching {
-        val file = Storage.saveProject(context, Project(document), document.name)
+        val file = Storage.saveProject(context, project, project.document.name)
         FileOutcome.Saved(file.name)
     }.getOrElse { FileOutcome.Refused(it.message ?: "ذخیره نشد") }
 }

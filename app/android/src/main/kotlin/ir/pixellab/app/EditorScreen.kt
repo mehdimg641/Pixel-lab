@@ -86,6 +86,7 @@ fun EditorScreen(model: EditorViewModel) {
             state = state,
             bounds = bounds,
             fonts = model.fonts,
+            assets = model.assets,
             handle = handle,
             onGesture = model::onGesture,
             onSize = model::onScreenSize,
@@ -96,7 +97,7 @@ fun EditorScreen(model: EditorViewModel) {
                 state = state,
                 model = model,
                 onSave = {
-                    scope.launch { outcome = saveProject(context, state.document) }
+                    scope.launch { outcome = saveProject(context, model.currentProject()) }
                 },
                 onExport = { exporting = true },
                 onOpen = { scope.launch { opening = Storage.listProjects(context) } },
@@ -123,7 +124,7 @@ fun EditorScreen(model: EditorViewModel) {
                 opening = null
                 scope.launch {
                     openProject(file)
-                        .onSuccess { model.openDocument(it.document) }
+                        .onSuccess { model.openProject(it) }
                         .onFailure { outcome = FileOutcome.Refused(it.message ?: "باز نشد") }
                 }
             }
