@@ -174,6 +174,19 @@ fun TypeSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifier
 
         // ---- warp --------------------------------------------------------------------------
 
+        // The way through to the panel this application exists for. Placed at the end of the type
+        // panel rather than on the toolbar because 3D is the *last* decision about a headline —
+        // the face, the size and the tracking all have to be settled first.
+        SheetSection("سه‌بعدی")
+        SheetAction("متن سه‌بعدی واقعی") {
+            model.act {
+                openSheet(
+                    ir.pixellab.core.editor.SheetContent.Dimensional,
+                    ir.pixellab.core.editor.SheetDetent.FULL,
+                )
+            }
+        }
+
         SheetSection("تاب متن")
         SheetChips {
             for (style in WarpStyle.entries) {

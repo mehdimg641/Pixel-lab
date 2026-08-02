@@ -236,6 +236,8 @@ fun EditorScreen(model: EditorViewModel) {
                         is SheetContent.Guides -> GuideSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Typography -> TypeSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Settings -> SettingsSheetBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.Dimensional ->
+                            DimensionalSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Arrange -> ArrangeSheetBody(
                             state = state,
                             model = model,

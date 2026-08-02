@@ -137,6 +137,9 @@ sealed interface SheetContent {
     /** Application preferences: not part of any document, and never on the undo stack. */
     data object Settings : SheetContent
 
+    /** Real extruded 3D: depth, bevel, materials, lights and the camera. */
+    data object Dimensional : SheetContent
+
     /** The layer this sheet is about, if any — used to keep it out from under the sheet. */
     val subject: LayerId?
         get() = when (this) {

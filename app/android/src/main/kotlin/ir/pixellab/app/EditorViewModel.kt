@@ -223,6 +223,79 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         return id
     }
 
+    /**
+     * The 3D settings of the selected text layer, or the defaults it would start from.
+     *
+     * Defaults rather than null, so the panel can be filled in and adjusted *before* the layer has
+     * ever been rendered in 3D — otherwise the first thing a user sees is a screen of empty
+     * controls that only come alive after pressing a button they have no reason to trust yet.
+     */
+    fun geometry3DOf(id: LayerId): ir.pixellab.core.model.Geometry3D {
+        val layer = state.document.findLayer(id) as? Layer.Text
+        return layer?.geometry3D ?: defaultGeometry(layer)
+    }
+
+    fun setGeometry3D(id: LayerId, geometry: ir.pixellab.core.model.Geometry3D) = edit {
+        replaceLayer(id) { (it as Layer.Text).copy(geometry3D = geometry) }
+    }
+
+    /**
+     * Bakes the selected text layer as 3D and drops it in as an image layer above the text.
+     *
+     * The text layer is kept and hidden rather than replaced. A 3D bake is a one-way trip — the
+     * pixels cannot be turned back into a string — and losing the editable text along with it is
+     * the sort of thing a user discovers an hour later when the client changes a word.
+     */
+    suspend fun render3D(id: LayerId, supersample: Int = 2): Boolean {
+        val layer = state.document.findLayer(id) as? Layer.Text ?: return false
+        if (!ir.pixellab.engine.android.TextTo3D.canRender(layer, fonts)) return false
+
+        val geometry = geometry3DOf(id)
+        val canvas = state.document.canvas
+        val image = withContext(kotlinx.coroutines.Dispatchers.Default) {
+            ir.pixellab.engine.android.TextTo3D.render(
+                layer = layer,
+                geometry = geometry,
+                fonts = fonts,
+                width = canvas.width,
+                height = canvas.height,
+                supersample = supersample,
+            )
+        } ?: return false
+
+        edit {
+            // Stored before the layer is added so the settings survive on the text layer itself,
+            // which is what makes a re-bake after a tweak give the same framing.
+            replaceLayer(id) { (it as Layer.Text).copy(geometry3D = geometry, visible = false) }
+            val newId = nextLayerId("dimensional")
+            val asset = ir.pixellab.core.model.AssetId(newId.value)
+            assetStore.put(asset, image)
+            paint.bumpGeneration()
+            addLayer(
+                Layer.Image(
+                    id = newId,
+                    asset = asset,
+                    name = "${layer.name} — سه‌بعدی",
+                ),
+            )
+        }
+        return true
+    }
+
+    /**
+     * Sensible depth and bevel for a layer that has never been in 3D.
+     *
+     * Scaled to the type size rather than fixed, because a fixed twenty pixels of depth is a slab
+     * on a caption and invisible on a poster headline.
+     */
+    private fun defaultGeometry(layer: Layer.Text?): ir.pixellab.core.model.Geometry3D {
+        val size = layer?.spec?.size ?: DEFAULT_TEXT_SIZE
+        return ir.pixellab.core.model.Geometry3D(
+            depth = size * DEPTH_FRACTION,
+            bevelSize = size * BEVEL_FRACTION,
+        )
+    }
+
     fun setSnapEnabled(enabled: Boolean) {
         editor.setSnapEnabled(enabled)
         state = editor.state
@@ -1400,6 +1473,15 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
          * shows its own pixels and a pattern is often tiled across a whole canvas.
          */
         const val TEXTURE_SIZE = 256
+
+        /**
+         * Depth and bevel as fractions of the type size.
+         *
+         * A fixed twenty pixels of depth is a slab on a caption and invisible on a poster headline;
+         * a fifth of the cap height reads as the same amount of depth at every size.
+         */
+        const val DEPTH_FRACTION = 0.2f
+        const val BEVEL_FRACTION = 0.04f
 
         /** A blank square canvas with one shape, so the editor has something to select on launch. */
         fun startingDocument(): Document = Document(

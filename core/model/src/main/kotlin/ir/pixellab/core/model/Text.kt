@@ -190,14 +190,22 @@ data class Material(
 data class Light(
     val direction: Vec3 = Vec3(-0.4f, -0.7f, -0.6f),
     val color: Color = Color.WHITE,
-    val intensity: Float = 1f,
+    /**
+     * Radiance, not a 0..1 dimmer.
+     *
+     * The default is above one on purpose. A physically-based diffuse term divides the albedo by π,
+     * so a white surface lit head-on by a light of intensity 1 comes back at 0.32 — mid grey. Every
+     * "why is my PBR render so dark" begins there, and the answer is that a real key light is
+     * several times brighter than the number 1 suggests.
+     */
+    val intensity: Float = 3.2f,
     val castsShadow: Boolean = true,
 )
 
 @Serializable
 data class LightRig(
     val key: Light = Light(),
-    val fill: Light = Light(direction = Vec3(0.5f, -0.2f, -0.8f), intensity = 0.35f, castsShadow = false),
+    val fill: Light = Light(direction = Vec3(0.5f, -0.2f, -0.8f), intensity = 1.1f, castsShadow = false),
     val rim: Light? = null,
     /** Image-based lighting. Chrome and polished metal are unreachable without it. */
     val environment: AssetId? = null,

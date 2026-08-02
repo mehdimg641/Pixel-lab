@@ -54,6 +54,7 @@ dependencies {
     api(project(":core:paint"))
     api(project(":core:imaging"))
     api(project(":core:vector"))
+    api(project(":core:mesh"))
     implementation(libs.androidx.annotation)
 
     testImplementation(libs.junit.jupiter)
