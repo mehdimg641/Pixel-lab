@@ -47,9 +47,10 @@ import ir.pixellab.core.render.optionName
 fun ParameterSheetBody(
     state: EditorState,
     content: SheetContent.EffectParameters,
-    act: (Editor.() -> Unit) -> Unit,
+    model: EditorViewModel,
     modifier: Modifier = Modifier,
 ) {
+    val act: (Editor.() -> Unit) -> Unit = model::act
     val layer = state.document.findLayer(content.layer) ?: return
     val effect = layer.style.effects.getOrNull(content.effectIndex) ?: return
     val module = builtinEffectRegistry[ir.pixellab.core.render.EffectRegistry.idOf(effect)] ?: return
@@ -94,11 +95,22 @@ fun ParameterSheetBody(
                     onChange = { write(ParameterValue.Tint(it), false) },
                 )
 
-                is ParameterSpec.FillPicker -> SwatchRow(
-                    label = spec.label,
-                    color = ((value as? ParameterValue.Paint)?.value as? Fill.Solid)?.color ?: Color.BLACK,
-                    onChange = { write(ParameterValue.Paint(Fill.Solid(it)), false) },
-                )
+                // The full editor rather than a colour swatch: a stroke or an overlay takes any
+                // fill, and offering only a solid one silently flattened every gradient the moment
+                // the user opened the panel to check a shade.
+                is ParameterSpec.FillPicker -> {
+                    Text(
+                        spec.label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Ink.TextMuted,
+                        modifier = Modifier.padding(start = 16.dp, top = 10.dp),
+                    )
+                    FillEditor(
+                        fill = (value as? ParameterValue.Paint)?.value ?: Fill.Solid(Color.BLACK),
+                        model = model,
+                        onChange = { write(ParameterValue.Paint(it), false) },
+                    )
+                }
 
                 // The curve editor is a control of its own and lands with the bevel LUTs; showing a
                 // dead placeholder would be worse than showing what it is.

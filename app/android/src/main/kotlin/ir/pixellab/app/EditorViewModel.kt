@@ -84,7 +84,18 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     /** The path being drawn or edited, before it becomes a layer. */
     val pen = PenController()
 
-    private val editor = Editor(startingDocument(), bounds)
+    /**
+     * How the user likes to work, as opposed to what they have drawn.
+     *
+     * Loaded before the editor is built, because the editor takes the snapping configuration and a
+     * preference applied a frame later would mean the first drag of every launch ignored it.
+     */
+    private var settings: Preferences by mutableStateOf(Preferences.load(application))
+
+    /** Read during composition, so a change to a preference redraws whatever depends on it. */
+    val preferences: Preferences get() = settings
+
+    private val editor = Editor(startingDocument(), bounds, snapConfig = settings.snap)
 
     var state: EditorState by mutableStateOf(editor.state)
         private set
@@ -168,6 +179,55 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     val current: Editor get() = editor
 
     fun act(body: Editor.() -> Unit) = edit(body)
+
+    /**
+     * Applies a preference and writes it down.
+     *
+     * Deliberately outside [edit]: a preference is not a document change, and putting it on the
+     * undo stack would mean undoing back past the moment snapping was turned off silently turned
+     * it on again.
+     */
+    fun setPreferences(next: Preferences) {
+        settings = next.sane()
+        editor.snapConfig = settings.snap
+        Preferences.save(getApplication(), settings)
+    }
+
+    /**
+     * Switches the brush onto a generated tip.
+     *
+     * Registered under a stable id derived from the kind, so choosing chalk twice reuses the one
+     * tile instead of filling the asset store with identical copies — and so a saved preset still
+     * finds its tip when the document is reopened.
+     */
+    fun useGeneratedTip(kind: ir.pixellab.core.imaging.Procedural.Tip) {
+        val id = ir.pixellab.core.model.AssetId("tip-${kind.name.lowercase()}")
+        if (assetStore.source.load(id) == null) {
+            assetStore.put(id, ir.pixellab.core.imaging.Procedural.tip(kind, TEXTURE_SIZE, seed = kind.ordinal).toCoverageImage())
+        }
+        paint.preset = paint.preset.copy(tip = ir.pixellab.core.paint.BrushTip.Sampled(id))
+    }
+
+    /** The same for a pattern tile, returning the asset a `Fill.Pattern` should point at. */
+    fun registerPattern(kind: ir.pixellab.core.imaging.Procedural.Pattern): ir.pixellab.core.model.AssetId {
+        val id = ir.pixellab.core.model.AssetId("pattern-${kind.name.lowercase()}")
+        if (assetStore.source.load(id) == null) {
+            assetStore.put(
+                id,
+                ir.pixellab.core.imaging.Procedural
+                    .pattern(kind, TEXTURE_SIZE, seed = kind.ordinal)
+                    .toCoverageImage(),
+            )
+            paint.bumpGeneration()
+        }
+        return id
+    }
+
+    fun setSnapEnabled(enabled: Boolean) {
+        editor.setSnapEnabled(enabled)
+        state = editor.state
+        setPreferences(preferences.copy(snapEnabled = enabled))
+    }
 
     /**
      * The same as [act] for callers that need the editor's answer back.
@@ -1226,6 +1286,74 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    /**
+     * Edits a text layer's spec through one door.
+     *
+     * Every typographic control goes through here rather than each writing its own `replaceLayer`,
+     * because all of them share the same two obligations: invalidate the cached bounds, since any
+     * of them can change the measured size, and go through the editor so the change is one undo
+     * step. A control that forgot the first leaves the selection handles around the old shape.
+     */
+    fun editText(id: LayerId, body: (TextSpec) -> TextSpec) = edit {
+        val layer = state.document.findLayer(id) as? Layer.Text ?: return@edit
+        bounds.invalidate(id)
+        applyTextSpec(id, body(layer.spec))
+    }
+
+    fun setTextSize(id: LayerId, size: Float) = editText(id) { it.copy(size = size) }
+
+    fun setParagraph(id: LayerId, paragraph: ir.pixellab.core.model.ParagraphStyle) =
+        editText(id) { it.copy(paragraph = paragraph) }
+
+    fun setTextWarp(id: LayerId, warp: ir.pixellab.core.model.TextWarp) =
+        editText(id) { it.copy(warp = warp) }
+
+    /**
+     * Switches between point and area type.
+     *
+     * Going to area gives the box the size the text already occupies, so the words do not reflow
+     * the instant the mode changes — a box that arrived at some arbitrary default would rewrap the
+     * paragraph and look like the text had been damaged.
+     */
+    fun setTextBox(id: LayerId, area: Boolean) = edit {
+        val layer = state.document.findLayer(id) as? Layer.Text ?: return@edit
+        val spec = layer.spec
+        val next = if (!area) {
+            spec.copy(boxMode = ir.pixellab.core.model.TextBoxMode.POINT)
+        } else {
+            val measured = bounds.of(layer)
+            spec.copy(
+                boxMode = ir.pixellab.core.model.TextBoxMode.AREA,
+                boxSize = spec.boxSize ?: Vec2(measured.width, measured.height),
+            )
+        }
+        bounds.invalidate(id)
+        applyTextSpec(id, next)
+    }
+
+    /** Drives a variable-font axis — how kashida works on the faces that expose it. */
+    fun setFontAxis(id: LayerId, axis: String, value: Float?) = editText(id) { spec ->
+        val variations = spec.font.variations.toMutableMap()
+        if (value == null) variations.remove(axis) else variations[axis] = value
+        spec.copy(font = spec.font.copy(variations = variations))
+    }
+
+    /**
+     * Turns an OpenType feature on or off.
+     *
+     * Six of the supplied typefaces ship stylistic sets carrying alternate Persian letterforms, and
+     * no mobile editor exposes them — they are the cheapest way to make a cover look bespoke.
+     */
+    fun setFontFeature(id: LayerId, tag: String, on: Boolean) = editText(id) { spec ->
+        val features = spec.font.features.toMutableMap()
+        if (on) features[tag] = 1 else features.remove(tag)
+        spec.copy(font = spec.font.copy(features = features))
+    }
+
+    /** The catalogue entry behind a text layer, for the panels that offer its axes and features. */
+    fun typefaceFor(spec: TextSpec): Typeface? =
+        fontStore.catalog.typefaces.firstOrNull { it.name == spec.font.family }
+
     private fun Editor.applyTextSpec(id: LayerId, spec: TextSpec) {
         replaceLayer(id) { (it as Layer.Text).copy(spec = spec) }
     }
@@ -1264,6 +1392,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         const val SAMPLE_RADIUS = 2
 
         const val MAX_CHANNEL = 255f
+
+        /**
+         * Generated tips and pattern tiles are built at this resolution.
+         *
+         * Larger than any swatch and larger than most brushes are used at, because a tip scaled up
+         * shows its own pixels and a pattern is often tiled across a whole canvas.
+         */
+        const val TEXTURE_SIZE = 256
 
         /** A blank square canvas with one shape, so the editor has something to select on launch. */
         fun startingDocument(): Document = Document(

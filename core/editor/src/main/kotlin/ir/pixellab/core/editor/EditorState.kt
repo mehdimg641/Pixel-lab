@@ -125,6 +125,18 @@ sealed interface SheetContent {
     /** The grid, the rulers, the guides and the platform safe zones. */
     data object Guides : SheetContent
 
+    /**
+     * The character and paragraph panels: everything about type except which typeface.
+     *
+     * Separate from [FontPicker] because choosing a face and setting its measurements are different
+     * activities on different timescales — a face is picked once and the tracking is nudged twenty
+     * times — and putting them in one sheet means scrolling past a font list to reach a slider.
+     */
+    data object Typography : SheetContent
+
+    /** Application preferences: not part of any document, and never on the undo stack. */
+    data object Settings : SheetContent
+
     /** The layer this sheet is about, if any — used to keep it out from under the sheet. */
     val subject: LayerId?
         get() = when (this) {

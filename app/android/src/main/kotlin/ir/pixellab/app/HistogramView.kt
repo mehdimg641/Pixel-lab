@@ -81,16 +81,23 @@ fun HistogramView(
         }
 
         val total = histogram.total.coerceAtLeast(1L)
-        val blacks = histogram.clippedBlacks * PERCENT / total
-        val whites = histogram.clippedWhites * PERCENT / total
+        // In tenths of a percent, not whole percent. Clipping worth acting on is routinely a
+        // fraction of one per cent — a whole-number percentage rounds every such case to zero and
+        // the warning that exists to be seen is never shown at all.
+        val blacks = histogram.clippedBlacks * TENTHS / total
+        val whites = histogram.clippedWhites * TENTHS / total
         Text(
             buildString {
                 append("میانگین ${histogram.mean().toInt()}")
-                if (blacks > 0) append(" · سایهٔ سوخته ${blacks}٪")
-                if (whites > 0) append(" · روشنایی سوخته ${whites}٪")
+                if (histogram.clippedBlacks > 0) append(" · سایهٔ سوخته ${tenths(blacks)}٪")
+                if (histogram.clippedWhites > 0) append(" · روشنایی سوخته ${tenths(whites)}٪")
             },
             style = MaterialTheme.typography.labelSmall,
-            color = if (blacks > 0 || whites > 0) Ink.Danger else Ink.TextMuted,
+            color = if (histogram.clippedBlacks > 0 || histogram.clippedWhites > 0) {
+                Ink.Danger
+            } else {
+                Ink.TextMuted
+            },
             modifier = Modifier.padding(top = 4.dp),
         )
     }
@@ -102,4 +109,15 @@ private const val HEIGHT = 84
 /** A hair of overlap, or rounding leaves a gap between neighbouring bars at some widths. */
 private const val SEAM = 0.75f
 
-private const val PERCENT = 100L
+/**
+ * Tenths of a percent, rendered with one decimal.
+ *
+ * Never rounds a real reading down to nothing: any clipping at all shows as at least 0.1%, because
+ * the number's job is to say "look here", and "0%" beside a red warning reads as a bug.
+ */
+private fun tenths(value: Long): String {
+    val floored = value.coerceAtLeast(1L)
+    return "${floored / 10}.${floored % 10}"
+}
+
+private const val TENTHS = 1000L

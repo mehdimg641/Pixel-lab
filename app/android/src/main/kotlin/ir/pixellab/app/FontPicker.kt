@@ -71,6 +71,17 @@ fun FontPickerBody(state: EditorState, model: EditorViewModel, modifier: Modifie
     Column(modifier.fillMaxSize()) {
         SearchField(query, onChange = { query = it })
 
+        // The way through to the measurements. Picking a face and setting its tracking are
+        // different activities on different timescales, so they are different sheets — but the one
+        // that leads to the other has to say so, or the second is undiscoverable.
+        if (target != null) {
+            SheetAction("پنل نویسه و بند") {
+                model.act {
+                    openSheet(ir.pixellab.core.editor.SheetContent.Typography, ir.pixellab.core.editor.SheetDetent.FULL)
+                }
+            }
+        }
+
         when {
             store.scanning && store.catalog.typefaces.isEmpty() ->
                 Centred { CircularProgressIndicator(color = Ink.Accent) }

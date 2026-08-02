@@ -17,6 +17,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -89,7 +95,15 @@ fun SheetChip(
             .background(if (chosen) tint.copy(alpha = CHOSEN_TINT) else Ink.Chrome)
             .clickable(enabled = enabled, onClick = onClick)
             // The platform's 48dp minimum in spirit: a mis-tap on a canvas costs an undo.
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(horizontal = 12.dp, vertical = 9.dp)
+            // A screen reader announces a chip as a button and reads its label; without this it
+            // cannot say whether the chip is the *chosen* one, which is the only thing that
+            // distinguishes the six chips in a row from each other.
+            .semantics {
+                role = Role.RadioButton
+                selected = chosen
+                if (!enabled) disabled()
+            },
     )
 }
 
@@ -132,7 +146,10 @@ fun SheetNumberField(
             textStyle = TextStyle(color = Ink.Text, fontSize = MaterialTheme.typography.bodyLarge.fontSize),
             cursorBrush = SolidColor(Ink.Accent),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            // The visible label is a separate Text, so the field itself would otherwise be
+            // announced as an unnamed edit box.
             modifier = Modifier
+                .semantics { contentDescription = label }
                 .clip(RoundedCornerShape(8.dp))
                 .background(Ink.ChromeSunken)
                 .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -156,7 +173,13 @@ fun SheetAction(
             .clip(RoundedCornerShape(10.dp))
             .background(if (enabled) tint.copy(alpha = CHOSEN_TINT) else Ink.Chrome)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 11.dp),
+            .padding(horizontal = 14.dp, vertical = 11.dp)
+            .semantics {
+                role = Role.Button
+                // Announced as unavailable rather than simply not responding, which is what a
+                // greyed control that only *looks* greyed sounds like.
+                if (!enabled) disabled()
+            },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

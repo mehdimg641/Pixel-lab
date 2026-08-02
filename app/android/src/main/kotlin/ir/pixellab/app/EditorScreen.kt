@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Star
@@ -209,7 +210,7 @@ fun EditorScreen(model: EditorViewModel) {
                     SheetDivider()
                     when (val content = state.sheet.content) {
                         is SheetContent.EffectParameters ->
-                            ParameterSheetBody(state, content, model::act, Modifier.fillMaxHeight())
+                            ParameterSheetBody(state, content, model, Modifier.fillMaxHeight())
                         is SheetContent.LayerList -> LayerPanel(state, model)
                         is SheetContent.FontPicker -> FontPickerBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.BrushSettings -> BrushSheetBody(model, Modifier.fillMaxHeight())
@@ -233,6 +234,8 @@ fun EditorScreen(model: EditorViewModel) {
                         )
                         is SheetContent.ShapeTools -> ShapeSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Guides -> GuideSheetBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.Typography -> TypeSheetBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.Settings -> SettingsSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Arrange -> ArrangeSheetBody(
                             state = state,
                             model = model,
@@ -293,6 +296,9 @@ private fun TopBar(
             // exactly the kind of expensive, rare action the top bar exists for.
             BarButton(Icons.Filled.Star, "کتابخانه") {
                 model.act { openSheet(SheetContent.LibraryPanel, SheetDetent.FULL) }
+            }
+            BarButton(Icons.Filled.Settings, "تنظیمات") {
+                model.act { openSheet(SheetContent.Settings, SheetDetent.FULL) }
             }
             BarButton(Icons.Filled.FolderOpen, "باز کردن", onClick = onOpen)
             BarButton(Icons.Filled.Save, "ذخیره", onClick = onSave)

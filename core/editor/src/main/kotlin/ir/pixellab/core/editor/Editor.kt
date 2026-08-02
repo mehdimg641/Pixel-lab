@@ -38,10 +38,19 @@ class Editor(
     private val bounds: LayerBounds,
     private val registry: EffectRegistry = builtinEffectRegistry,
     private val handleConfig: HandleConfig = HandleConfig(),
-    private val snapConfig: SnapConfig = SnapConfig(),
+    snapConfig: SnapConfig = SnapConfig(),
     historyLimit: Int = 50,
 ) {
     private val history = History(historyLimit)
+
+    /**
+     * Which kinds of snapping are live, and how strongly.
+     *
+     * Mutable rather than a constructor value because it is a *preference* — the user changes it in
+     * settings and expects the next drag to obey, not the next launch. Deliberately not in
+     * [EditorState]: it is not part of the document, and it must never appear on the undo stack.
+     */
+    var snapConfig: SnapConfig = snapConfig
 
     var state: EditorState = EditorState(document)
         private set

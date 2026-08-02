@@ -48,6 +48,8 @@ fun BrushSheetBody(model: EditorViewModel, modifier: Modifier = Modifier) {
         BrushSlider("اندازه", preset.size, 1f..400f, ParameterSpec.Slider.Unit.PIXELS) {
             model.paint.preset = preset.copy(size = it)
         }
+        TipPicker(model)
+
         val hardness = (preset.tip as? BrushTip.Round)?.hardness
         if (hardness != null) {
             BrushSlider("سختی", hardness, 0f..1f, ParameterSpec.Slider.Unit.PERCENT) {
