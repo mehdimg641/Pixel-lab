@@ -77,6 +77,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     /** Liquify strokes, gathered until the user asks for them to be solved. */
     val warp = WarpController()
 
+    /** The path being drawn or edited, before it becomes a layer. */
+    val pen = PenController()
+
     private val editor = Editor(startingDocument(), bounds)
 
     var state: EditorState by mutableStateOf(editor.state)
@@ -186,8 +189,137 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private fun routeToTool(gesture: CanvasGesture): Boolean = when (state.tool) {
         Tool.SELECT -> routeToSelection(gesture)
         Tool.RETOUCH -> routeToWarp(gesture)
+        Tool.PEN -> routeToPen(gesture)
         else -> routeToBrush(gesture)
     }
+
+    /**
+     * The pen.
+     *
+     * The touch radius is converted from screen pixels into canvas units, so a node stays as easy to
+     * hit at 800% zoom as at 25%. A fixed canvas radius is the version that becomes impossible to
+     * use the moment the user zooms in to do fine work — which is when they need it most.
+     */
+    private fun routeToPen(gesture: CanvasGesture): Boolean {
+        val canvasPoint = { screen: Vec2 -> state.viewport.toCanvas(screen) }
+        val radius = TOUCH_RADIUS / state.viewport.zoom.coerceAtLeast(0.01f)
+        return when (gesture) {
+            is CanvasGesture.Tap -> {
+                pen.tap(canvasPoint(gesture.position), radius)
+                true
+            }
+            is CanvasGesture.DragStart -> {
+                pen.dragStart(canvasPoint(gesture.position), radius)
+                true
+            }
+            is CanvasGesture.Drag -> {
+                pen.drag(canvasPoint(gesture.position))
+                true
+            }
+            is CanvasGesture.DragEnd -> {
+                pen.dragEnd()
+                true
+            }
+            else -> false
+        }
+    }
+
+    // ---- vector ---------------------------------------------------------------------------------
+
+    /** Turns the path being drawn into a layer. */
+    fun commitPenPath(): LayerId? {
+        if (pen.isEmpty) return null
+        val path = pen.path
+        pen.reset()
+        return edit {
+            addLayer(
+                Layer.Shape(id = nextLayerId("path"), geometry = path, name = "مسیر"),
+            )
+        }
+    }
+
+    /**
+     * Replaces a stroked path with its filled outline.
+     *
+     * Illustrator's Outline Stroke. Once it is a fill it takes gradients, effects and boolean
+     * operations like any other shape, which is exactly why the width tool composes with everything
+     * else there.
+     */
+    fun outlineStroke(width: Float, profile: ir.pixellab.core.vector.WidthProfile) {
+        val source = if (!pen.isEmpty) {
+            pen.path
+        } else {
+            ((state.primaryLayer as? Layer.Shape)?.geometry as? ShapeGeometry.Path) ?: return
+        }
+        val outlined = ir.pixellab.core.vector.StrokeOutliner.outline(source, width, profile)
+        if (!pen.isEmpty) {
+            pen.reset()
+            edit { addLayer(Layer.Shape(id = nextLayerId("path"), geometry = outlined, name = "خط ضخامت‌دار")) }
+        } else {
+            val id = state.selection.primary ?: return
+            edit { replaceLayer(id) { (it as Layer.Shape).copy(geometry = outlined) } }
+        }
+    }
+
+    /**
+     * Combines the selected shapes.
+     *
+     * The result replaces the bottom-most of them and the rest are removed, which is what
+     * Illustrator does — and it matters, because the bottom shape's style is the one the combined
+     * result keeps.
+     */
+    fun combineShapes(operation: ir.pixellab.engine.android.PathOperation) {
+        val shapes = selectedPaths()
+        if (shapes.size < 2) return
+        val combined = ir.pixellab.engine.android.Pathfinder.apply(shapes.map { it.second }, operation)
+        edit {
+            replaceLayer(shapes.first().first) { (it as Layer.Shape).copy(geometry = combined) }
+            for ((id, _) in shapes.drop(1)) deleteLayer(id)
+            select(shapes.first().first)
+        }
+    }
+
+    /** Illustrator's Divide: every region the shapes cut each other into, as its own layer. */
+    fun divideShapes() {
+        val shapes = selectedPaths()
+        if (shapes.size < 2) return
+        val regions = ir.pixellab.engine.android.Pathfinder.divide(shapes.map { it.second })
+        if (regions.isEmpty()) return
+        val style = (state.document.findLayer(shapes.first().first) as? Layer.Shape)?.style ?: return
+
+        edit {
+            for ((id, _) in shapes) deleteLayer(id)
+            for (region in regions) {
+                addLayer(
+                    Layer.Shape(
+                        id = nextLayerId("region"),
+                        geometry = region,
+                        name = "ناحیه",
+                        style = style,
+                    ),
+                )
+            }
+        }
+    }
+
+    fun offsetPath(distance: Float) {
+        val id = state.selection.primary ?: return
+        val path = ((state.primaryLayer as? Layer.Shape)?.geometry as? ShapeGeometry.Path) ?: return
+        val offset = ir.pixellab.engine.android.Pathfinder.offset(path, distance)
+        edit { replaceLayer(id) { (it as Layer.Shape).copy(geometry = offset) } }
+    }
+
+    /** The path being drawn, as SVG path data — the string every other tool will accept back. */
+    fun copyPathAsSvg(): String = ir.pixellab.core.vector.SvgPath.write(pen.path)
+
+    private fun selectedPaths(): List<Pair<LayerId, ShapeGeometry.Path>> =
+        state.document.layers
+            .filter { it.id in state.selection }
+            .mapNotNull { layer ->
+                ((layer as? Layer.Shape)?.geometry as? ShapeGeometry.Path)?.let { layer.id to it }
+            }
+
+    // ---- creating layers ---------------------------------------------------------------------
 
     /**
      * Gathers a liquify stroke.
@@ -533,6 +665,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         /** A full turn of the slider gives a quarter turn of the image, which is already a lot. */
         const val TWIRL_DEGREES = 90f
+
+        /** The platform's 48dp minimum, in screen pixels, before the zoom is divided out. */
+        const val TOUCH_RADIUS = 24f
 
         /** A blank square canvas with one shape, so the editor has something to select on launch. */
         fun startingDocument(): Document = Document(

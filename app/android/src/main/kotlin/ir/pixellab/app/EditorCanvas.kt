@@ -46,6 +46,7 @@ fun EditorCanvas(
     assets: AssetSource,
     assetGeneration: Int,
     selection: SelectionOverlay,
+    pen: PenOverlay,
     handle: CanvasHandle,
     onGesture: (ir.pixellab.core.canvas.CanvasGesture) -> Unit,
     onSize: (Vec2) -> Unit,
@@ -87,6 +88,54 @@ fun EditorCanvas(
             drawGuides(state)
             drawSelection(state, bounds)
             drawPixelSelection(selection, state.viewport)
+            drawPenPath(pen, state.viewport)
+        }
+    }
+}
+
+/** The path being drawn, and which of its nodes is showing its handles. */
+data class PenOverlay(
+    val path: ir.pixellab.core.model.ShapeGeometry.Path,
+    val active: ir.pixellab.core.vector.NodeRef?,
+)
+
+/**
+ * Draws the path under construction.
+ *
+ * Not through the renderer: the path is not a layer yet, and it has to be visible before it is a
+ * closed shape — a contour of two nodes has no fill to render at all. Chrome is also the right
+ * place for it, because the nodes and handles must stay a constant size as the canvas zooms.
+ */
+private fun DrawScope.drawPenPath(pen: PenOverlay, viewport: Viewport) {
+    for (points in ir.pixellab.core.vector.PathMath.flatten(pen.path)) {
+        if (points.size < 2) continue
+        val screen = points.map { viewport.toScreen(it) }
+        val outline = androidx.compose.ui.graphics.Path().apply {
+            moveTo(screen.first().x, screen.first().y)
+            for (point in screen.drop(1)) lineTo(point.x, point.y)
+        }
+        // Dark under light, so the line reads over both a white background and a black one.
+        drawPath(outline, UiColor.Black.copy(alpha = 0.6f), style = Stroke(width = 3f))
+        drawPath(outline, UiColor(0xFF4C8DFF), style = Stroke(width = 1.5f))
+    }
+
+    for ((c, contour) in pen.path.contours.withIndex()) {
+        for ((n, node) in contour.nodes.withIndex()) {
+            val at = viewport.toScreen(node.point)
+            val isActive = pen.active?.contour == c && pen.active?.node == n
+
+            if (isActive) {
+                // Handles are shown for the selected node only. Showing every node's would bury the
+                // path itself under its own controls on anything with more than a few points.
+                for (control in listOf(node.controlIn, node.controlOut)) {
+                    val handle = viewport.toScreen(control)
+                    drawLine(UiColor(0xFF4C8DFF), Offset(at.x, at.y), Offset(handle.x, handle.y), strokeWidth = 1.5f)
+                    drawCircle(UiColor.White, 6f, Offset(handle.x, handle.y))
+                    drawCircle(UiColor(0xFF4C8DFF), 6f, Offset(handle.x, handle.y), style = Stroke(1.5f))
+                }
+            }
+            drawCircle(if (isActive) UiColor(0xFF4C8DFF) else UiColor.White, 6f, Offset(at.x, at.y))
+            drawCircle(UiColor.Black.copy(alpha = 0.5f), 6f, Offset(at.x, at.y), style = Stroke(1.5f))
         }
     }
 }

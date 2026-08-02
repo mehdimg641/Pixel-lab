@@ -53,6 +53,7 @@ dependencies {
     api(project(":core:codec"))
     api(project(":core:paint"))
     api(project(":core:imaging"))
+    api(project(":core:vector"))
     implementation(libs.androidx.annotation)
 
     testImplementation(libs.junit.jupiter)

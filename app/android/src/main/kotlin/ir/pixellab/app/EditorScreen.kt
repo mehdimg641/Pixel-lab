@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.FolderOpen
@@ -92,6 +93,7 @@ fun EditorScreen(model: EditorViewModel) {
             assets = model.assets,
             assetGeneration = model.paint.generation,
             selection = SelectionOverlay(model.select.outline, model.select.draft),
+            pen = PenOverlay(model.pen.path, model.pen.active),
             handle = handle,
             onGesture = model::onGesture,
             onSize = model::onScreenSize,
@@ -180,6 +182,7 @@ fun EditorScreen(model: EditorViewModel) {
                         is SheetContent.PixelSelection -> SelectionSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Adjustments -> AdjustmentSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Retouch -> RetouchSheetBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.Vector -> VectorSheetBody(state, model, Modifier.fillMaxHeight())
                         else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text("به‌زودی", color = Ink.TextMuted)
                         }
@@ -304,6 +307,9 @@ private fun Toolbar(state: EditorState, model: EditorViewModel) {
             model.act { openSheet(SheetContent.Retouch, SheetDetent.FULL) }
         }
         ToolButton(Tool.IMAGE, Icons.Filled.Image, "تصویر", state, model) {}
+        ToolButton(Tool.PEN, Icons.Filled.Draw, "قلم", state, model) {
+            model.act { openSheet(SheetContent.Vector, SheetDetent.FULL) }
+        }
         ToolButton(Tool.SHAPE, Icons.Filled.Star, "شکل", state, model) {}
         ToolButton(Tool.SELECT, Icons.Filled.Highlight, "انتخاب", state, model) {
             model.act { openSheet(SheetContent.PixelSelection, SheetDetent.PEEK) }
