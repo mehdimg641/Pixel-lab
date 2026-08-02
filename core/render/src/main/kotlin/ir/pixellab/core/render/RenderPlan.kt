@@ -14,6 +14,12 @@ import kotlin.math.max
  * panel, and imported documents only look right if that sequence is reproduced exactly.
  */
 enum class PassSlot {
+    /**
+     * Preparation that runs before anything is drawn — building the shared distance field, for
+     * example. Kept out of the effect order so it cannot be mistaken for a drawing step.
+     */
+    PREPARE,
+
     BACKDROP,
     DROP_SHADOW,
     OUTER_GLOW,
