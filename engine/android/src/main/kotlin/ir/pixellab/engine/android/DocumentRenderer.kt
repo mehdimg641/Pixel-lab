@@ -15,6 +15,7 @@ import ir.pixellab.core.model.VectorMask
 import ir.pixellab.core.model.with
 import ir.pixellab.core.model.withStyle
 import ir.pixellab.core.render.Affine
+import ir.pixellab.core.render.AdjustmentUniforms
 import ir.pixellab.core.render.BlendShaders
 import ir.pixellab.core.render.Compositing
 import ir.pixellab.core.render.ExecutionError
@@ -334,6 +335,8 @@ class DocumentRenderer(
         canvasSize = Vec2.ZERO
         discardPools()
         clearMasks()
+        adjustmentTables.values.forEach(device::deleteTexture)
+        adjustmentTables.clear()
         imageTextures.values.forEach(device::deleteTexture)
         imageTextures.clear()
         imageBitmaps.clear()
@@ -416,9 +419,7 @@ class DocumentRenderer(
         when (layer) {
             is Layer.Group -> renderGroup(frame, layer, surface, clip)
             is Layer.Instance -> renderInstance(frame, layer, surface, clip)
-            // An adjustment layer changes what is beneath it rather than adding to it, which is a
-            // different pass entirely. Drawing it as an empty layer is the honest placeholder.
-            is Layer.AdjustmentLayer -> Unit
+            is Layer.AdjustmentLayer -> renderAdjustment(frame, layer, surface, clip)
             else -> renderContent(frame, layer, surface, clip)
         }
     }
@@ -524,6 +525,135 @@ class DocumentRenderer(
         frame.instances += instance.source
         renderLayer(frame, effective, surface, clip)
         frame.instances.removeAt(frame.instances.lastIndex)
+    }
+
+    /**
+     * A colour correction over everything beneath it.
+     *
+     * An adjustment layer adds no pixels of its own: it re-reads what is already composited, writes
+     * a corrected copy, and that copy is then blended back through the ordinary composite path with
+     * the layer's own opacity, blend mode, mask and clip. Correcting the buffer in place would be
+     * simpler and would make a half-opacity Curves layer mean "half the picture" rather than "half
+     * the correction", and would leave its mask with nothing to modulate.
+     */
+    private fun renderAdjustment(
+        frame: Frame,
+        layer: Layer.AdjustmentLayer,
+        surface: Surface,
+        clip: TextureHandle?,
+    ) {
+        if (!device.useProgram(Shaders.ADJUST.id)) {
+            frame.errors += ExecutionError(Shaders.ADJUST.id, "adjustment program unavailable")
+            return
+        }
+        val corrected = obtainTexture(frame.bytesPerPixel)
+        val uniforms = AdjustmentUniforms.of(layer.adjustment)
+
+        device.bindTarget(corrected)
+        device.setBlend(false)
+        device.bindInput("uSource", surface.read)
+        // Every sampler is bound whether the branch reads it or not: an unbound sampler in GL ES
+        // reads texture unit zero, which holds whatever the previous draw left there.
+        val white = whiteTexture ?: solidWhite().also { whiteTexture = it }
+        device.bindInput("uCurves", if (uniforms.needsCurves) curveTable(layer.adjustment) ?: white else white)
+        device.bindInput("uRamp", if (uniforms.needsRamp) rampTable(layer.adjustment) ?: white else white)
+        device.bindInput("uLut", if (uniforms.needsLut) lutTable(layer.adjustment) ?: white else white)
+        device.setInt("uMode", uniforms.mode.ordinal)
+        device.setVec4("uP0", uniforms.p0[0], uniforms.p0[1], uniforms.p0[2], uniforms.p0[3])
+        device.setVec4("uP1", uniforms.p1[0], uniforms.p1[1], uniforms.p1[2], uniforms.p1[3])
+        device.setVec4("uP2", uniforms.p2[0], uniforms.p2[1], uniforms.p2[2], uniforms.p2[3])
+        device.setVec2("uTexelSize", 1f / canvasSize.x, 1f / canvasSize.y)
+        device.draw(1)
+
+        compositeTexture(
+            frame = frame,
+            source = corrected,
+            textureBounds = frame.canvasRect,
+            transform = Transform.IDENTITY,
+            opacity = layer.opacity,
+            blendMode = layer.blendMode,
+            mask = maskFor(frame, layer, frame.canvasRect),
+            clip = clip,
+            surface = surface,
+        )
+    }
+
+    // ---- adjustment tables -------------------------------------------------------------------
+
+    private val adjustmentTables = HashMap<Any, TextureHandle>()
+
+    /**
+     * The four curves as one 256-sample table.
+     *
+     * Sampled rather than evaluated in the shader: a Catmull-Rom through an arbitrary number of
+     * control points is a loop per pixel, and the answer only ever depends on one input value.
+     */
+    private fun curveTable(adjustment: ir.pixellab.core.model.Adjustment): TextureHandle? {
+        val key = "curves" to adjustment
+        adjustmentTables[key]?.let { return it }
+
+        val curves = when (adjustment) {
+            is ir.pixellab.core.model.Adjustment.Curves ->
+                listOf(adjustment.rgb, adjustment.red, adjustment.green, adjustment.blue)
+            is ir.pixellab.core.model.Adjustment.Levels -> listOf(
+                ir.pixellab.core.model.Curve.LINEAR,
+                levelsCurve(adjustment.perChannel.getOrNull(0)),
+                levelsCurve(adjustment.perChannel.getOrNull(1)),
+                levelsCurve(adjustment.perChannel.getOrNull(2)),
+            )
+            else -> return null
+        }
+        val tables = curves.map { ir.pixellab.core.render.Luts.curve(it, TABLE_SIZE) }
+        val pixels = IntArray(TABLE_SIZE) { i ->
+            val composite = (tables[0][i].coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+            val red = (tables[1][i].coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+            val green = (tables[2][i].coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+            val blue = (tables[3][i].coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+            // The composite curve rides in red and the three channel curves in the rest, matching
+            // how the shader reads them back.
+            (blue shl 24) or (composite shl 16) or (red shl 8) or green
+        }
+        val handle = device.createTexture(TABLE_SIZE, 1, bytesPerPixel = 4)
+        device.uploadArgb(handle, TABLE_SIZE, 1, pixels)
+        adjustmentTables[key] = handle
+        return handle
+    }
+
+    /** A per-channel Levels turned into the curve the table wants. */
+    private fun levelsCurve(levels: ir.pixellab.core.model.Adjustment.Levels?): ir.pixellab.core.model.Curve {
+        if (levels == null) return ir.pixellab.core.model.Curve.LINEAR
+        val points = (0..LEVELS_SAMPLES).map { i ->
+            val t = i.toFloat() / LEVELS_SAMPLES
+            val range = (levels.inputWhite - levels.inputBlack).coerceAtLeast(EPSILON)
+            val n = ((t - levels.inputBlack) / range).coerceIn(0f, 1f)
+            val gamma = Math.pow(n.toDouble(), 1.0 / levels.gamma.coerceAtLeast(EPSILON).toDouble()).toFloat()
+            Vec2(t, levels.outputBlack + gamma * (levels.outputWhite - levels.outputBlack))
+        }
+        return ir.pixellab.core.model.Curve(points)
+    }
+
+    private fun rampTable(adjustment: ir.pixellab.core.model.Adjustment): TextureHandle? {
+        val map = adjustment as? ir.pixellab.core.model.Adjustment.GradientMap ?: return null
+        val key = "ramp" to map.gradient
+        adjustmentTables[key]?.let { return it }
+
+        val ramp = ir.pixellab.core.render.Luts.gradient(map.gradient, TABLE_SIZE)
+        val handle = device.createTexture(TABLE_SIZE, 1, bytesPerPixel = 4)
+        device.uploadArgb(handle, TABLE_SIZE, 1, ramp)
+        adjustmentTables[key] = handle
+        return handle
+    }
+
+    private fun lutTable(adjustment: ir.pixellab.core.model.Adjustment): TextureHandle? {
+        val lookup = adjustment as? ir.pixellab.core.model.Adjustment.ColorLookup ?: return null
+        val key = "lut" to lookup.asset
+        adjustmentTables[key]?.let { return it }
+
+        val image = assets.load(lookup.asset) ?: return null
+        val handle = device.createTexture(image.width, image.height, bytesPerPixel = 4)
+        device.uploadArgb(handle, image.width, image.height, image.pixels)
+        adjustmentTables[key] = handle
+        return handle
     }
 
     private fun renderContent(frame: Frame, layer: Layer, surface: Surface, clip: TextureHandle?) {
@@ -1057,6 +1187,14 @@ class DocumentRenderer(
 
         /** A surface is a ping-pong pair, plus the clip source a clipping group copies aside. */
         const val SURFACE_BUFFERS = 3
+
+        /** 256 samples: one per eight-bit input value, so the table is exact at that precision. */
+        const val TABLE_SIZE = 256
+
+        /** Enough control points that a gamma curve reads as smooth through the table. */
+        const val LEVELS_SAMPLES = 16
+
+        const val EPSILON = 0.0001f
 
         const val MASK_RASTER = 1
         const val MASK_RASTER_INVERTED = 2

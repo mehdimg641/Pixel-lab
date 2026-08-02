@@ -627,11 +627,233 @@ object Shaders {
         """,
     )
 
+
+    /**
+     * The fourteen colour corrections, as one program.
+     *
+     * An adjustment layer does not add pixels, it re-reads what is beneath it — so this samples the
+     * composited backdrop and writes a corrected copy, which the compositor then blends back with
+     * the layer's own opacity and mask. That is exactly Photoshop's model, and it is what makes a
+     * half-opacity Curves layer mean "half the correction" rather than "half the picture".
+     *
+     * Every branch works on **unpremultiplied** colour. The backdrop arrives premultiplied, and
+     * correcting premultiplied values darkens everything the further it is from opaque — visible as
+     * a grey halo around every soft edge in the document.
+     */
+    val ADJUST = program(
+        id = "adjust",
+        body = """
+            uniform int  uMode;
+            uniform vec4 uP0;
+            uniform vec4 uP1;
+            uniform vec4 uP2;
+
+            // r: composite curve, g/b/a: the three channel curves. One table rather than four
+            // textures, because a Curves layer with all four in use is the normal case.
+            uniform sampler2D uCurves;
+            uniform sampler2D uRamp;
+            uniform sampler2D uLut;
+
+            float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+            vec3 rgbToHsl(vec3 c) {
+                float mx = max(c.r, max(c.g, c.b));
+                float mn = min(c.r, min(c.g, c.b));
+                float l = (mx + mn) * 0.5;
+                float d = mx - mn;
+                if (d < 0.00001) return vec3(0.0, 0.0, l);
+                float s = l > 0.5 ? d / (2.0 - mx - mn) : d / (mx + mn);
+                float h;
+                if (mx == c.r)      h = (c.g - c.b) / d + (c.g < c.b ? 6.0 : 0.0);
+                else if (mx == c.g) h = (c.b - c.r) / d + 2.0;
+                else                h = (c.r - c.g) / d + 4.0;
+                return vec3(h / 6.0, s, l);
+            }
+
+            float hueChannel(float p, float q, float t) {
+                if (t < 0.0) t += 1.0;
+                if (t > 1.0) t -= 1.0;
+                if (t < 1.0 / 6.0) return p + (q - p) * 6.0 * t;
+                if (t < 1.0 / 2.0) return q;
+                if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+                return p;
+            }
+
+            vec3 hslToRgb(vec3 hsl) {
+                if (hsl.y < 0.00001) return vec3(hsl.z);
+                float q = hsl.z < 0.5 ? hsl.z * (1.0 + hsl.y) : hsl.z + hsl.y - hsl.z * hsl.y;
+                float p = 2.0 * hsl.z - q;
+                return vec3(
+                    hueChannel(p, q, hsl.x + 1.0 / 3.0),
+                    hueChannel(p, q, hsl.x),
+                    hueChannel(p, q, hsl.x - 1.0 / 3.0)
+                );
+            }
+
+            float levelsChannel(float v, float inBlack, float inWhite, float gamma, float outBlack, float outWhite) {
+                float range = max(inWhite - inBlack, 0.0001);
+                float n = clamp((v - inBlack) / range, 0.0, 1.0);
+                n = pow(n, 1.0 / max(gamma, 0.0001));
+                return outBlack + n * (outWhite - outBlack);
+            }
+
+            /** Photoshop's colour balance shifts each range along three opposed axes. */
+            vec3 balance(vec3 c, vec3 shadows, vec3 midtones, vec3 highlights) {
+                float l = luma(c);
+                // Overlapping weights, so a change to the midtones does not stop dead at a boundary
+                // and leave a visible band across a gradient.
+                float sw = clamp(1.0 - l * 2.0, 0.0, 1.0);
+                float hw = clamp(l * 2.0 - 1.0, 0.0, 1.0);
+                float mw = 1.0 - sw - hw;
+                return c + shadows * sw + midtones * mw + highlights * hw;
+            }
+
+            /** Six-way monochrome mixing, as the Black and White panel does it. */
+            float blackWhite(vec3 c, vec4 w0, vec2 w1) {
+                float mx = max(c.r, max(c.g, c.b));
+                float mn = min(c.r, min(c.g, c.b));
+                float weight =
+                      w0.x * max(0.0, min(c.r - c.g, c.r - c.b))
+                    + w0.y * max(0.0, min(c.r, c.g) - c.b)
+                    + w0.z * max(0.0, min(c.g - c.r, c.g - c.b))
+                    + w0.w * max(0.0, min(c.g, c.b) - c.r)
+                    + w1.x * max(0.0, min(c.b - c.r, c.b - c.g))
+                    + w1.y * max(0.0, min(c.r, c.b) - c.g);
+                return clamp(mn + weight, 0.0, 1.0);
+            }
+
+            /** A 512x512 strip holding a 64-cube, which is what every LUT file on disk is. */
+            vec3 lookup(vec3 c) {
+                float slices = 64.0;
+                float blue = clamp(c.b, 0.0, 1.0) * (slices - 1.0);
+                float lower = floor(blue);
+                float upper = min(lower + 1.0, slices - 1.0);
+                float mixAmount = blue - lower;
+
+                vec2 texel = vec2(1.0 / 512.0);
+                vec2 uvLower = vec2(
+                    (mod(lower, 8.0) * 64.0 + clamp(c.r, 0.0, 1.0) * 63.0 + 0.5) * texel.x,
+                    (floor(lower / 8.0) * 64.0 + clamp(c.g, 0.0, 1.0) * 63.0 + 0.5) * texel.y
+                );
+                vec2 uvUpper = vec2(
+                    (mod(upper, 8.0) * 64.0 + clamp(c.r, 0.0, 1.0) * 63.0 + 0.5) * texel.x,
+                    (floor(upper / 8.0) * 64.0 + clamp(c.g, 0.0, 1.0) * 63.0 + 0.5) * texel.y
+                );
+                return mix(texture(uLut, uvLower).rgb, texture(uLut, uvUpper).rgb, mixAmount);
+            }
+
+            void main() {
+                vec4 src = texture(uSource, vUv);
+                // Nothing beneath means nothing to correct. Running the branch anyway would tint the
+                // empty margin of the artboard, which then shows up in an export.
+                if (src.a <= 0.0) { fragColor = src; return; }
+
+                vec3 c = src.rgb / src.a;
+
+                if (uMode == 0) {
+                    c = c + uP0.x;
+                    c = (c - 0.5) * (1.0 + uP0.y) + 0.5;
+                } else if (uMode == 1) {
+                    c = vec3(
+                        levelsChannel(c.r, uP0.x, uP0.y, uP0.z, uP0.w, uP1.x),
+                        levelsChannel(c.g, uP0.x, uP0.y, uP0.z, uP0.w, uP1.x),
+                        levelsChannel(c.b, uP0.x, uP0.y, uP0.z, uP0.w, uP1.x)
+                    );
+                    if (uP1.y > 0.5) {
+                        c = vec3(
+                            texture(uCurves, vec2(c.r, 0.5)).g,
+                            texture(uCurves, vec2(c.g, 0.5)).b,
+                            texture(uCurves, vec2(c.b, 0.5)).a
+                        );
+                    }
+                } else if (uMode == 2) {
+                    // Per channel first, then the composite, which is the order the panel implies
+                    // and the order that makes a composite S-curve behave the same however the
+                    // channels were set.
+                    c = vec3(
+                        texture(uCurves, vec2(clamp(c.r, 0.0, 1.0), 0.5)).g,
+                        texture(uCurves, vec2(clamp(c.g, 0.0, 1.0), 0.5)).b,
+                        texture(uCurves, vec2(clamp(c.b, 0.0, 1.0), 0.5)).a
+                    );
+                    c = vec3(
+                        texture(uCurves, vec2(clamp(c.r, 0.0, 1.0), 0.5)).r,
+                        texture(uCurves, vec2(clamp(c.g, 0.0, 1.0), 0.5)).r,
+                        texture(uCurves, vec2(clamp(c.b, 0.0, 1.0), 0.5)).r
+                    );
+                } else if (uMode == 3) {
+                    vec3 hsl = rgbToHsl(clamp(c, 0.0, 1.0));
+                    if (uP0.w > 0.5) {
+                        // Colorize replaces the hue outright rather than rotating it, which is the
+                        // whole point of the checkbox.
+                        hsl.x = fract(uP0.x);
+                        hsl.y = clamp(uP0.y, 0.0, 1.0);
+                    } else {
+                        hsl.x = fract(hsl.x + uP0.x);
+                        hsl.y = clamp(hsl.y * (1.0 + uP0.y), 0.0, 1.0);
+                    }
+                    hsl.z = clamp(hsl.z + uP0.z * (uP0.z > 0.0 ? (1.0 - hsl.z) : hsl.z), 0.0, 1.0);
+                    c = hslToRgb(hsl);
+                } else if (uMode == 4) {
+                    c = pow(max(c * pow(2.0, uP0.x) + uP0.y, vec3(0.0)), vec3(1.0 / max(uP0.z, 0.0001)));
+                } else if (uMode == 5) {
+                    float mx = max(c.r, max(c.g, c.b));
+                    float mn = min(c.r, min(c.g, c.b));
+                    float sat = mx - mn;
+                    // Vibrance protects what is already saturated, which is what keeps skin from
+                    // going orange when a landscape is pushed.
+                    float boost = uP0.x * (1.0 - sat);
+                    float amount = 1.0 + boost + uP0.y;
+                    float l = luma(c);
+                    c = mix(vec3(l), c, max(amount, 0.0));
+                } else if (uMode == 6) {
+                    vec3 balanced = balance(c, uP0.rgb, uP1.rgb, uP2.rgb);
+                    if (uP0.w > 0.5) {
+                        float before = luma(c);
+                        float after = max(luma(balanced), 0.0001);
+                        balanced *= before / after;
+                    }
+                    c = balanced;
+                } else if (uMode == 7) {
+                    c = vec3(blackWhite(clamp(c, 0.0, 1.0), uP0, uP1.xy));
+                } else if (uMode == 8) {
+                    float l = clamp(luma(c), 0.0, 1.0);
+                    if (uP0.x > 0.5) {
+                        // A ramp across a large area bands visibly at eight bits; a pixel-stable
+                        // dither breaks it up without adding noise that moves between frames.
+                        l = clamp(l + (hash(gl_FragCoord.xy) - 0.5) * (1.0 / 255.0), 0.0, 1.0);
+                    }
+                    c = texture(uRamp, vec2(l, 0.5)).rgb;
+                } else if (uMode == 9) {
+                    vec3 filtered = mix(c, c * uP0.rgb, clamp(uP0.w, 0.0, 1.0));
+                    if (uP1.x > 0.5) {
+                        float before = luma(c);
+                        filtered *= before / max(luma(filtered), 0.0001);
+                    }
+                    c = filtered;
+                } else if (uMode == 10) {
+                    c = 1.0 - c;
+                } else if (uMode == 11) {
+                    float levels = max(uP0.x, 2.0);
+                    c = floor(clamp(c, 0.0, 1.0) * levels) / (levels - 1.0);
+                } else if (uMode == 12) {
+                    c = vec3(luma(c) >= uP0.x ? 1.0 : 0.0);
+                } else if (uMode == 13) {
+                    c = mix(c, lookup(c), clamp(uP0.x, 0.0, 1.0));
+                }
+
+                fragColor = vec4(clamp(c, 0.0, 1.0) * src.a, src.a);
+            }
+        """,
+        floats = emptySet(),
+        ints = setOf("uMode"),
+        samplers = setOf("uSource", "uCurves", "uRamp", "uLut"),
+    )
+
     /** Every program, keyed by the id an effect module puts in its descriptor. */
     val ALL: Map<String, ShaderProgram> = listOf(
         SDF_SEED, SDF_FLOOD, SDF_RESOLVE, STROKE, SHADOW, GLOW, INNER_SHADOW, BEVEL, SATIN, OVERLAY,
         EXTRUDE_STEP, REFLECTION, CHROMATIC_OFFSET, BACKDROP_BLUR, NOISE, EDGE_ROUGHEN, BLUR, FILL,
-        COMPOSITE, PRESENT, COPY,
+        COMPOSITE, PRESENT, COPY, ADJUST,
     ).associateBy { it.id }
 
     operator fun get(id: String): ShaderProgram? = ALL[id]

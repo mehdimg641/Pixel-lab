@@ -177,6 +177,7 @@ fun EditorScreen(model: EditorViewModel) {
                         is SheetContent.FontPicker -> FontPickerBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.BrushSettings -> BrushSheetBody(model, Modifier.fillMaxHeight())
                         is SheetContent.PixelSelection -> SelectionSheetBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.Adjustments -> AdjustmentSheetBody(state, model, Modifier.fillMaxHeight())
                         else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text("به‌زودی", color = Ink.TextMuted)
                         }
@@ -302,7 +303,9 @@ private fun Toolbar(state: EditorState, model: EditorViewModel) {
         ToolButton(Tool.SELECT, Icons.Filled.Highlight, "انتخاب", state, model) {
             model.act { openSheet(SheetContent.PixelSelection, SheetDetent.PEEK) }
         }
-        ToolButton(Tool.ADJUST, Icons.Filled.Tune, "تنظیم", state, model) {}
+        ToolButton(Tool.ADJUST, Icons.Filled.Tune, "تنظیم", state, model) {
+            model.act { openSheet(SheetContent.Adjustments, SheetDetent.FULL) }
+        }
     }
 }
 

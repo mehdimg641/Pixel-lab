@@ -349,6 +349,28 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         addLayer(Layer.Image(id = id, asset = asset, name = name))
     }
 
+    /**
+     * Adds a colour correction above the selection.
+     *
+     * Above rather than at the top of the stack: an adjustment layer corrects everything beneath it,
+     * and dropping every new one at the very top would make each correction apply to the whole
+     * document regardless of what the user had selected.
+     */
+    fun addAdjustment(adjustment: ir.pixellab.core.model.Adjustment, name: String): LayerId = edit {
+        addLayer(
+            Layer.AdjustmentLayer(
+                id = nextLayerId("adjust"),
+                adjustment = adjustment,
+                name = name,
+            ),
+        )
+    }
+
+    /** Edits an adjustment in place, as one undo step per change. */
+    fun setAdjustment(id: LayerId, adjustment: ir.pixellab.core.model.Adjustment) = edit {
+        replaceLayer(id) { (it as Layer.AdjustmentLayer).copy(adjustment = adjustment) }
+    }
+
     /** Replaces the string of a text layer, keeping everything else about it. */
     fun setText(id: LayerId, text: String) = edit {
         val layer = state.document.findLayer(id) as? Layer.Text ?: return@edit
