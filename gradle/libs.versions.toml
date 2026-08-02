@@ -8,6 +8,7 @@ androidx-core = "1.13.1"
 androidx-annotation = "1.9.1"
 junit = "5.11.3"
 compose-bom = "2024.12.01"
+onnxruntime = "1.27.0"
 activity-compose = "1.9.3"
 lifecycle = "2.8.7"
 
@@ -19,6 +20,7 @@ robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectr
 androidx-test-core = { module = "androidx.test:core", version = "1.6.1" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
 androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "androidx-annotation" }
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
 compose-ui = { module = "androidx.compose.ui:ui" }
 compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics" }

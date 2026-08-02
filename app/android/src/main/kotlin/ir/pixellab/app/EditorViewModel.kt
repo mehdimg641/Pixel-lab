@@ -1197,13 +1197,33 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     suspend fun selectSubject(sensitivity: Float = 0.5f): Boolean {
         val image = sampledPixels() ?: return false
         val found = withContext(kotlinx.coroutines.Dispatchers.Default) {
-            ir.pixellab.core.paint.SubjectSelection.select(image.pixels, image.width, image.height, sensitivity)
+            // Rebuilt per call rather than held. These networks are hundreds of megabytes of native
+            // memory; keeping one resident between cut-outs would make this app the first thing the
+            // system kills, and reloading costs a second on an operation the user asked for.
+            cutout().select(image.pixels, image.width, image.height, sensitivity)
         }
         if (found.isEmpty) return false
         select.use(found)
         paint.selection = select.selection
         return true
     }
+
+    /**
+     * The cut-out path, with a model behind it if the user has installed one.
+     *
+     * Looked up each time so a model dropped into the folder mid-session is picked up without a
+     * restart — which is how it will actually be installed, since the transfer happens outside the
+     * app and there is no event to react to.
+     */
+    private fun cutout(): ir.pixellab.core.ai.SubjectCutout {
+        val directory = AssetKind.MODELS.directoryIn(getApplication())
+        return ir.pixellab.core.ai.SubjectCutout(
+            ir.pixellab.engine.android.OnnxSegmentation.bestIn(directory),
+        )
+    }
+
+    /** What the settings screen says is answering: the model's name, or the classical path. */
+    fun cutoutDescription(): String = cutout().describe
 
     /** Turns the current selection into a mask on the selected layer, non-destructively. */
     fun maskFromSelection(): Boolean {

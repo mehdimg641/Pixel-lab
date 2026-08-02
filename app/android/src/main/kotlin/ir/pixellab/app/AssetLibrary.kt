@@ -43,7 +43,7 @@ enum class AssetKind(
         directory = "models",
         label = "مدل هوش مصنوعی",
         extensions = setOf("tflite", "lite", "onnx"),
-        purpose = "جداسازی سوژه و مش چهره — بدون این هم کار می‌کند، با این دقیق‌تر",
+        purpose = "جداسازی سوژه (BiRefNet) و مش چهره — بدون این هم کار می‌کند، با این دقیق‌تر",
     ),
 
     LUTS(

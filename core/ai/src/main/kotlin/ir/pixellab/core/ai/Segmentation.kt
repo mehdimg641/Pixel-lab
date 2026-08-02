@@ -25,8 +25,9 @@ interface SegmentationModel {
      * Per-pixel confidence that the pixel is subject, 0..255, at the model's own resolution.
      *
      * Returned at the model's resolution rather than the image's, because every one of these
-     * networks runs at a fixed small size — 320 or 512 square — and pretending otherwise would hide
-     * the upsample that has to happen, which is exactly where a mask goes soft.
+     * networks runs at a fixed square size — 1024 for the professional ones — and pretending
+     * otherwise would hide the upsample that has to happen, which is exactly where a mask goes
+     * soft.
      */
     fun infer(pixels: IntArray, width: Int, height: Int): Mask?
 

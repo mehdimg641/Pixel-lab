@@ -128,6 +128,9 @@ fun SettingsSheetBody(state: EditorState, model: EditorViewModel, modifier: Modi
             AssetRow(found)
         }
         SheetAction("جست‌وجوی دوباره") { model.rescanAssets() }
+        // Which path is answering, said plainly. A user comparing two cut-outs needs to know
+        // whether the difference is the model or the picture.
+        SheetHint("جداسازی سوژه: ${model.cutoutDescription()}")
 
         SheetSection("دربارهٔ برنامه")
         SheetHint("PixelLab — متن‌باز، بدون واترمارک، بدون اشتراک، بدون نیاز به اینترنت")
