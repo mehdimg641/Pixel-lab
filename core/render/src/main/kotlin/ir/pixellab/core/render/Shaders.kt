@@ -35,6 +35,11 @@ object Shaders {
         precision highp float;
 
         in vec2 vUv;
+
+        // Which instance of an instanced pass this is; extrusion is the only user, but it has to be
+        // declared here because the shared vertex stage always writes it.
+        flat in float vInstance;
+
         out vec4 fragColor;
 
         uniform sampler2D uSource;
@@ -67,41 +72,91 @@ object Shaders {
     ) = ShaderProgram(
         id = id,
         fragment = COMMON + "\n\n" + body.trimIndent(),
-        floatUniforms = floats + "uTexelSizeUnused".let { emptySet() },
+        floatUniforms = floats,
         vec2Uniforms = vec2s,
         intUniforms = ints,
         samplers = samplers,
     )
 
+    /** Stands in for "no seed found yet"; comfortably inside the half-float range. */
+    const val SDF_FAR = 8192f
+
     /**
-     * Builds the signed distance field the outline-based effects share.
+     * Seeds the jump flood by marking the pixels the silhouette's edge passes through.
      *
-     * Jump flooding is used rather than an exact transform because it runs entirely on the GPU in
+     * Seeding the edge rather than the interior means one flood produces the unsigned distance for
+     * both sides; the sign is recovered at resolve time from the layer's own alpha. Two floods —
+     * inside and outside — is the obvious implementation and twice the work.
+     */
+    val SDF_SEED = program(
+        id = "sdf_seed",
+        body = """
+            void main() {
+                bool inside = texture(uSource, vUv).a >= 0.5;
+                bool edge =
+                    inside != (texture(uSource, vUv - vec2(uTexelSize.x, 0.0)).a >= 0.5) ||
+                    inside != (texture(uSource, vUv + vec2(uTexelSize.x, 0.0)).a >= 0.5) ||
+                    inside != (texture(uSource, vUv - vec2(0.0, uTexelSize.y)).a >= 0.5) ||
+                    inside != (texture(uSource, vUv + vec2(0.0, uTexelSize.y)).a >= 0.5);
+                // xy is the offset in pixels to the nearest seed, z its length, w whether one is known.
+                fragColor = edge ? vec4(0.0, 0.0, 0.0, 1.0) : vec4(0.0, 0.0, 8192.0, 0.0);
+            }
+        """,
+    )
+
+    /**
+     * One jump-flooding step, run with a halving stride.
+     *
+     * Jump flooding is used rather than the exact transform because it runs entirely on the GPU in
      * log(n) passes; the CPU-side exact transform in `core:imaging` is reserved for offline work
      * where its accuracy matters more than its latency.
+     *
+     * The seed position is stored **relative to the current pixel**, not as an absolute coordinate.
+     * Absolute coordinates are the obvious encoding and they do not survive half float: at 4096 px a
+     * texel is 1/4096 of the UV range, which is below half float's resolution near 1.0, so the field
+     * would quantise into visible steps along the right and bottom edges. Relative offsets stay
+     * small and are exact.
      */
-    val SDF = program(
-        id = "sdf_jump_flood",
+    val SDF_FLOOD = program(
+        id = "sdf_flood",
         body = """
             uniform sampler2D uSeed;
             uniform float uStep;
 
             void main() {
                 vec4 best = texture(uSeed, vUv);
-                float bestDist = best.z;
                 for (int dy = -1; dy <= 1; dy++) {
                     for (int dx = -1; dx <= 1; dx++) {
-                        vec2 offset = vec2(float(dx), float(dy)) * uStep * uTexelSize;
-                        vec4 candidate = texture(uSeed, vUv + offset);
+                        vec2 jump = vec2(float(dx), float(dy)) * uStep;
+                        vec4 candidate = texture(uSeed, vUv + jump * uTexelSize);
                         if (candidate.w < 0.5) continue;
-                        float d = distance(vUv, candidate.xy);
-                        if (d < bestDist) { best = vec4(candidate.xy, d, 1.0); bestDist = d; }
+                        // The neighbour's seed, re-expressed as an offset from this pixel.
+                        vec2 offset = jump + candidate.xy;
+                        float d = length(offset);
+                        if (d < best.z) best = vec4(offset, d, 1.0);
                     }
                 }
                 fragColor = best;
             }
         """,
         floats = setOf("uStep"),
+        samplers = setOf("uSeed"),
+    )
+
+    /** Turns the flood result into the signed pixel distance every outline effect samples. */
+    val SDF_RESOLVE = program(
+        id = "sdf_resolve",
+        body = """
+            uniform sampler2D uSeed;
+
+            void main() {
+                vec4 s = texture(uSeed, vUv);
+                float d = s.w > 0.5 ? s.z : 8192.0;
+                // Negative inside the shape, positive outside — the convention every consumer reads.
+                float inside = texture(uSource, vUv).a >= 0.5 ? -1.0 : 1.0;
+                fragColor = vec4(inside * d, 0.0, 0.0, 1.0);
+            }
+        """,
         samplers = setOf("uSource", "uSeed"),
     )
 
@@ -161,18 +216,20 @@ object Shaders {
             uniform float uBlur;
             uniform float uSpread;
             uniform int uInner;
-            uniform int uSource_;
+            uniform int uGlowSource;   // 0 centre, 1 edge
 
             void main() {
                 float blurred = texture(uBlurred, vUv).a;
                 float layer = texture(uSource, vUv).a;
                 // An inner glow lives inside the shape, an outer one outside it.
                 float coverage = uInner == 1 ? (1.0 - blurred) * layer : blurred * (1.0 - layer);
+                // Sourced from the centre, the glow fills the shape and fades towards the edge.
+                if (uInner == 1 && uGlowSource == 0) coverage = blurred * layer;
                 fragColor = vec4(0.0, 0.0, 0.0, clamp(coverage, 0.0, 1.0));
             }
         """,
         floats = setOf("uBlur", "uSpread"),
-        ints = setOf("uInner", "uSource_"),
+        ints = setOf("uInner", "uGlowSource"),
         samplers = setOf("uSource", "uBlurred"),
     )
 
@@ -218,7 +275,9 @@ object Shaders {
             uniform int uTechnique;
 
             float heightAt(vec2 uv) {
-                float d = texture(uSdf, uv).r;
+                // The field is negative inside; an inner bevel climbs as it goes deeper, an outer
+                // one climbs going outwards.
+                float d = texture(uSdf, uv).r * (uStyle == 0 ? 1.0 : -1.0);
                 float t = clamp(d / max(uSize, 0.001), 0.0, 1.0);
                 return texture(uProfile, vec2(t, 0.5)).r;
             }
@@ -297,11 +356,13 @@ object Shaders {
             uniform vec2 uStepOffset;
             uniform float uFarOpacity;
             uniform float uStepCount;
-            uniform float uStepIndex;
 
             void main() {
-                float t = uStepCount > 1.0 ? uStepIndex / (uStepCount - 1.0) : 0.0;
-                vec2 shifted = vUv - uStepOffset * uStepIndex * uTexelSize;
+                // Instance 0 draws the *farthest* step. GL blends primitives in instance order, so
+                // counting down is what puts the near face on top; counting up buries it.
+                float index = max(uStepCount - 1.0 - vInstance, 0.0);
+                float t = uStepCount > 1.0 ? index / (uStepCount - 1.0) : 0.0;
+                vec2 shifted = vUv - uStepOffset * index * uTexelSize;
                 float alpha = texture(uSource, shifted).a;
                 vec4 near = texture(uNearFill, vUv);
                 vec4 far = texture(uFarFill, vUv);
@@ -310,7 +371,7 @@ object Shaders {
                 fragColor = premultiply(vec4(colour, alpha * opacity));
             }
         """,
-        floats = setOf("uFarOpacity", "uStepCount", "uStepIndex"),
+        floats = setOf("uFarOpacity", "uStepCount"),
         vec2s = setOf("uStepOffset"),
         samplers = setOf("uSource", "uNearFill", "uFarFill"),
     )
@@ -426,11 +487,35 @@ object Shaders {
                 // Displacing the distance field erodes the silhouette instead of just fading it.
                 float d = texture(uSdf, vUv).r + fbm(vUv * 128.0) * uAmount;
                 vec4 c = texture(uSource, vUv);
-                fragColor = vec4(c.rgb, c.a * smoothstep(-0.5, 0.5, d));
+                // The field is negative inside, so coverage falls off as d rises through zero.
+                fragColor = vec4(c.rgb, c.a * (1.0 - smoothstep(-0.5, 0.5, d)));
             }
         """,
         floats = setOf("uAmount", "uDetail", "uSeed"),
         samplers = setOf("uSource", "uSdf"),
+    )
+
+    /**
+     * The layer's own body.
+     *
+     * Kept separate from the overlay effect because fill opacity is not layer opacity: dropping the
+     * fill to zero has to leave every effect at full strength, which is what makes hollow text —
+     * stroke and shadow with nothing between them — possible at all.
+     */
+    val FILL = program(
+        id = "fill",
+        body = """
+            uniform sampler2D uFill;
+            uniform float uFillOpacity;
+
+            void main() {
+                vec4 fill = texture(uFill, vUv);
+                float layer = texture(uSource, vUv).a;
+                fragColor = premultiply(vec4(fill.rgb, fill.a * layer * uFillOpacity));
+            }
+        """,
+        floats = setOf("uFillOpacity"),
+        samplers = setOf("uSource", "uFill"),
     )
 
     /** Separable Gaussian, run twice; the workhorse behind shadows and glows. */
@@ -461,8 +546,8 @@ object Shaders {
 
     /** Every program, keyed by the id an effect module puts in its descriptor. */
     val ALL: Map<String, ShaderProgram> = listOf(
-        SDF, STROKE, SHADOW, GLOW, INNER_SHADOW, BEVEL, SATIN, OVERLAY,
-        EXTRUDE_STEP, REFLECTION, CHROMATIC_OFFSET, BACKDROP_BLUR, NOISE, EDGE_ROUGHEN, BLUR,
+        SDF_SEED, SDF_FLOOD, SDF_RESOLVE, STROKE, SHADOW, GLOW, INNER_SHADOW, BEVEL, SATIN, OVERLAY,
+        EXTRUDE_STEP, REFLECTION, CHROMATIC_OFFSET, BACKDROP_BLUR, NOISE, EDGE_ROUGHEN, BLUR, FILL,
     ).associateBy { it.id }
 
     operator fun get(id: String): ShaderProgram? = ALL[id]

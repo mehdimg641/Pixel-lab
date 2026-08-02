@@ -115,7 +115,7 @@ object OuterGlowModule : EffectModule<Effect.OuterGlow> {
     override fun describe(effect: Effect.OuterGlow, context: RenderContext) = PassDescriptor(
         shaderId = "glow",
         floats = mapOf("uBlur" to effect.blur * context.scale, "uSpread" to effect.spread * context.scale),
-        ints = mapOf("uInner" to 0),
+        ints = mapOf("uInner" to 0, "uGlowSource" to 1),
     )
 
     override fun cost(effect: Effect.OuterGlow) = 4
@@ -137,7 +137,7 @@ object InnerGlowModule : EffectModule<Effect.InnerGlow> {
     override fun describe(effect: Effect.InnerGlow, context: RenderContext) = PassDescriptor(
         shaderId = "glow",
         floats = mapOf("uBlur" to effect.blur * context.scale, "uSpread" to effect.choke * context.scale),
-        ints = mapOf("uInner" to 1, "uSource" to effect.source.ordinal),
+        ints = mapOf("uInner" to 1, "uGlowSource" to effect.source.ordinal),
     )
 
     override fun cost(effect: Effect.InnerGlow) = 4
@@ -248,7 +248,12 @@ object ExtrudeModule : EffectModule<Effect.Extrude> {
                 effect.stepOffset.y * context.scale,
             ),
         ),
-        floats = mapOf("uFarOpacity" to effect.farOpacity),
+        floats = mapOf(
+            "uFarOpacity" to effect.farOpacity,
+            // The shader derives each step's depth from this; without it every step lands at t=0
+            // and the extrusion collapses to a flat smear of the near colour.
+            "uStepCount" to effect.steps.toFloat(),
+        ),
         instanceCount = effect.steps,
     )
 

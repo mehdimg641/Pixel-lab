@@ -41,6 +41,27 @@ class ShaderLibraryTest {
     }
 
     @Test
+    fun `every uniform the graph sends is declared by its shader`() {
+        // The graph synthesises passes no module owns — the blur halves, the flood steps — so their
+        // uniforms escape the module check above and need their own.
+        val style = Style(
+            effects = listOf(
+                Effect.DropShadow(blur = 30f), Effect.Stroke(6f, Fill.Solid(Color.BLACK)), Effect.Bevel(),
+            ),
+        )
+        val g = RenderGraphBuilder.build(RenderPlanner.plan(style), Rect(0f, 0f, 400f, 200f))
+        for (pass in g.passes) {
+            val shader = Shaders[pass.shaderId] ?: error("no shader program for '${pass.shaderId}'")
+            for (name in pass.floats.keys) {
+                if (name !in shader.fragment) error("${shader.id} does not read float '$name'")
+            }
+            for (name in pass.vectors.keys) {
+                if (name !in shader.fragment) error("${shader.id} does not read vec2 '$name'")
+            }
+        }
+    }
+
+    @Test
     fun `every uniform a module sends is declared by its shader`() {
         val samples: List<Effect> = listOf(
             Effect.Stroke(4f, Fill.Solid(Color.BLACK)),
@@ -126,10 +147,51 @@ class RenderGraphTest {
         )
         val g = graph(style)
         g.buffers.count { it.role == BufferRole.SDF } shouldBe 1
-        g.passes.count { it.shaderId == Shaders.SDF.id } shouldBe 1
+        g.passes.count { it.shaderId == Shaders.SDF_SEED.id } shouldBe 1
+        g.passes.count { it.shaderId == Shaders.SDF_RESOLVE.id } shouldBe 1
         // All four consumers read it.
         val sdfId = g.buffers.single { it.role == BufferRole.SDF }.id
         g.passes.count { sdfId in it.inputs } shouldBe 4
+    }
+
+    @Test
+    fun `the jump flood halves its stride down to a single pixel`() {
+        val g = graph(Style(effects = listOf(Effect.Stroke(64f, Fill.Solid(Color.BLACK)))))
+        val strides = g.passes.filter { it.shaderId == Shaders.SDF_FLOOD.id }.map { it.floats.getValue("uStep") }
+        // 64 rounds to 64, then halves: a gap in this sequence leaves holes in the field.
+        strides shouldBe listOf(64f, 32f, 16f, 8f, 4f, 2f, 1f)
+    }
+
+    @Test
+    fun `the flood is sized to what the effects reach not to the canvas`() {
+        // A 4 px stroke on a 400x200 canvas needs a handful of steps, not the eight the full
+        // texture would take. This is the difference between an interactive slider and a stutter.
+        val narrow = graph(Style(effects = listOf(Effect.Stroke(4f, Fill.Solid(Color.BLACK)))))
+        val wide = graph(Style(effects = listOf(Effect.Stroke(300f, Fill.Solid(Color.BLACK)))))
+        val steps = { g: LayerGraph -> g.passes.count { it.shaderId == Shaders.SDF_FLOOD.id } }
+        (steps(narrow) < steps(wide)) shouldBe true
+    }
+
+    @Test
+    fun `the flood ping-pongs between two buffers and resolves out of the last one written`() {
+        val g = graph(Style(effects = listOf(Effect.Stroke(4f, Fill.Solid(Color.BLACK)))))
+        g.buffers.count { it.role == BufferRole.SDF_FLOOD } shouldBe 2
+        val floods = g.passes.filter { it.shaderId == Shaders.SDF_FLOOD.id }
+        // Each step reads what the previous one wrote; reading a stale buffer is invisible on
+        // screen and leaves the field one iteration short.
+        floods.zipWithNext { a, b -> b.inputs.single() shouldBe a.output }
+        val resolve = g.passes.single { it.shaderId == Shaders.SDF_RESOLVE.id }
+        resolve.inputs.last() shouldBe floods.last().output
+    }
+
+    @Test
+    fun `the flood keeps float precision even when the document is eight bit`() {
+        val g = graph(
+            Style(effects = listOf(Effect.Stroke(4f, Fill.Solid(Color.BLACK)))),
+            color = ColorSettings(precision = Precision.U8),
+        )
+        // Seed offsets quantised to eight bits would step the outline visibly.
+        g.buffers.filter { it.role == BufferRole.SDF_FLOOD }.all { it.bytesPerPixel > 4 } shouldBe true
     }
 
     @Test
@@ -197,11 +259,19 @@ class RenderGraphTest {
     }
 
     @Test
-    fun `peak memory counts one buffer per role rather than all of them`() {
-        val style = Style(effects = List(10) { Effect.DropShadow(blur = 20f) })
-        val g = graph(style)
-        // Blur buffers are recycled, so the peak is below the naive sum.
-        (g.peakBytes < g.totalBytes) shouldBe true
+    fun `peak memory does not grow with the number of shadows`() {
+        val one = graph(Style(effects = listOf(Effect.DropShadow(blur = 20f))))
+        val ten = graph(Style(effects = List(10) { Effect.DropShadow(blur = 20f) }))
+        // Each shadow adds passes, not buffers — the whole point of the shared ping-pong pair.
+        ten.buffers.size shouldBe one.buffers.size
+        ten.peakBytes shouldBe one.peakBytes
+    }
+
+    @Test
+    fun `peak memory is the sum of the buffers because they are all live at once`() {
+        // Under-reporting here is the comfortable answer and the one that crashes a 4K export.
+        val g = graph(Style(effects = listOf(Effect.DropShadow(blur = 20f), Effect.Bevel())))
+        g.peakBytes shouldBe g.buffers.sumOf { it.bytes }
     }
 
     @Test
