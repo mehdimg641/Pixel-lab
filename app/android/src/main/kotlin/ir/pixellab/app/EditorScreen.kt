@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -178,6 +179,7 @@ fun EditorScreen(model: EditorViewModel) {
                         is SheetContent.BrushSettings -> BrushSheetBody(model, Modifier.fillMaxHeight())
                         is SheetContent.PixelSelection -> SelectionSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Adjustments -> AdjustmentSheetBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.Retouch -> RetouchSheetBody(state, model, Modifier.fillMaxHeight())
                         else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text("به‌زودی", color = Ink.TextMuted)
                         }
@@ -297,6 +299,9 @@ private fun Toolbar(state: EditorState, model: EditorViewModel) {
             // that it cannot.
             if (state.primaryLayer !is Layer.Image) model.addPaintLayer()
             model.act { openSheet(SheetContent.BrushSettings, SheetDetent.HALF) }
+        }
+        ToolButton(Tool.RETOUCH, Icons.Filled.AutoFixHigh, "ترمیم", state, model) {
+            model.act { openSheet(SheetContent.Retouch, SheetDetent.FULL) }
         }
         ToolButton(Tool.IMAGE, Icons.Filled.Image, "تصویر", state, model) {}
         ToolButton(Tool.SHAPE, Icons.Filled.Star, "شکل", state, model) {}

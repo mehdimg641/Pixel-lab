@@ -27,6 +27,7 @@ import ir.pixellab.engine.android.AssetSource
 import ir.pixellab.engine.android.FontResolver
 import ir.pixellab.engine.android.LayerMeasure
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Holds the [Editor] across configuration changes and republishes its state to Compose.
@@ -72,6 +73,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      * that narrows what it touches reads the same one.
      */
     val select = SelectionController()
+
+    /** Liquify strokes, gathered until the user asks for them to be solved. */
+    val warp = WarpController()
 
     private val editor = Editor(startingDocument(), bounds)
 
@@ -179,8 +183,34 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         route(gesture)
     }
 
-    private fun routeToTool(gesture: CanvasGesture): Boolean =
-        if (state.tool == Tool.SELECT) routeToSelection(gesture) else routeToBrush(gesture)
+    private fun routeToTool(gesture: CanvasGesture): Boolean = when (state.tool) {
+        Tool.SELECT -> routeToSelection(gesture)
+        Tool.RETOUCH -> routeToWarp(gesture)
+        else -> routeToBrush(gesture)
+    }
+
+    /**
+     * Gathers a liquify stroke.
+     *
+     * Only the two ends are kept. A moving-least-squares solve takes a control point per stroke, not
+     * per sample, and feeding it every touch event would make the solve slower without moving a
+     * single pixel differently.
+     */
+    private fun routeToWarp(gesture: CanvasGesture): Boolean {
+        val canvasPoint = { screen: Vec2 -> state.viewport.toCanvas(screen) }
+        return when (gesture) {
+            is CanvasGesture.DragStart -> {
+                warp.begin(canvasPoint(gesture.position))
+                true
+            }
+            is CanvasGesture.Drag -> true
+            is CanvasGesture.DragEnd -> {
+                warp.end(canvasPoint(gesture.position))
+                true
+            }
+            else -> false
+        }
+    }
 
     private fun routeToSelection(gesture: CanvasGesture): Boolean {
         val canvasPoint = { screen: Vec2 -> state.viewport.toCanvas(screen) }
@@ -293,6 +323,91 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     /** What a save writes: the document plus every asset it refers to. */
     fun currentProject(): ir.pixellab.core.codec.Project =
         ir.pixellab.core.codec.Project(state.document, assets = assetStore.encoded())
+
+    // ---- photo work ----------------------------------------------------------------------------
+
+    /**
+     * Turns the current selection into a real matte on the selected image layer.
+     *
+     * The refined alpha becomes the layer's own pixels rather than a mask asset: the result is a
+     * cut-out subject, and keeping the background around behind a mask means every subsequent
+     * filter still sees it and every export still carries it.
+     */
+    suspend fun refineCutout() {
+        val layer = state.primaryLayer as? Layer.Image ?: return
+        val selection = select.selection ?: return
+        val source = assetStore.source.load(layer.asset) ?: return
+
+        val refined = withContext(kotlinx.coroutines.Dispatchers.Default) {
+            ir.pixellab.engine.android.Cutout.refine(source, selection).decontaminated
+        }
+        commitPixels(layer.asset, source, refined)
+    }
+
+    suspend fun smoothSkin(amount: Float) = transform { image ->
+        ir.pixellab.engine.android.Retouch.smoothSkin(image, amount)
+    }
+
+    suspend fun sharpen(amount: Float) = transform { image ->
+        ir.pixellab.engine.android.Retouch.sharpen(image, amount)
+    }
+
+    suspend fun healSelection() {
+        val hole = select.selection ?: return
+        transform { image -> ir.pixellab.engine.android.Retouch.heal(image, hole) }
+    }
+
+    /**
+     * Solves every gathered liquify stroke at once.
+     *
+     * At once rather than per stroke: applying warps one after another resamples the image each
+     * time, so four small nudges come out blurrier than one large one.
+     */
+    suspend fun applyWarp(amount: Float) {
+        if (warp.isEmpty) return
+        val strokes = warp.strokes
+        val kind = warp.kind
+        val size = warp.brushSize
+        transform { image ->
+            val liquify = ir.pixellab.engine.android.Liquify(image).also { it.brushSize = size }
+            for ((from, to) in strokes) {
+                when (kind) {
+                    WarpKind.PUSH -> liquify.push(from, to)
+                    WarpKind.BLOAT -> liquify.scale(from, kotlin.math.abs(amount))
+                    WarpKind.PUCKER -> liquify.scale(from, -kotlin.math.abs(amount))
+                    WarpKind.TWIRL -> liquify.twirl(from, amount * TWIRL_DEGREES)
+                }
+            }
+            liquify.apply()
+        }
+        warp.reset()
+    }
+
+    /** Runs a pixel operation off the main thread and records it as one undo step. */
+    private suspend fun transform(body: (ir.pixellab.core.codec.RasterImage) -> ir.pixellab.core.codec.RasterImage) {
+        val layer = state.primaryLayer as? Layer.Image ?: return
+        val source = assetStore.source.load(layer.asset) ?: return
+        val result = withContext(kotlinx.coroutines.Dispatchers.Default) { body(source) }
+        commitPixels(layer.asset, source, result)
+    }
+
+    /**
+     * Publishes new pixels and puts the old ones on the undo stack.
+     *
+     * The same stack the brush uses, so an undo after a cut-out and a stroke walks back through
+     * both in the order they happened rather than through two lists that disagree.
+     */
+    private fun commitPixels(
+        asset: ir.pixellab.core.model.AssetId,
+        before: ir.pixellab.core.codec.RasterImage,
+        after: ir.pixellab.core.codec.RasterImage,
+    ) {
+        if (after === before) return
+        assetStore.put(asset, after)
+        paint.bumpGeneration()
+        steps += Step.Paint(PaintEdit(asset, before, after))
+        undone.clear()
+    }
 
     // ---- creating layers ---------------------------------------------------------------------
 
@@ -415,6 +530,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         /** Persian, because the interface and the intended work both are. */
         const val SAMPLE_TEXT = "متن نمونه"
+
+        /** A full turn of the slider gives a quarter turn of the image, which is already a lot. */
+        const val TWIRL_DEGREES = 90f
 
         /** A blank square canvas with one shape, so the editor has something to select on launch. */
         fun startingDocument(): Document = Document(

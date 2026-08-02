@@ -113,6 +113,11 @@ class PaintController(private val assets: AssetStore) {
         generation++
     }
 
+    /** Tells the canvas an operation outside the brush has repainted a layer. */
+    fun bumpGeneration() {
+        generation++
+    }
+
     /** Puts a previous or subsequent version of a painted layer back. */
     fun restore(edit: PaintEdit, redo: Boolean) {
         assets.put(edit.asset, if (redo) edit.after else edit.before)

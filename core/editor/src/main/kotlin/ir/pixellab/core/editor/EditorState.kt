@@ -17,6 +17,9 @@ enum class Tool {
     /** Painting and erasing. While it is active a drag paints instead of moving a layer. */
     BRUSH,
 
+    /** Cutting out, retouching and warping. A drag gathers a liquify stroke. */
+    RETOUCH,
+
     /** Choosing pixels: marquee, lasso and wand. A drag defines a region rather than moving one. */
     SELECT,
     ;
@@ -27,7 +30,7 @@ enum class Tool {
      * The single rule that decides whether painting works: without it the first brush stroke drags
      * whatever layer happened to be selected across the canvas.
      */
-    val ownsDrag: Boolean get() = this == BRUSH || this == SELECT
+    val ownsDrag: Boolean get() = this == BRUSH || this == SELECT || this == RETOUCH
 }
 
 /**
@@ -95,6 +98,9 @@ sealed interface SheetContent {
 
     /** Colour correction: the fourteen adjustments, and the controls of whichever is selected. */
     data object Adjustments : SheetContent
+
+    /** Cutting out, retouching and warping the selected image layer. */
+    data object Retouch : SheetContent
 
     /** The layer this sheet is about, if any — used to keep it out from under the sheet. */
     val subject: LayerId?
