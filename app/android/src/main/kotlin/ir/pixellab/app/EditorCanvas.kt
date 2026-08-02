@@ -85,6 +85,11 @@ fun EditorCanvas(
         // Chrome on top, in a separate pass: it must keep a constant size as the canvas zooms, it
         // must not appear in an export, and redrawing a handle must not re-run the effect stack.
         Canvas(Modifier.fillMaxSize()) {
+            // Beneath everything else: the grid and the safe zone are a backdrop to work against,
+            // and drawing them over the artwork would make a busy photograph unreadable.
+            drawGrid(state)
+            drawSafeZone(state)
+            drawUserGuides(state)
             drawGuides(state)
             drawSelection(state, bounds)
             drawPixelSelection(selection, state.viewport)
@@ -174,6 +179,132 @@ private fun DrawScope.drawPixelSelection(selection: SelectionOverlay, viewport: 
     }
 }
 
+/**
+ * The grid, drawn in two weights.
+ *
+ * A grid dense enough to place things against is too dense to read, and splitting the main lines
+ * from the subdivisions is what makes both possible at once. The line count is bounded in
+ * [ir.pixellab.core.canvas.GridSpec] rather than here, so a fine grid on a large canvas degrades to
+ * its major lines instead of costing more to draw than the artwork.
+ */
+private fun DrawScope.drawGrid(state: EditorState) {
+    val grid = state.grid
+    if (!grid.visible) return
+    val canvas = state.document.canvas
+    val viewport = state.viewport
+
+    for ((x, major) in grid.lines(canvas.width.toFloat())) {
+        val from = viewport.toScreen(Vec2(x, 0f))
+        val to = viewport.toScreen(Vec2(x, canvas.height.toFloat()))
+        drawLine(
+            color = UiColor.White.copy(alpha = if (major) GRID_MAJOR_ALPHA else GRID_MINOR_ALPHA),
+            start = Offset(from.x, from.y),
+            end = Offset(to.x, to.y),
+            strokeWidth = 1f,
+        )
+    }
+    for ((y, major) in grid.lines(canvas.height.toFloat())) {
+        val from = viewport.toScreen(Vec2(0f, y))
+        val to = viewport.toScreen(Vec2(canvas.width.toFloat(), y))
+        drawLine(
+            color = UiColor.White.copy(alpha = if (major) GRID_MAJOR_ALPHA else GRID_MINOR_ALPHA),
+            start = Offset(from.x, from.y),
+            end = Offset(to.x, to.y),
+            strokeWidth = 1f,
+        )
+    }
+}
+
+/**
+ * The region a platform will not cover, as a dimmed border rather than an outline.
+ *
+ * Dimming what is *outside* it rather than drawing a rectangle around it: the point is which part
+ * of the design survives publication, and a thin line is easy to read as decoration and then
+ * forget. The dim is subtle enough to judge colour through.
+ */
+private fun DrawScope.drawSafeZone(state: EditorState) {
+    val zone = state.safeZone ?: return
+    val canvas = state.document.canvas
+    val inner = zone.rectFor(canvas.size)
+    val viewport = state.viewport
+
+    val outerTopLeft = viewport.toScreen(Vec2.ZERO)
+    val outerBottomRight = viewport.toScreen(canvas.size)
+    val innerTopLeft = viewport.toScreen(Vec2(inner.left, inner.top))
+    val innerBottomRight = viewport.toScreen(Vec2(inner.right, inner.bottom))
+
+    val shade = UiColor.Black.copy(alpha = SAFE_ZONE_ALPHA)
+    // Four bands rather than a punched-out path: a path with an even-odd hole costs a layer save
+    // on every frame, and four rectangles are exactly the same picture.
+    drawRect(
+        shade,
+        topLeft = Offset(outerTopLeft.x, outerTopLeft.y),
+        size = androidx.compose.ui.geometry.Size(
+            outerBottomRight.x - outerTopLeft.x,
+            innerTopLeft.y - outerTopLeft.y,
+        ),
+    )
+    drawRect(
+        shade,
+        topLeft = Offset(outerTopLeft.x, innerBottomRight.y),
+        size = androidx.compose.ui.geometry.Size(
+            outerBottomRight.x - outerTopLeft.x,
+            outerBottomRight.y - innerBottomRight.y,
+        ),
+    )
+    drawRect(
+        shade,
+        topLeft = Offset(outerTopLeft.x, innerTopLeft.y),
+        size = androidx.compose.ui.geometry.Size(
+            innerTopLeft.x - outerTopLeft.x,
+            innerBottomRight.y - innerTopLeft.y,
+        ),
+    )
+    drawRect(
+        shade,
+        topLeft = Offset(innerBottomRight.x, innerTopLeft.y),
+        size = androidx.compose.ui.geometry.Size(
+            outerBottomRight.x - innerBottomRight.x,
+            innerBottomRight.y - innerTopLeft.y,
+        ),
+    )
+}
+
+/**
+ * The guides the user placed.
+ *
+ * Cyan rather than the snap guides' magenta, because the two mean different things and appear at
+ * the same time: magenta is a transient "you are aligned to this right now", cyan is a standing
+ * mark that stays after the finger lifts. A locked guide is dashed, so the reason it will not move
+ * is visible before it is dragged at.
+ */
+private fun DrawScope.drawUserGuides(state: EditorState) {
+    val canvas = state.document.canvas
+    val viewport = state.viewport
+    for (guide in state.document.guides) {
+        val from: Vec2
+        val to: Vec2
+        if (guide.vertical) {
+            from = viewport.toScreen(Vec2(guide.position, 0f))
+            to = viewport.toScreen(Vec2(guide.position, canvas.height.toFloat()))
+        } else {
+            from = viewport.toScreen(Vec2(0f, guide.position))
+            to = viewport.toScreen(Vec2(canvas.width.toFloat(), guide.position))
+        }
+        drawLine(
+            color = UiColor(0xFF3FD8FF),
+            start = Offset(from.x, from.y),
+            end = Offset(to.x, to.y),
+            strokeWidth = 1.5f,
+            pathEffect = if (guide.locked) {
+                PathEffect.dashPathEffect(floatArrayOf(10f, 6f))
+            } else {
+                null
+            },
+        )
+    }
+}
+
 private fun DrawScope.drawGuides(state: EditorState) {
     for (guide in state.guides) {
         val (start, end) = guideEnds(guide, state.viewport)
@@ -235,3 +366,10 @@ private fun guideEnds(guide: SnapGuide, viewport: Viewport): Pair<Vec2, Vec2> = 
     Axis.HORIZONTAL -> viewport.toScreen(Vec2(guide.from, guide.position)) to
         viewport.toScreen(Vec2(guide.to, guide.position))
 }
+
+/** Enough to read against artwork, faint enough not to compete with it. */
+private const val GRID_MAJOR_ALPHA = 0.24f
+private const val GRID_MINOR_ALPHA = 0.10f
+
+/** Subtle enough to judge colour through, strong enough to see the boundary. */
+private const val SAFE_ZONE_ALPHA = 0.34f

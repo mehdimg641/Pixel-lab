@@ -43,6 +43,13 @@ data class Document(
     val layers: List<Layer> = emptyList(),
     val globalLight: GlobalLight = GlobalLight(),
     /**
+     * Ruler guides, saved with the artwork.
+     *
+     * A guide records a decision about the design — where the margin is, where the fold falls — so
+     * losing it on save would mean re-measuring every time the file is reopened.
+     */
+    val guides: List<Guide> = emptyList(),
+    /**
      * Working space, precision and blend transfer curve. Stored per document because a file
      * imported from Photoshop must keep compositing the way Photoshop composited it.
      */

@@ -118,6 +118,8 @@ fun EditorScreen(model: EditorViewModel) {
             onSize = model::onScreenSize,
         )
 
+        Rulers(state, model, Modifier.align(Alignment.TopStart))
+
         Column(Modifier.align(Alignment.TopCenter)) {
             TopBar(
                 state = state,
@@ -212,6 +214,7 @@ fun EditorScreen(model: EditorViewModel) {
                             modifier = Modifier.fillMaxHeight(),
                         )
                         is SheetContent.ShapeTools -> ShapeSheetBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.Guides -> GuideSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Arrange -> ArrangeSheetBody(
                             state = state,
                             model = model,

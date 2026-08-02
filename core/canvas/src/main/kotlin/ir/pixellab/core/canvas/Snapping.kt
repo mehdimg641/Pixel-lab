@@ -1,5 +1,6 @@
 package ir.pixellab.core.canvas
 
+import ir.pixellab.core.model.Guide
 import ir.pixellab.core.model.Rect
 import ir.pixellab.core.model.Vec2
 import kotlin.math.abs
@@ -24,7 +25,30 @@ data class SnapGuide(
      * happen to be generated in, so the guide the user sees would change when unrelated code moved.
      * The canvas comes first because it is the one thing every layer shares.
      */
-    enum class Kind { CANVAS_EDGE, CANVAS_CENTRE, LAYER_EDGE, LAYER_CENTRE, SPACING }
+    enum class Kind {
+        CANVAS_EDGE,
+        CANVAS_CENTRE,
+
+        /**
+         * A guide the user placed, ranked above every layer.
+         *
+         * Deliberate beats incidental: a guide exists because someone dragged it there on purpose,
+         * while a layer edge happens to be wherever that layer happens to sit.
+         */
+        GUIDE,
+
+        LAYER_EDGE,
+        LAYER_CENTRE,
+        SPACING,
+
+        /**
+         * Last, because the grid is everywhere.
+         *
+         * A grid line is never more than half a step away, so ranking it any higher would let it
+         * win ties against the guide or the layer edge the user was actually aiming for.
+         */
+        GRID,
+    }
 }
 
 data class SnapResult(val offset: Vec2, val guides: List<SnapGuide>) {
@@ -47,6 +71,7 @@ data class SnapConfig(
     val snapToCanvas: Boolean = true,
     val snapToLayers: Boolean = true,
     val snapToSpacing: Boolean = true,
+    val snapToGuides: Boolean = true,
 )
 
 /**
@@ -63,12 +88,14 @@ object SnapEngine {
         others: List<Rect>,
         viewport: Viewport,
         config: SnapConfig = SnapConfig(),
+        guides: List<Guide> = emptyList(),
+        grid: GridSpec? = null,
     ): SnapResult {
         val tolerance = viewport.toCanvasDistance(config.toleranceScreen)
         if (tolerance <= 0f) return SnapResult.NONE
 
-        val vertical = candidates(moving, canvas, others, Axis.VERTICAL, config)
-        val horizontal = candidates(moving, canvas, others, Axis.HORIZONTAL, config)
+        val vertical = candidates(moving, canvas, others, Axis.VERTICAL, config, guides, grid)
+        val horizontal = candidates(moving, canvas, others, Axis.HORIZONTAL, config, guides, grid)
 
         val order = compareBy<Candidate>({ abs(it.delta) }, { it.kind.ordinal })
         val bestX = vertical.filter { abs(it.delta) <= tolerance }.minWithOrNull(order)
@@ -103,6 +130,8 @@ object SnapEngine {
         others: List<Rect>,
         axis: Axis,
         config: SnapConfig,
+        guides: List<Guide>,
+        grid: GridSpec?,
     ): List<Candidate> {
         val out = ArrayList<Candidate>()
         val (near, centre, far) = if (axis == Axis.VERTICAL) {
@@ -139,7 +168,23 @@ object SnapEngine {
             }
         }
 
+        if (config.snapToGuides) {
+            for (guide in guides) {
+                if (guide.vertical == (axis == Axis.VERTICAL)) {
+                    consider(guide.position, SnapGuide.Kind.GUIDE)
+                }
+            }
+        }
+
         if (config.snapToSpacing && others.size >= 2) out += spacing(moving, others, axis)
+
+        // Only the nearest line to each of the three edges: every other grid line is further away
+        // by construction, so generating them all would be work that can never win.
+        if (grid != null && grid.snap) {
+            consider(grid.nearest(near), SnapGuide.Kind.GRID)
+            consider(grid.nearest(centre), SnapGuide.Kind.GRID)
+            consider(grid.nearest(far), SnapGuide.Kind.GRID)
+        }
 
         return out
     }

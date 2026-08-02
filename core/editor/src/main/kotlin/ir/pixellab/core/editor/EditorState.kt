@@ -1,6 +1,8 @@
 package ir.pixellab.core.editor
 
 import ir.pixellab.core.canvas.Handle
+import ir.pixellab.core.canvas.GridSpec
+import ir.pixellab.core.canvas.SafeZone
 import ir.pixellab.core.canvas.SnapGuide
 import ir.pixellab.core.canvas.Viewport
 import ir.pixellab.core.model.Document
@@ -120,6 +122,9 @@ sealed interface SheetContent {
     /** Where things sit: aligning, distributing, mirroring, turning, merging, exact numbers. */
     data object Arrange : SheetContent
 
+    /** The grid, the rulers, the guides and the platform safe zones. */
+    data object Guides : SheetContent
+
     /** The layer this sheet is about, if any — used to keep it out from under the sheet. */
     val subject: LayerId?
         get() = when (this) {
@@ -163,6 +168,15 @@ data class EditorState(
     /** Guides the current drag is snapped against, for the canvas to draw. */
     val guides: List<SnapGuide> = emptyList(),
     val snapEnabled: Boolean = true,
+    /**
+     * The grid. A working preference rather than part of the artwork, so it lives here and is not
+     * saved with the document — unlike the guides, which are.
+     */
+    val grid: GridSpec = GridSpec(),
+    /** Rulers down the top and leading edges, and the strip a guide is dragged out of. */
+    val showRulers: Boolean = false,
+    /** The platform crop to show, when the user has chosen one. */
+    val safeZone: SafeZone? = null,
     /**
      * Suppresses every effect so the underlying shape is visible.
      *

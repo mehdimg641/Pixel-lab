@@ -169,6 +169,15 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun act(body: Editor.() -> Unit) = edit(body)
 
+    /**
+     * The same as [act] for callers that need the editor's answer back.
+     *
+     * Adding a guide returns its index, and the ruler drag needs it to keep moving the same guide
+     * for the rest of the gesture — reaching into [current] instead would skip the state republish
+     * and the canvas would not redraw.
+     */
+    fun <T> mutate(body: Editor.() -> T): T = edit(body)
+
     fun handleUnder(screen: Vec2): Handle? = editor.handleUnder(screen)
 
     /**

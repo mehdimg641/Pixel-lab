@@ -7,6 +7,7 @@ import ir.pixellab.core.canvas.SnapConfig
 import ir.pixellab.core.canvas.SnapEngine
 import ir.pixellab.core.canvas.Viewport
 import ir.pixellab.core.model.Document
+import ir.pixellab.core.model.Guide
 import ir.pixellab.core.model.Effect
 import ir.pixellab.core.model.History
 import ir.pixellab.core.model.Layer
@@ -212,6 +213,8 @@ class Editor(
                 others = otherBounds(session.layer),
                 viewport = state.viewport,
                 config = snapConfig,
+                guides = state.document.guides,
+                grid = state.grid,
             )
         } else {
             null
@@ -935,6 +938,147 @@ class Editor(
             ),
         )
     }
+
+    // ---- grid, rulers and guides ------------------------------------------------------------------
+
+    fun setGrid(grid: ir.pixellab.core.canvas.GridSpec) {
+        state = state.copy(grid = grid)
+    }
+
+    fun setRulersVisible(visible: Boolean) {
+        state = state.copy(showRulers = visible)
+    }
+
+    fun setSafeZone(zone: ir.pixellab.core.canvas.SafeZone?) {
+        state = state.copy(safeZone = zone)
+    }
+
+    /**
+     * Places a guide.
+     *
+     * A document edit, so it is undoable and travels with the file — a guide records a decision
+     * about the design, and losing it on save means re-measuring the next time the file is opened.
+     *
+     * Returns the guide's index, which is how every later move or removal names it: a guide has no
+     * identity of its own, and keying on its position would break the moment the user dragged it.
+     */
+    fun addGuide(guide: Guide): Int {
+        history.record(state.document)
+        val guides = state.document.guides + guide
+        state = state.copy(
+            document = state.document.copy(guides = guides),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return guides.lastIndex
+    }
+
+    /**
+     * Moves a guide.
+     *
+     * @param continuous true while it is being dragged, so a drag is one undo step rather than one
+     *   per frame — the same rule every scrub in the editor follows.
+     */
+    fun moveGuide(index: Int, position: Float, continuous: Boolean = false) {
+        val guides = state.document.guides
+        if (index !in guides.indices || guides[index].locked) return
+        if (!continuous || !scrubbing) history.record(state.document)
+        scrubbing = continuous
+        state = state.copy(
+            document = state.document.copy(
+                guides = guides.mapIndexed { i, g -> if (i == index) g.copy(position = position) else g },
+            ),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+    }
+
+    fun removeGuide(index: Int) {
+        val guides = state.document.guides
+        if (index !in guides.indices || guides[index].locked) return
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(guides = guides.filterIndexed { i, _ -> i != index }),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+    }
+
+    fun clearGuides() {
+        // Locked guides survive: locking one is exactly the instruction "do not let me lose this".
+        val kept = state.document.guides.filter { it.locked }
+        if (kept.size == state.document.guides.size) return
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(guides = kept),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+    }
+
+    fun setGuidesLocked(locked: Boolean) {
+        if (state.document.guides.isEmpty()) return
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(guides = state.document.guides.map { it.copy(locked = locked) }),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+    }
+
+    /**
+     * Lays guides out as even columns and rows — Photoshop's New Guide Layout.
+     *
+     * Replaces the unlocked guides rather than adding to them, because running it twice with
+     * different numbers is how it is actually used, and appending would leave the first layout
+     * behind as clutter the user then has to clear by hand.
+     */
+    fun guideLayout(columns: Int, rows: Int, margin: Float = 0f) {
+        val canvas = state.document.canvas
+        val fresh = ArrayList<Guide>()
+        if (margin > 0f) {
+            fresh += Guide(vertical = true, position = margin)
+            fresh += Guide(vertical = true, position = canvas.width - margin)
+            fresh += Guide(vertical = false, position = margin)
+            fresh += Guide(vertical = false, position = canvas.height - margin)
+        }
+        val innerWidth = canvas.width - margin * 2
+        val innerHeight = canvas.height - margin * 2
+        for (i in 1 until columns.coerceAtLeast(1)) {
+            fresh += Guide(vertical = true, position = margin + innerWidth * i / columns)
+        }
+        for (i in 1 until rows.coerceAtLeast(1)) {
+            fresh += Guide(vertical = false, position = margin + innerHeight * i / rows)
+        }
+        if (fresh.isEmpty() && state.document.guides.none { !it.locked }) return
+
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(guides = state.document.guides.filter { it.locked } + fresh),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+    }
+
+    /**
+     * The guide nearest a canvas point, for a finger to grab.
+     *
+     * @param tolerance in canvas units, so the caller converts from screen pixels and the grab
+     *   radius stays the same size under the finger at every zoom.
+     */
+    fun guideAt(point: Vec2, tolerance: Float): Int? =
+        state.document.guides
+            .mapIndexed { index, guide ->
+                val distance = if (guide.vertical) {
+                    kotlin.math.abs(point.x - guide.position)
+                } else {
+                    kotlin.math.abs(point.y - guide.position)
+                }
+                index to distance
+            }
+            .filter { it.second <= tolerance }
+            .minByOrNull { it.second }
+            ?.first
 
     // ---- view state ----------------------------------------------------------------------------
 

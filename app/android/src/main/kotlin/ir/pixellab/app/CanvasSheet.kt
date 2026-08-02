@@ -147,6 +147,16 @@ fun CanvasSheetBody(
         SheetSection("باز کردن فایل")
         SheetAction("تصویر را به‌عنوان لایه بیاور", onClick = onPickImage)
         SheetHint("تصویر بزرگ‌تر از بوم کوچک می‌شود تا دستگیره‌هایش روی صفحه بماند")
+
+        SheetSection("شبکه و راهنما")
+        SheetAction("شبکه، خط‌کش و راهنماها") {
+            model.act {
+                openSheet(
+                    ir.pixellab.core.editor.SheetContent.Guides,
+                    ir.pixellab.core.editor.SheetDetent.FULL,
+                )
+            }
+        }
     }
 }
 
