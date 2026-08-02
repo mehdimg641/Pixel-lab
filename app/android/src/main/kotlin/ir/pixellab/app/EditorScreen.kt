@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Save
@@ -89,6 +90,7 @@ fun EditorScreen(model: EditorViewModel) {
             fonts = model.fonts,
             assets = model.assets,
             assetGeneration = model.paint.generation,
+            selection = SelectionOverlay(model.select.outline, model.select.draft),
             handle = handle,
             onGesture = model::onGesture,
             onSize = model::onScreenSize,
@@ -173,6 +175,8 @@ fun EditorScreen(model: EditorViewModel) {
                             ParameterSheetBody(state, content, model::act, Modifier.fillMaxHeight())
                         is SheetContent.LayerList -> LayerPanel(state, model)
                         is SheetContent.FontPicker -> FontPickerBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.BrushSettings -> BrushSheetBody(model, Modifier.fillMaxHeight())
+                        is SheetContent.PixelSelection -> SelectionSheetBody(state, model, Modifier.fillMaxHeight())
                         else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text("به‌زودی", color = Ink.TextMuted)
                         }
@@ -291,9 +295,13 @@ private fun Toolbar(state: EditorState, model: EditorViewModel) {
             // asking for one is the difference between a tool that works and a tool that reports
             // that it cannot.
             if (state.primaryLayer !is Layer.Image) model.addPaintLayer()
+            model.act { openSheet(SheetContent.BrushSettings, SheetDetent.HALF) }
         }
         ToolButton(Tool.IMAGE, Icons.Filled.Image, "تصویر", state, model) {}
         ToolButton(Tool.SHAPE, Icons.Filled.Star, "شکل", state, model) {}
+        ToolButton(Tool.SELECT, Icons.Filled.Highlight, "انتخاب", state, model) {
+            model.act { openSheet(SheetContent.PixelSelection, SheetDetent.PEEK) }
+        }
         ToolButton(Tool.ADJUST, Icons.Filled.Tune, "تنظیم", state, model) {}
     }
 }

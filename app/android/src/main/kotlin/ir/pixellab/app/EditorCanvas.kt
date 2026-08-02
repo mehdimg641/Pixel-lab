@@ -45,6 +45,7 @@ fun EditorCanvas(
     fonts: FontResolver,
     assets: AssetSource,
     assetGeneration: Int,
+    selection: SelectionOverlay,
     handle: CanvasHandle,
     onGesture: (ir.pixellab.core.canvas.CanvasGesture) -> Unit,
     onSize: (Vec2) -> Unit,
@@ -85,7 +86,42 @@ fun EditorCanvas(
         Canvas(Modifier.fillMaxSize()) {
             drawGuides(state)
             drawSelection(state, bounds)
+            drawPixelSelection(selection, state.viewport)
         }
+    }
+}
+
+/** The chosen pixels, as they should appear over the artwork. */
+data class SelectionOverlay(val outline: List<ir.pixellab.core.paint.Edge>, val draft: List<Vec2>)
+
+/**
+ * Draws the boundary of the chosen pixels.
+ *
+ * A boundary rather than a tint: a tint hides the artwork exactly where the user is looking, which
+ * is the one place it must not. Two passes, dark under light, so the line stays visible over both a
+ * white background and a black one — a single-colour marquee disappears on half the artwork people
+ * make.
+ */
+private fun DrawScope.drawPixelSelection(selection: SelectionOverlay, viewport: Viewport) {
+    for (edge in selection.outline) {
+        val from = viewport.toScreen(edge.from)
+        val to = viewport.toScreen(edge.to)
+        drawLine(UiColor.Black.copy(alpha = 0.7f), Offset(from.x, from.y), Offset(to.x, to.y), strokeWidth = 2f)
+        drawLine(UiColor.White, Offset(from.x, from.y), Offset(to.x, to.y), strokeWidth = 1f)
+    }
+
+    // The shape being dragged, before it is committed. Without it a marquee is drawn blind.
+    if (selection.draft.size >= 2) {
+        val points = selection.draft.map { viewport.toScreen(it) }
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(points.first().x, points.first().y)
+            for (point in points.drop(1)) lineTo(point.x, point.y)
+        }
+        drawPath(
+            path,
+            UiColor.White,
+            style = Stroke(width = 1.5f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))),
+        )
     }
 }
 

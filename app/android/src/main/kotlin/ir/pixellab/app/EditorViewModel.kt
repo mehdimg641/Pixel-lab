@@ -65,6 +65,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     /** The brush, and the stroke it currently has in progress. */
     val paint = PaintController(assetStore)
 
+    /**
+     * The chosen pixels.
+     *
+     * Not part of the document: it survives an undo of the artwork, it is not saved, and every tool
+     * that narrows what it touches reads the same one.
+     */
+    val select = SelectionController()
+
     private val editor = Editor(startingDocument(), bounds)
 
     var state: EditorState by mutableStateOf(editor.state)
@@ -171,7 +179,43 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         route(gesture)
     }
 
-    private fun routeToTool(gesture: CanvasGesture): Boolean {
+    private fun routeToTool(gesture: CanvasGesture): Boolean =
+        if (state.tool == Tool.SELECT) routeToSelection(gesture) else routeToBrush(gesture)
+
+    private fun routeToSelection(gesture: CanvasGesture): Boolean {
+        val canvasPoint = { screen: Vec2 -> state.viewport.toCanvas(screen) }
+        val canvas = state.document.canvas
+        return when (gesture) {
+            is CanvasGesture.DragStart -> {
+                select.begin(canvasPoint(gesture.position))
+                true
+            }
+            is CanvasGesture.Drag -> {
+                select.extend(canvasPoint(gesture.position))
+                true
+            }
+            is CanvasGesture.DragEnd -> {
+                select.end(canvasPoint(gesture.position), canvas.width, canvas.height, sampledPixels())
+                paint.selection = select.selection
+                true
+            }
+            // The wand is a tap, not a drag, and it is the tool people reach for first.
+            is CanvasGesture.Tap -> {
+                val at = canvasPoint(gesture.position)
+                select.begin(at)
+                select.end(at, canvas.width, canvas.height, sampledPixels())
+                paint.selection = select.selection
+                true
+            }
+            else -> false
+        }
+    }
+
+    /** What the wand samples: the selected layer's own pixels, when it has any. */
+    private fun sampledPixels(): ir.pixellab.core.codec.RasterImage? =
+        (state.primaryLayer as? Layer.Image)?.let { assetStore.source.load(it.asset) }
+
+    private fun routeToBrush(gesture: CanvasGesture): Boolean {
         if (state.tool != Tool.BRUSH) return false
         val canvasPoint = { screen: Vec2 -> state.viewport.toCanvas(screen) }
         return when (gesture) {

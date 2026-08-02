@@ -87,6 +87,12 @@ sealed interface SheetContent {
 
     data object FontPicker : SheetContent
 
+    /** The brush: presets, size, hardness, flow, opacity, colour. */
+    data object BrushSettings : SheetContent
+
+    /** Choosing pixels: which shape, how it combines, tolerance, feather. */
+    data object PixelSelection : SheetContent
+
     /** The layer this sheet is about, if any — used to keep it out from under the sheet. */
     val subject: LayerId?
         get() = when (this) {
