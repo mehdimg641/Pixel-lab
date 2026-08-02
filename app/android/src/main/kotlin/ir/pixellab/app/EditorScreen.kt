@@ -23,7 +23,10 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Star
@@ -34,21 +37,28 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.editor.Editor
 import ir.pixellab.core.editor.EditorState
-import ir.pixellab.core.editor.LayerBounds
 import ir.pixellab.core.editor.SheetContent
 import ir.pixellab.core.editor.SheetDetent
 import ir.pixellab.core.editor.Tool
 import ir.pixellab.core.model.Color
 import ir.pixellab.core.model.Effect
 import ir.pixellab.core.model.Fill
+import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.LayerId
+import kotlinx.coroutines.launch
 
 /**
  * The editor screen.
@@ -58,8 +68,16 @@ import ir.pixellab.core.model.LayerId
  * bar holds only what is rare and expensive to hit by accident.
  */
 @Composable
-fun EditorScreen(model: EditorViewModel, bounds: LayerBounds) {
+fun EditorScreen(model: EditorViewModel) {
     val state = model.state
+    val bounds = model.bounds
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val handle = remember { CanvasHandle() }
+    var outcome by remember { mutableStateOf<FileOutcome?>(null) }
+    var exporting by remember { mutableStateOf(false) }
+    var opening by remember { mutableStateOf<List<java.io.File>?>(null) }
+    var editingText by remember { mutableStateOf<LayerId?>(null) }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink.Chrome)) {
         val screenHeight = maxHeight
@@ -67,11 +85,24 @@ fun EditorScreen(model: EditorViewModel, bounds: LayerBounds) {
         EditorCanvas(
             state = state,
             bounds = bounds,
+            fonts = model.fonts,
+            handle = handle,
             onGesture = model::onGesture,
             onSize = model::onScreenSize,
         )
 
-        TopBar(state, model, Modifier.align(Alignment.TopCenter))
+        Column(Modifier.align(Alignment.TopCenter)) {
+            TopBar(
+                state = state,
+                model = model,
+                onSave = {
+                    scope.launch { outcome = saveProject(context, state.document) }
+                },
+                onExport = { exporting = true },
+                onOpen = { scope.launch { opening = Storage.listProjects(context) } },
+            )
+            outcome?.let { OutcomeBanner(it, Modifier.padding(top = 6.dp)) { outcome = null } }
+        }
 
         Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
@@ -82,9 +113,39 @@ fun EditorScreen(model: EditorViewModel, bounds: LayerBounds) {
                 enter = slideInVertically { it },
                 exit = slideOutVertically { it },
             ) {
-                ContextualBar(state, model)
+                ContextualBar(state, model, onEditText = { editingText = it })
             }
             Toolbar(state, model)
+        }
+
+        opening?.let { projects ->
+            OpenDialog(projects, onDismiss = { opening = null }) { file ->
+                opening = null
+                scope.launch {
+                    openProject(file)
+                        .onSuccess { model.openDocument(it.document) }
+                        .onFailure { outcome = FileOutcome.Refused(it.message ?: "باز نشد") }
+                }
+            }
+        }
+
+        editingText?.let { id ->
+            val layer = state.selectedLayers.firstOrNull { it.id == id } as? Layer.Text
+            if (layer == null) {
+                editingText = null
+            } else {
+                TextEditDialog(layer.spec.text, onDismiss = { editingText = null }) { updated ->
+                    editingText = null
+                    model.setText(id, updated)
+                }
+            }
+        }
+
+        if (exporting) {
+            ExportDialog(onDismiss = { exporting = false }) { format, scale ->
+                exporting = false
+                scope.launch { outcome = exportImage(context, handle, state.document, format, scale) }
+            }
         }
 
         // The sheet sits above everything, and the canvas has already panned out from under it.
@@ -108,6 +169,7 @@ fun EditorScreen(model: EditorViewModel, bounds: LayerBounds) {
                         is SheetContent.EffectParameters ->
                             ParameterSheetBody(state, content, model::act, Modifier.fillMaxHeight())
                         is SheetContent.LayerList -> LayerPanel(state, model)
+                        is SheetContent.FontPicker -> FontPickerBody(state, model, Modifier.fillMaxHeight())
                         else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text("به‌زودی", color = Ink.TextMuted)
                         }
@@ -126,7 +188,14 @@ fun EditorScreen(model: EditorViewModel, bounds: LayerBounds) {
  * two- and three-finger tap on the canvas.
  */
 @Composable
-private fun TopBar(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
+private fun TopBar(
+    state: EditorState,
+    model: EditorViewModel,
+    onSave: () -> Unit,
+    onExport: () -> Unit,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier
             .fillMaxWidth()
@@ -147,6 +216,9 @@ private fun TopBar(state: EditorState, model: EditorViewModel, modifier: Modifie
         )
         Row {
             BarButton(Icons.Filled.FitScreen, "اندازهٔ صفحه") { model.act { fitCanvas() } }
+            BarButton(Icons.Filled.FolderOpen, "باز کردن", onClick = onOpen)
+            BarButton(Icons.Filled.Save, "ذخیره", onClick = onSave)
+            BarButton(Icons.Filled.IosShare, "خروجی", onClick = onExport)
         }
     }
 }
@@ -158,8 +230,9 @@ private fun TopBar(state: EditorState, model: EditorViewModel, modifier: Modifie
  * worth keeping even where a different arrangement might read better on paper.
  */
 @Composable
-private fun ContextualBar(state: EditorState, model: EditorViewModel) {
+private fun ContextualBar(state: EditorState, model: EditorViewModel, onEditText: (LayerId) -> Unit) {
     val id = state.selection.primary ?: return
+    val isText = state.selectedLayers.any { it.id == id && it is Layer.Text }
     Row(
         Modifier
             .padding(horizontal = 12.dp, vertical = 6.dp)
@@ -169,6 +242,9 @@ private fun ContextualBar(state: EditorState, model: EditorViewModel) {
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (isText) {
+            BarButton(Icons.Filled.TextFields, "متن") { onEditText(id) }
+        }
         BarButton(Icons.Filled.Star, "استایل") {
             model.act { openSheet(SheetContent.LayerParameters(id), SheetDetent.HALF) }
         }
@@ -178,7 +254,9 @@ private fun ContextualBar(state: EditorState, model: EditorViewModel) {
             model.act { addEffect(id, Effect.Stroke(8f, Fill.Solid(Color.WHITE))) }
         }
         BarButton(Icons.Filled.ContentCopy, "کپی") {
-            model.act { duplicateLayer(id, LayerId(id.value + "-" + state.document.walk().count())) }
+            // The id comes from the document rather than from a count: a count collides the first
+            // time a layer is deleted, and two layers with one id is an editor that loses work.
+            model.act { duplicateLayer(id, nextLayerId(id.value)) }
         }
         BarButton(Icons.Filled.VerticalAlignTop, "به جلو") { model.act { bringToFront(id) } }
         BarButton(Icons.Filled.Delete, "حذف", tint = Ink.Danger) { model.act { deleteLayer(id) } }

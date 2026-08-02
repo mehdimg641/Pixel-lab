@@ -314,6 +314,41 @@ class Editor(
         )
     }
 
+    // ---- adding and removing ---------------------------------------------------------------------
+
+    /**
+     * Adds a layer at the top of the stack and selects it.
+     *
+     * Selecting it is not a convenience: a new layer lands in the middle of the canvas with nothing
+     * to distinguish it, and leaving the previous selection in place means the user's next drag
+     * moves the wrong thing. Adding is also one undo step, so a mis-tap on the text tool costs one
+     * press rather than leaving an empty layer behind.
+     */
+    fun addLayer(layer: Layer): LayerId {
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(layers = state.document.layers + layer),
+            selection = Selection.of(layer.id),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return layer.id
+    }
+
+    /**
+     * An id no layer in the document is using.
+     *
+     * Here rather than in the interface because the document is the only thing that knows what is
+     * taken — including inside groups, and including layers that arrived from a PSD with ids the
+     * app never chose. A caller counting layers gets a collision the first time one is deleted.
+     */
+    fun nextLayerId(prefix: String): LayerId {
+        val used = state.document.walk().mapTo(HashSet()) { it.id.value }
+        var n = 1
+        while ("$prefix-$n" in used) n++
+        return LayerId("$prefix-$n")
+    }
+
     // ---- the contextual bar ---------------------------------------------------------------------
 
     fun deleteLayer(id: LayerId) {
@@ -367,6 +402,16 @@ class Editor(
     }
 
     fun renameLayer(id: LayerId, name: String) = edit(id) { it.with(name = name) }
+
+    /**
+     * Replaces a layer with a changed version of itself, as one undo step.
+     *
+     * The escape hatch for edits that belong to a layer *kind* rather than to layers in general —
+     * a text layer's string, an image's crop. Putting each of those on this class would make it
+     * grow a method per feature; putting the history handling in the caller would make some of them
+     * silently not undoable.
+     */
+    fun replaceLayer(id: LayerId, change: (Layer) -> Layer) = edit(id, change)
 
     private fun edit(id: LayerId, change: (Layer) -> Layer) {
         if (state.document.findLayer(id) == null) return

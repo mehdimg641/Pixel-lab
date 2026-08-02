@@ -27,6 +27,9 @@ android {
                 // extraction are exercised for real rather than against stubs.
                 it.systemProperty("robolectric.graphicsMode", "NATIVE")
                 it.systemProperty("file.encoding", "UTF-8")
+                // Points the font and PSD tests at the real samples when they are available;
+                // they skip cleanly when they are not, so the suite still runs anywhere.
+                System.getenv("PIXELLAB_SAMPLES")?.let { path -> it.systemProperty("pixellab.samples", path) }
             }
         }
     }

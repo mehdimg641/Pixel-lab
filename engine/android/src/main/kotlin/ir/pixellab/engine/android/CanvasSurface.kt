@@ -8,6 +8,7 @@ import android.view.SurfaceView
 import ir.pixellab.core.canvas.Viewport
 import ir.pixellab.core.model.Document
 import ir.pixellab.core.model.LayerId
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -32,6 +33,59 @@ class CanvasSurface @JvmOverloads constructor(
 
     /** Reported after each frame, so the interface can surface a shader that failed to compile. */
     var onErrors: (List<String>) -> Unit = {}
+
+    /**
+     * Where text layers get their fonts.
+     *
+     * Settable after construction because the library is scanned asynchronously at launch: the
+     * canvas has to be able to draw before the scan finishes, and to redraw with real type once it
+     * does.
+     *
+     * Assigning the same resolver again is ignored. The setter is reached from Compose's `update`,
+     * which runs on every recomposition, and taking the change path there would drop every cached
+     * silhouette each time a slider moved.
+     */
+    @Volatile
+    var fonts: FontResolver = FontResolver.NONE
+        set(value) {
+            if (value === field) return
+            field = value
+            fontsChanged.set(true)
+            synchronized(this) { (this as Object).notifyAll() }
+        }
+
+    private val fontsChanged = AtomicBoolean(false)
+
+    /**
+     * Renders the document to a file, on the thread that owns the GL context.
+     *
+     * An export needs the same programs, the same texture pool and the same context the canvas is
+     * already using, and a GL context belongs to one thread. Building a second one just for saving
+     * would compile every shader again and double the memory at the exact moment a large export is
+     * about to ask for a lot of it.
+     *
+     * [onResult] is called on the GL thread. The caller has to hop back to its own.
+     */
+    fun export(
+        document: Document,
+        format: ir.pixellab.core.codec.Format,
+        scale: Float = 1f,
+        availableBytes: Long = Long.MAX_VALUE,
+        onResult: (ExportResult) -> Unit,
+    ) {
+        exports.add(ExportRequest(document, format, scale, availableBytes, onResult))
+        synchronized(this) { (this as Object).notifyAll() }
+    }
+
+    private class ExportRequest(
+        val document: Document,
+        val format: ir.pixellab.core.codec.Format,
+        val scale: Float,
+        val availableBytes: Long,
+        val onResult: (ExportResult) -> Unit,
+    )
+
+    private val exports = ConcurrentLinkedQueue<ExportRequest>()
 
     private data class Frame(
         val document: Document,
@@ -94,9 +148,13 @@ class CanvasSurface @JvmOverloads constructor(
         }
         val device = AndroidGlDevice(context)
         val renderer = DocumentRenderer(device)
+        val exporter = Exporter(context, device, renderer)
 
         try {
             while (running.get()) {
+                if (fontsChanged.getAndSet(false)) renderer.setFonts(fonts)
+                drainExports(exporter)
+
                 val frame = pending.getAndSet(null)
                 if (frame == null) {
                     synchronized(this) { (this as Object).wait(IDLE_WAIT_MILLIS) }
@@ -117,9 +175,32 @@ class CanvasSurface @JvmOverloads constructor(
                 if (errors.isNotEmpty()) onErrors(errors.map { "${it.shaderId}: ${it.reason}" })
             }
         } finally {
+            // Anything still queued has no thread left to run on. Answering it is not optional: a
+            // caller suspended on an export that never replies waits for the rest of the session.
+            while (true) {
+                val abandoned = exports.poll() ?: break
+                abandoned.onResult(ExportResult.Failed("بوم بسته شد"))
+            }
             renderer.dispose()
             device.dispose()
             context.release()
+        }
+    }
+
+    /**
+     * Runs whatever exports are waiting, before the next frame rather than after.
+     *
+     * Before, because an export resizes the composite buffers to the export size and the next frame
+     * puts them back — doing it in the other order would leave the *screen* rendered at export
+     * scale for one frame, which reads as the canvas jumping every time the user saves.
+     */
+    private fun drainExports(exporter: Exporter) {
+        while (true) {
+            val request = exports.poll() ?: return
+            val result = runCatching {
+                exporter.export(request.document, request.format, request.scale, request.availableBytes)
+            }.getOrElse { ExportResult.Failed(it.message ?: it::class.java.simpleName) }
+            request.onResult(result)
         }
     }
 

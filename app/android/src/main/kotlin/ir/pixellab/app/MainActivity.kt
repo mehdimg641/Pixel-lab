@@ -8,16 +8,15 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.viewmodel.compose.viewModel
-import ir.pixellab.core.editor.LayerBounds
-import ir.pixellab.core.model.Layer
-import ir.pixellab.core.model.Rect
-import ir.pixellab.core.model.ShapeGeometry
-import ir.pixellab.core.model.Vec2
+import ir.pixellab.engine.android.PlatformCodecs
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Before anything can open a file. Which formats exist is a property of the device — HEIF
+        // needs API 28 — so the registry is filled in here rather than declared statically.
+        PlatformCodecs.register()
         enableEdgeToEdge()
         setContent {
             PixelLabTheme {
@@ -27,22 +26,10 @@ class MainActivity : ComponentActivity() {
                 // layout work. EditorCanvas therefore does its own mapping and ignores this.
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                     val model: EditorViewModel = viewModel()
-                    EditorScreen(model, SHAPE_BOUNDS)
+                    EditorScreen(model)
                 }
             }
         }
     }
 
-    private companion object {
-        /** Mirrors the view model's measurement until the rasteriser supplies real bounds. */
-        val SHAPE_BOUNDS = LayerBounds { layer ->
-            when (val geometry = (layer as? Layer.Shape)?.geometry) {
-                is ShapeGeometry.Rectangle -> Rect.of(geometry.size)
-                is ShapeGeometry.Ellipse -> Rect.of(geometry.size)
-                is ShapeGeometry.Polygon -> Rect.of(geometry.size)
-                is ShapeGeometry.Star -> Rect.of(geometry.size)
-                else -> Rect.of(Vec2(320f, 160f))
-            }
-        }
-    }
 }

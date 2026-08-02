@@ -25,6 +25,7 @@ import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.editor.LayerBounds
 import ir.pixellab.core.model.Vec2
 import ir.pixellab.engine.android.CanvasSurface
+import ir.pixellab.engine.android.FontResolver
 import ir.pixellab.engine.android.TouchBridge
 
 /**
@@ -40,12 +41,16 @@ import ir.pixellab.engine.android.TouchBridge
 fun EditorCanvas(
     state: EditorState,
     bounds: LayerBounds,
+    fonts: FontResolver,
+    handle: CanvasHandle,
     onGesture: (ir.pixellab.core.canvas.CanvasGesture) -> Unit,
     onSize: (Vec2) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val bridge = remember { TouchBridge() }
-    DisposableEffect(Unit) { onDispose { bridge.reset() } }
+    // The handle is cleared on dispose so an export queued after the surface goes away fails
+    // immediately rather than waiting on a GL thread that no longer exists.
+    DisposableEffect(Unit) { onDispose { bridge.reset(); handle.surface = null } }
 
     Box(
         modifier
@@ -62,9 +67,10 @@ fun EditorCanvas(
         // The artwork runs the effect pipeline on its own GL thread, so opening a sheet never
         // stalls on a ten-shadow stack.
         AndroidView(
-            factory = { CanvasSurface(it) },
+            factory = { CanvasSurface(it).also { surface -> handle.surface = surface } },
             modifier = Modifier.fillMaxSize(),
             update = { surface ->
+                surface.fonts = fonts
                 surface.submit(state.document, state.viewport, state.effectsBypassed)
             },
         )

@@ -21,8 +21,14 @@ import ir.pixellab.core.render.RenderPlanner
 import ir.pixellab.core.render.Shaders
 import ir.pixellab.core.render.TextureHandle
 
-/** What a layer needs before its graph can run: where it sits, and the pixels of its silhouette. */
-data class LayerContent(val bounds: Rect, val texture: TextureHandle, val revision: Int)
+/**
+ * What a layer needs before its graph can run: where it sits, and the pixels of its silhouette.
+ *
+ * [key] is what the silhouette was drawn *from* — the geometry, or the string and the font. Caching
+ * on the revision alone means an edit that leaves the bounds unchanged, such as swapping to a font
+ * of the same width, keeps the old pixels and looks like the change was ignored.
+ */
+data class LayerContent(val bounds: Rect, val texture: TextureHandle, val revision: Int, val key: Int)
 
 /**
  * Composites a whole document.
@@ -35,12 +41,53 @@ data class LayerContent(val bounds: Rect, val texture: TextureHandle, val revisi
  * a layer changes its transform, not its pixels: re-rasterising text on every frame of a drag would
  * re-shape a paragraph sixty times a second for no visible gain.
  */
+/**
+ * Supplies the font a text layer should be shaped with.
+ *
+ * A function rather than a prepared map: the renderer is the only thing that knows which layers it
+ * is about to draw, and building a map for the whole document means resolving fonts for layers that
+ * are hidden, off-canvas or unchanged since the last frame.
+ */
+fun interface FontResolver {
+    fun resolve(ref: ir.pixellab.core.model.FontRef): FontFile?
+
+    companion object {
+        /** Resolves nothing; text layers then measure to their placeholder box and draw blank. */
+        val NONE = FontResolver { null }
+
+        /**
+         * A resolver over a finished catalogue.
+         *
+         * Immutable on purpose. The canvas decides a rescan happened by comparing resolver
+         * identity, so a resolver that mutated in place would leave every text layer holding the
+         * substitute it was drawn with — which looks exactly like the newly added font being
+         * ignored.
+         */
+        fun of(catalog: ir.pixellab.core.fonts.FontCatalog) =
+            FontResolver { ref -> catalog.resolve(ref).file }
+    }
+}
+
 class DocumentRenderer(
     private val device: GlDevice,
     private val text: TextRasterizer = TextRasterizer(),
     private val rasterizer: LayerRasterizer = LayerRasterizer(text),
     private val effectTextures: EffectTextures = EffectTextures(device, rasterizer),
+    private var fonts: FontResolver = FontResolver.NONE,
 ) {
+
+    /**
+     * Replaces the font source and invalidates every text layer.
+     *
+     * Adding a font mid-session is normal in this app. Without the invalidation the layers that
+     * were drawn with a substitute keep their old pixels, and the newly added font appears to have
+     * been ignored.
+     */
+    fun setFonts(resolver: FontResolver) {
+        fonts = resolver
+        content.keys.toList().forEach(::invalidate)
+        measured.clear()
+    }
     private val executor = GraphExecutor(device, textures = effectTextures)
     private val content = HashMap<LayerId, LayerContent>()
 
@@ -80,7 +127,6 @@ class DocumentRenderer(
     fun render(
         document: Document,
         scale: Float = 1f,
-        fonts: Map<LayerId, FontFile> = emptyMap(),
         effectsBypassed: Boolean = false,
         viewport: Viewport? = null,
     ) {
@@ -92,7 +138,7 @@ class DocumentRenderer(
         device.bindTarget(canvasFront)
         device.clearTarget()
         for (layer in document.layers) {
-            renderLayer(document, layer, scale, fonts, effectsBypassed, errors)
+            renderLayer(document, layer, scale, effectsBypassed, errors)
         }
 
         // The camera applies once, here, rather than to every layer: panning re-runs one textured
@@ -107,9 +153,19 @@ class DocumentRenderer(
      * Separated from [render] only so an export can skip it — a saved file wants the canvas itself,
      * not the canvas as the user happens to be looking at it.
      */
-    fun present(document: Document, viewport: Viewport?) {
+    fun present(document: Document, viewport: Viewport?) = present(document, viewport, target = null)
+
+    /**
+     * Copies the finished canvas into [target], for an export that must not go to the screen.
+     *
+     * The camera is deliberately absent: a saved file is the artwork, not the artwork as the user
+     * happens to be looking at it.
+     */
+    fun blitTo(document: Document, target: TextureHandle) = present(document, viewport = null, target = target)
+
+    private fun present(document: Document, viewport: Viewport?, target: TextureHandle?) {
         val canvas = canvasFront ?: return
-        device.bindTarget(null)
+        device.bindTarget(target)
         device.setBlend(false)
         if (!device.useProgram(Shaders.PRESENT.id)) return
         device.bindInput("uSource", canvas)
@@ -168,7 +224,6 @@ class DocumentRenderer(
         document: Document,
         layer: Layer,
         scale: Float,
-        fonts: Map<LayerId, FontFile>,
         effectsBypassed: Boolean,
         errors: MutableList<ExecutionError>,
     ) {
@@ -177,12 +232,12 @@ class DocumentRenderer(
             // Pass-through groups composite their children straight onto the target; an isolating
             // group needs its own buffer and is a separate step.
             for (child in layer.children) {
-                renderLayer(document, child, scale, fonts, effectsBypassed, errors)
+                renderLayer(document, child, scale, effectsBypassed, errors)
             }
             return
         }
 
-        val font = fonts[layer.id]
+        val font = fontFor(layer)
         val graph = graphFor(document, layer, scale, effectsBypassed, font) ?: return
         val silhouette = silhouetteFor(layer, graph.textureBounds, scale, font)
 
@@ -283,8 +338,11 @@ class DocumentRenderer(
      */
     private fun silhouetteFor(layer: Layer, bounds: Rect, scale: Float, font: FontFile?): TextureHandle {
         val revision = revisions.getOrPut(layer.id) { 0 }
+        val key = contentKey(layer, font)
         val cached = content[layer.id]
-        if (cached != null && cached.revision == revision && cached.bounds == bounds) return cached.texture
+        if (cached != null && cached.revision == revision && cached.bounds == bounds && cached.key == key) {
+            return cached.texture
+        }
 
         cached?.let { device.deleteTexture(it.texture) }
         val raster = rasterizer.silhouette(layer, bounds, scale, font)
@@ -296,8 +354,19 @@ class DocumentRenderer(
         device.uploadArgb(handle, raster.bitmap.width, raster.bitmap.height, pixels)
         raster.bitmap.recycle()
 
-        content[layer.id] = LayerContent(bounds, handle, revision)
+        content[layer.id] = LayerContent(bounds, handle, revision, key)
         return handle
+    }
+
+    /**
+     * Everything the silhouette is drawn from, collapsed to one value.
+     *
+     * A group and an image have no silhouette of their own, so they have nothing to key on.
+     */
+    private fun contentKey(layer: Layer, font: FontFile?): Int = when (layer) {
+        is Layer.Shape -> layer.geometry.hashCode()
+        is Layer.Text -> 31 * layer.spec.hashCode() + (font?.path?.hashCode() ?: 0)
+        else -> 0
     }
 
     /**
@@ -307,19 +376,23 @@ class DocumentRenderer(
      * silhouette uses — otherwise laying out a paragraph would happen twice per frame, once to find
      * the bounds and once to draw into them.
      */
+    /** The font a text layer shapes with, or null for every other kind. */
+    private fun fontFor(layer: Layer): FontFile? =
+        (layer as? Layer.Text)?.let { fonts.resolve(it.spec.font) }
+
     fun bounds(layer: Layer, font: FontFile? = null): Rect? = when (layer) {
         is Layer.Shape -> Rect.of(sizeOf(layer))
         is Layer.Text -> {
-            val revision = revisions.getOrPut(layer.id) { 0 }
+            val key = contentKey(layer, font)
             val cached = measured[layer.id]
-            if (cached != null && cached.first == revision) {
+            if (cached != null && cached.first == key) {
                 cached.second
             } else {
                 val box = font?.let {
                     val measured = text.rasterize(layer.spec, it).bounds
                     Rect(measured.left, measured.top, measured.right, measured.bottom)
                 } ?: Rect.of(UNMEASURED_TEXT)
-                measured[layer.id] = revision to box
+                measured[layer.id] = key to box
                 box
             }
         }
