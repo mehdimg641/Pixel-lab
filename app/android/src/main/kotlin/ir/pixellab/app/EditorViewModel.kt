@@ -100,11 +100,21 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     var state: EditorState by mutableStateOf(editor.state)
         private set
 
+    /**
+     * The recovery copy, kept apart from the user's own saves.
+     *
+     * A save is a decision and names a file; an auto-save is insurance against the process being
+     * killed, which on Android happens without warning. Writing over the user's file on a timer
+     * would make an accidental edit permanent while they were looking away.
+     */
+    val autoSave = AutoSave(application, viewModelScope) { currentProject() }
+
     init {
         // A smart object is measured through its source, and the source is wherever the document
         // currently has it — a captured copy would size an instance from a layer that has since
         // been resized.
         bounds.sources = { id -> editor.state.document.findLayer(id) }
+        autoSave.start(settings.autoSaveMinutes)
 
         // Off the main thread from the first frame: the canvas has to draw before the library is
         // known, and text arrives when it is.
@@ -147,6 +157,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
         recordedDepth = editor.undoDepth
         state = editor.state
+        // Marked here rather than at each call site, because every document change goes through
+        // this one door — and a flag set in twenty places is a flag that is missed in one.
+        autoSave.dirty = true
         return result
     }
 
@@ -180,6 +193,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun act(body: Editor.() -> Unit) = edit(body)
 
+    override fun onCleared() {
+        autoSave.stop()
+        super.onCleared()
+    }
+
     /**
      * Applies a preference and writes it down.
      *
@@ -188,8 +206,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      * it on again.
      */
     fun setPreferences(next: Preferences) {
+        val before = settings.autoSaveMinutes
         settings = next.sane()
         editor.snapConfig = settings.snap
+        if (settings.autoSaveMinutes != before) autoSave.start(settings.autoSaveMinutes)
         Preferences.save(getApplication(), settings)
     }
 

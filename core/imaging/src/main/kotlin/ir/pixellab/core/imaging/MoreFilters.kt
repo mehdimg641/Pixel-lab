@@ -32,19 +32,31 @@ object MotionBlur {
         val dy = sin(radians)
         val steps = distance.roundToInt().coerceIn(2, MAX_SAMPLES)
 
-        val out = Raster(src.width, src.height, src.channels)
+        // The trail is the same at every pixel, so its offsets are computed once for the whole
+        // image rather than per pixel per channel. Centred, because a motion trail is symmetric
+        // about where the subject was — unlike a zoom trail, which streams away from a centre.
+        val offsetX = FloatArray(steps)
+        val offsetY = FloatArray(steps)
+        for (s in 0 until steps) {
+            val t = (s.toFloat() / (steps - 1) - 0.5f) * distance
+            offsetX[s] = dx * t
+            offsetY[s] = dy * t
+        }
+
+        val channels = src.channels
+        val out = Raster(src.width, src.height, channels)
+        val acc = FloatArray(channels)
+        val scale = 1f / steps
         for (y in 0 until src.height) {
             for (x in 0 until src.width) {
-                for (c in 0 until src.channels) {
-                    var acc = 0f
-                    for (s in 0 until steps) {
-                        // Centred on the pixel: a motion trail is symmetric about where the subject
-                        // was, unlike a zoom trail which streams away from a centre.
-                        val t = (s.toFloat() / (steps - 1) - 0.5f) * distance
-                        acc += bilinear(src, x + dx * t, y + dy * t, c)
-                    }
-                    out[x, y, c] = acc / steps
-                }
+                java.util.Arrays.fill(acc, 0f)
+                // One coordinate computation per sample, shared by every channel. Fetching each
+                // channel through its own bilinear call repeats the floor, the fraction and the
+                // four bounds clamps once per channel, which on RGBA is four times the address
+                // arithmetic for the same four reads.
+                for (s in 0 until steps) sampleInto(src, x + offsetX[s], y + offsetY[s], acc)
+                val at = (y * src.width + x) * channels
+                for (c in 0 until channels) out.data[at + c] = acc[c] * scale
             }
         }
         return out
@@ -87,24 +99,52 @@ object LensBlur {
         val offsets = kernel(radius, blades, rotation)
         if (offsets.isEmpty()) return src.copy()
 
-        val out = Raster(src.width, src.height, src.channels)
-        val colourChannels = minOf(src.channels, 3)
-        for (y in 0 until src.height) {
-            for (x in 0 until src.width) {
+        // Unpacked into two int arrays. A list of boxed pairs walked a few thousand times per
+        // pixel is an allocation-free loop only in principle: every element is a pointer chase,
+        // and at this iteration count that dominates the arithmetic it is carrying.
+        val kernelX = IntArray(offsets.size) { offsets[it].first }
+        val kernelY = IntArray(offsets.size) { offsets[it].second }
+
+        val channels = src.channels
+        val colourChannels = minOf(channels, 3)
+        val width = src.width
+        val height = src.height
+        val out = Raster(width, height, channels)
+        val acc = FloatArray(channels)
+
+        // The highlight weight is a property of the source pixel, not of the tap, so it is computed
+        // once per pixel rather than once per tap. At a few hundred taps a pixel that is the
+        // difference between three reads per tap and one.
+        val weights = FloatArray(width * height)
+        for (i in weights.indices) {
+            val at = i * channels
+            var brightest = 0f
+            for (c in 0 until colourChannels) {
+                val v = src.data[at + c]
+                if (v > brightest) brightest = v
+            }
+            // Brightness measured across the colour channels only; weighting by alpha would make a
+            // transparent area bloom, which is not a highlight.
+            weights[i] = if (brightest > highlightThreshold) highlightGain else 1f
+        }
+
+        for (y in 0 until height) {
+            for (x in 0 until width) {
                 var weightSum = 0f
-                val acc = FloatArray(src.channels)
-                for (offset in offsets) {
-                    val sx = (x + offset.first).coerceIn(0, src.width - 1)
-                    val sy = (y + offset.second).coerceIn(0, src.height - 1)
-                    // Brightness measured across the colour channels only; weighting by alpha
-                    // would make a transparent area bloom, which is not a highlight.
-                    var brightest = 0f
-                    for (c in 0 until colourChannels) brightest = maxOf(brightest, src[sx, sy, c])
-                    val weight = if (brightest > highlightThreshold) highlightGain else 1f
-                    for (c in 0 until src.channels) acc[c] += src[sx, sy, c] * weight
+                java.util.Arrays.fill(acc, 0f)
+                for (k in kernelX.indices) {
+                    val sx = (x + kernelX[k]).coerceIn(0, width - 1)
+                    val sy = (y + kernelY[k]).coerceIn(0, height - 1)
+                    val pixel = sy * width + sx
+                    // The row address once per tap rather than once per channel per tap.
+                    val at = pixel * channels
+                    val weight = weights[pixel]
+                    for (c in 0 until channels) acc[c] += src.data[at + c] * weight
                     weightSum += weight
                 }
-                for (c in 0 until src.channels) out[x, y, c] = acc[c] / weightSum
+                val to = (y * width + x) * channels
+                val scale = 1f / weightSum
+                for (c in 0 until channels) out.data[to + c] = acc[c] * scale
             }
         }
         return out
@@ -483,6 +523,36 @@ object Stylise {
 }
 
 /** Bilinear sampling with edge clamping, shared by the directional and gradient blurs. */
+/**
+ * Bilinear over every channel at once, accumulated into [acc].
+ *
+ * The single-channel form below is the readable one and this is the one the hot loops use. The
+ * difference is not the reads — those are the same four per channel — it is that the floor, the
+ * fraction and the four bounds clamps happen once for the pixel instead of once per channel.
+ */
+internal fun sampleInto(src: Raster, x: Float, y: Float, acc: FloatArray) {
+    val fx = kotlin.math.floor(x)
+    val fy = kotlin.math.floor(y)
+    val tx = x - fx
+    val ty = y - fy
+    val x0 = fx.toInt().coerceIn(0, src.width - 1)
+    val y0 = fy.toInt().coerceIn(0, src.height - 1)
+    val x1 = (x0 + 1).coerceAtMost(src.width - 1)
+    val y1 = (y0 + 1).coerceAtMost(src.height - 1)
+
+    val channels = src.channels
+    val topLeft = (y0 * src.width + x0) * channels
+    val topRight = (y0 * src.width + x1) * channels
+    val bottomLeft = (y1 * src.width + x0) * channels
+    val bottomRight = (y1 * src.width + x1) * channels
+
+    for (c in 0 until channels) {
+        val top = src.data[topLeft + c] + (src.data[topRight + c] - src.data[topLeft + c]) * tx
+        val bottom = src.data[bottomLeft + c] + (src.data[bottomRight + c] - src.data[bottomLeft + c]) * tx
+        acc[c] += top + (bottom - top) * ty
+    }
+}
+
 internal fun bilinear(src: Raster, x: Float, y: Float, c: Int): Float {
     val fx = kotlin.math.floor(x)
     val fy = kotlin.math.floor(y)

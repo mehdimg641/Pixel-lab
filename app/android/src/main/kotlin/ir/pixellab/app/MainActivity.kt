@@ -7,10 +7,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import ir.pixellab.engine.android.PlatformCodecs
 
 class MainActivity : ComponentActivity() {
+
+    private var model: EditorViewModel? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,11 +29,26 @@ class MainActivity : ComponentActivity() {
                 // and mirroring them is the mistake that makes Persianised editors unusable for
                 // layout work. EditorCanvas therefore does its own mapping and ignores this.
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                    val model: EditorViewModel = viewModel()
-                    EditorScreen(model)
+                    val editor: EditorViewModel = viewModel()
+                    model = editor
+                    EditorScreen(editor)
                 }
             }
         }
     }
 
+    /**
+     * The recovery write that catches most real losses.
+     *
+     * A process is killed while it is *not* in front of the user far more often than while it is,
+     * so the moment of being backgrounded is worth more than any number of timer ticks. The timer
+     * covers the rest.
+     */
+    override fun onStop() {
+        super.onStop()
+        val editor = model ?: return
+        if (editor.autoSave.dirty) {
+            lifecycleScope.launch { editor.autoSave.writeNow() }
+        }
+    }
 }
