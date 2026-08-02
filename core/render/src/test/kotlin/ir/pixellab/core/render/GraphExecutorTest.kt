@@ -27,6 +27,7 @@ private class FakeGlDevice(override val maxTextureSize: Int = 4096) : GlDevice {
         val floats = LinkedHashMap<String, Float>()
         val vectors = LinkedHashMap<String, Pair<Float, Float>>()
         val ints = LinkedHashMap<String, Int>()
+        val matrices = LinkedHashMap<String, FloatArray>()
     }
 
     val passes = ArrayList<Pass>()
@@ -106,8 +107,16 @@ private class FakeGlDevice(override val maxTextureSize: Int = 4096) : GlDevice {
         current?.vectors?.put(name, x to y)
     }
 
+    override fun setVec4(name: String, x: Float, y: Float, z: Float, w: Float) {
+        current?.vectors?.put(name, x to y)
+    }
+
     override fun setInt(name: String, value: Int) {
         current?.ints?.put(name, value)
+    }
+
+    override fun setMat3(name: String, values: FloatArray) {
+        current?.matrices?.put(name, values.copyOf())
     }
 
     override fun draw(instances: Int) {

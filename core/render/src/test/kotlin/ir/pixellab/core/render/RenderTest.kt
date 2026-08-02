@@ -145,7 +145,7 @@ class BlendShaderTest {
 
     @Test
     fun `the shader handles every declared blend mode`() {
-        val source = BlendShaders.fragmentShader
+        val source = BlendShaders.compositeFragment
         // Each mode is dispatched on its ordinal, so a new enum constant without a shader branch
         // must fail here rather than silently rendering as Normal.
         for (mode in BlendMode.entries) {
@@ -162,7 +162,7 @@ class BlendShaderTest {
 
     @Test
     fun `shaders declare the ES 3 version and balanced braces`() {
-        for (src in listOf(BlendShaders.fragmentShader, BlendShaders.vertexShader)) {
+        for (src in listOf(BlendShaders.compositeFragment)) {
             src.trimStart().startsWith("#version 300 es") shouldBe true
             src.count { it == '{' } shouldBe src.count { it == '}' }
             src.count { it == '(' } shouldBe src.count { it == ')' }

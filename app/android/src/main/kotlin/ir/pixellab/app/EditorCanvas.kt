@@ -64,7 +64,9 @@ fun EditorCanvas(
         AndroidView(
             factory = { CanvasSurface(it) },
             modifier = Modifier.fillMaxSize(),
-            update = { surface -> surface.submit(state.document, state.effectsBypassed) },
+            update = { surface ->
+                surface.submit(state.document, state.viewport, state.effectsBypassed)
+            },
         )
 
         // Chrome on top, in a separate pass: it must keep a constant size as the canvas zooms, it

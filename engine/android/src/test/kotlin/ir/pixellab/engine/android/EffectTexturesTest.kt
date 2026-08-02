@@ -48,7 +48,9 @@ private class CountingDevice : GlDevice {
     override fun bindInput(samplerName: String, handle: TextureHandle) = Unit
     override fun setFloat(name: String, value: Float) = Unit
     override fun setVec2(name: String, x: Float, y: Float) = Unit
+    override fun setVec4(name: String, x: Float, y: Float, z: Float, w: Float) = Unit
     override fun setInt(name: String, value: Int) = Unit
+    override fun setMat3(name: String, values: FloatArray) = Unit
     override fun draw(instances: Int) = Unit
 }
 

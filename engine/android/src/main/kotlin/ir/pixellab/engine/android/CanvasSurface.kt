@@ -5,6 +5,7 @@ import android.util.AttributeSet
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import ir.pixellab.core.canvas.Viewport
 import ir.pixellab.core.model.Document
 import ir.pixellab.core.model.LayerId
 import java.util.concurrent.atomic.AtomicBoolean
@@ -34,6 +35,7 @@ class CanvasSurface @JvmOverloads constructor(
 
     private data class Frame(
         val document: Document,
+        val viewport: Viewport,
         val effectsBypassed: Boolean,
         val invalidated: Set<LayerId>,
     )
@@ -49,8 +51,13 @@ class CanvasSurface @JvmOverloads constructor(
      * GPU can draw, and a queue would render every intermediate state and fall further behind the
      * finger with each one.
      */
-    fun submit(document: Document, effectsBypassed: Boolean = false, invalidated: Set<LayerId> = emptySet()) {
-        val previous = pending.getAndSet(Frame(document, effectsBypassed, invalidated))
+    fun submit(
+        document: Document,
+        viewport: Viewport,
+        effectsBypassed: Boolean = false,
+        invalidated: Set<LayerId> = emptySet(),
+    ) {
+        val previous = pending.getAndSet(Frame(document, viewport, effectsBypassed, invalidated))
         // Invalidations must not be lost when a frame is superseded, or a layer edited mid-drag
         // would keep its stale pixels.
         if (previous != null && previous.invalidated.isNotEmpty()) {
@@ -99,9 +106,11 @@ class CanvasSurface @JvmOverloads constructor(
 
                 // Straight to the window: the composite is the frame, so an intermediate
                 // full-canvas buffer would be copied for nothing.
-                device.bindTarget(null)
-                device.clearTarget()
-                renderer.render(frame.document, effectsBypassed = frame.effectsBypassed)
+                renderer.render(
+                    document = frame.document,
+                    effectsBypassed = frame.effectsBypassed,
+                    viewport = frame.viewport,
+                )
                 context.swapBuffers()
 
                 val errors = renderer.lastErrors

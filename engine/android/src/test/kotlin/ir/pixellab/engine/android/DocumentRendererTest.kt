@@ -1,6 +1,8 @@
 package ir.pixellab.engine.android
 
 import io.kotest.matchers.shouldBe
+import ir.pixellab.core.canvas.Viewport
+import ir.pixellab.core.model.BlendMode
 import ir.pixellab.core.model.CanvasSpec
 import ir.pixellab.core.model.Color
 import ir.pixellab.core.model.Document
@@ -60,14 +62,39 @@ private open class GlDeviceRecorder : ir.pixellab.core.render.GlDevice {
 
     override fun useProgram(shaderId: String): Boolean {
         programs += shaderId
+        passes += Pass(shaderId)
         return true
     }
 
-    override fun bindInput(samplerName: String, handle: TextureHandle) = Unit
-    override fun setFloat(name: String, value: Float) = Unit
+    override fun bindInput(samplerName: String, handle: TextureHandle) {
+        passes.lastOrNull()?.inputs?.put(samplerName, handle)
+    }
+
+    override fun setFloat(name: String, value: Float) {
+        passes.lastOrNull()?.floats?.put(name, value)
+    }
+
     override fun setVec2(name: String, x: Float, y: Float) = Unit
-    override fun setInt(name: String, value: Int) = Unit
+    override fun setVec4(name: String, x: Float, y: Float, z: Float, w: Float) = Unit
+
+    override fun setInt(name: String, value: Int) {
+        passes.lastOrNull()?.ints?.put(name, value)
+    }
+
+    override fun setMat3(name: String, values: FloatArray) {
+        passes.lastOrNull()?.matrices?.put(name, values.copyOf())
+    }
+
     override fun draw(instances: Int) = Unit
+
+    class Pass(val shader: String) {
+        val inputs = LinkedHashMap<String, TextureHandle>()
+        val floats = LinkedHashMap<String, Float>()
+        val ints = LinkedHashMap<String, Int>()
+        val matrices = LinkedHashMap<String, FloatArray>()
+    }
+
+    val passes = ArrayList<Pass>()
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -91,10 +118,59 @@ class DocumentRendererTest {
     )
 
     @Test
-    fun `a plain layer runs its fill pass`() {
+    fun `a plain layer runs its fill pass and is then composited onto the canvas`() {
         renderer.render(document(box("a")))
-        device.programs shouldBe listOf(Shaders.FILL.id)
+        // The composite is what was missing while every other pass worked: a layer rendered
+        // correctly into a buffer that was then discarded looks exactly like a renderer doing
+        // nothing at all.
+        device.programs shouldBe listOf(Shaders.FILL.id, Shaders.COMPOSITE.id, Shaders.PRESENT.id)
         renderer.lastErrors shouldBe emptyList()
+    }
+
+    @Test
+    fun `every visible layer reaches the canvas`() {
+        renderer.render(document(box("a"), box("b"), box("c")))
+        device.programs.count { it == Shaders.COMPOSITE.id } shouldBe 3
+    }
+
+    @Test
+    fun `the finished canvas is presented exactly once`() {
+        renderer.render(document(box("a"), box("b")))
+        // Presenting per layer would apply the camera repeatedly and show the last layer alone.
+        device.programs.count { it == Shaders.PRESENT.id } shouldBe 1
+    }
+
+    @Test
+    fun `a layer's blend mode and opacity reach the composite`() {
+        val layer = box("a").with(blendMode = BlendMode.HARD_LIGHT, opacity = 0.4f)
+        renderer.render(document(layer))
+        val composite = device.passes.last { it.shader == Shaders.COMPOSITE.id }
+        // These are the three things a layer has that its effects do not; dropping them is silent
+        // because the layer still appears, just wrong.
+        composite.ints["uBlendMode"] shouldBe BlendMode.HARD_LIGHT.ordinal
+        composite.floats["uOpacity"] shouldBe 0.4f
+        (composite.matrices["uMap"] != null) shouldBe true
+    }
+
+    @Test
+    fun `the camera is applied once at present time, not per layer`() {
+        val viewport = Viewport(offset = Vec2(10f, 20f), zoom = 2f, screenSize = Vec2(800f, 600f))
+        renderer.render(document(box("a"), box("b")), viewport = viewport)
+        val present = device.passes.single { it.shader == Shaders.PRESENT.id }
+        (present.matrices["uMap"] != null) shouldBe true
+        // Rendering every layer through the camera would re-run each effect stack on every pan.
+        device.programs.count { it == Shaders.PRESENT.id } shouldBe 1
+    }
+
+    @Test
+    fun `a glass layer is handed the canvas as its backdrop`() {
+        renderer.render(
+            document(box("a"), box("b", style = Style(effects = listOf(Effect.BackdropBlur())))),
+        )
+        // Frosted glass reads what is already composited beneath it; without a backdrop the
+        // executor reports it rather than rendering an opaque rectangle.
+        renderer.lastErrors shouldBe emptyList()
+        device.programs.contains(Shaders.BACKDROP_BLUR.id) shouldBe true
     }
 
     @Test
@@ -145,7 +221,9 @@ class DocumentRendererTest {
     @Test
     fun `a hidden or fully transparent layer costs nothing`() {
         renderer.render(document(box("a").with(visible = false), box("b").with(opacity = 0f)))
-        device.programs shouldBe emptyList()
+        // No effect passes and no composites — but the canvas is still presented, because an empty
+        // document has to show the surround rather than the previous frame.
+        device.programs shouldBe listOf(Shaders.PRESENT.id)
     }
 
     @Test
@@ -154,14 +232,15 @@ class DocumentRendererTest {
         renderer.render(document(box("a", style = style)), effectsBypassed = true)
         // The `fx` badge has to be instant and reversible, so it drops the effects at plan time
         // rather than editing the document.
-        device.programs shouldBe listOf(Shaders.FILL.id)
+        device.programs shouldBe listOf(Shaders.FILL.id, Shaders.COMPOSITE.id, Shaders.PRESENT.id)
     }
 
     @Test
     fun `a pass-through group renders its children`() {
         val group = Layer.Group(id = LayerId("g"), children = listOf(box("a"), box("b")))
         renderer.render(document(group))
-        device.programs shouldBe listOf(Shaders.FILL.id, Shaders.FILL.id)
+        device.programs.count { it == Shaders.FILL.id } shouldBe 2
+        device.programs.count { it == Shaders.COMPOSITE.id } shouldBe 2
     }
 
     @Test

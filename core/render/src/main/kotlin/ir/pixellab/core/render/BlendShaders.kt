@@ -18,7 +18,8 @@ object BlendShaders {
     /** Uniform value identifying a mode inside the shader. Matches the enum ordinal. */
     fun uniformValue(mode: BlendMode): Int = mode.ordinal
 
-    val fragmentShader: String = """
+    /** The composite pass's fragment stage, complete with its own prologue. */
+    val compositeFragment: String = """
         #version 300 es
         precision highp float;
 
@@ -26,6 +27,9 @@ object BlendShaders {
         uniform sampler2D uSource;
         uniform int   uBlendMode;
         uniform float uOpacity;
+
+        // Where in the layer texture this canvas pixel comes from; see Compositing.
+        uniform mat3  uMap;
 
         in  vec2 vUv;
         out vec4 fragColor;
@@ -139,7 +143,12 @@ object BlendShaders {
 
         void main() {
             vec4 backdrop = texture(uBackdrop, vUv);
-            vec4 source   = texture(uSource,   vUv);
+
+            vec2 uv = (uMap * vec3(vUv, 1.0)).xy;
+            // A layer covers part of the canvas; everywhere else the backdrop passes through
+            // untouched. Clamping instead would smear the layer's edge across the whole document.
+            if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { fragColor = backdrop; return; }
+            vec4 source = texture(uSource, uv);
 
             float ab = backdrop.a;
             float as = source.a * uOpacity;
@@ -149,24 +158,6 @@ object BlendShaders {
             vec3 mixed = blend(uBlendMode, backdrop.rgb, source.rgb);
             vec3 co = (as * (1.0 - ab) * source.rgb + as * ab * mixed + (1.0 - as) * ab * backdrop.rgb) / ao;
             fragColor = vec4(co, ao);
-        }
-    """.trimIndent()
-
-    val vertexShader: String = """
-        #version 300 es
-        precision highp float;
-
-        layout(location = 0) in vec2 aPosition;
-        layout(location = 1) in vec2 aUv;
-
-        uniform mat3 uTransform;
-
-        out vec2 vUv;
-
-        void main() {
-            vUv = aUv;
-            vec3 p = uTransform * vec3(aPosition, 1.0);
-            gl_Position = vec4(p.xy, 0.0, 1.0);
         }
     """.trimIndent()
 }

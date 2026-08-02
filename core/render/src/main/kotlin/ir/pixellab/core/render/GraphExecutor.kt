@@ -59,7 +59,12 @@ interface GlDevice {
 
     fun setVec2(name: String, x: Float, y: Float)
 
+    fun setVec4(name: String, x: Float, y: Float, z: Float, w: Float)
+
     fun setInt(name: String, value: Int)
+
+    /** Nine values, column-major, as GLSL stores a `mat3`. */
+    fun setMat3(name: String, values: FloatArray)
 
     fun draw(instances: Int)
 }

@@ -7,6 +7,10 @@ import ir.pixellab.core.model.LayerId
 import ir.pixellab.core.model.Rect
 import ir.pixellab.core.model.ShapeGeometry
 import ir.pixellab.core.model.Vec2
+import ir.pixellab.core.canvas.Viewport
+import ir.pixellab.core.render.Affine
+import ir.pixellab.core.render.BlendShaders
+import ir.pixellab.core.render.Compositing
 import ir.pixellab.core.render.ExecutionError
 import ir.pixellab.core.render.GlDevice
 import ir.pixellab.core.render.GraphExecutor
@@ -14,6 +18,7 @@ import ir.pixellab.core.render.LayerGraph
 import ir.pixellab.core.render.MemoryBudget
 import ir.pixellab.core.render.RenderGraphBuilder
 import ir.pixellab.core.render.RenderPlanner
+import ir.pixellab.core.render.Shaders
 import ir.pixellab.core.render.TextureHandle
 
 /** What a layer needs before its graph can run: where it sits, and the pixels of its silhouette. */
@@ -38,6 +43,17 @@ class DocumentRenderer(
 ) {
     private val executor = GraphExecutor(device, textures = effectTextures)
     private val content = HashMap<LayerId, LayerContent>()
+
+    /**
+     * Two canvas-sized buffers, swapped after every layer.
+     *
+     * A layer has to *read* what is beneath it: the four non-separable blend modes are functions of
+     * the destination, and frosted glass samples it outright. Fixed-function blending cannot express
+     * either, so the composite reads one buffer and writes the other.
+     */
+    private var canvasFront: TextureHandle? = null
+    private var canvasBack: TextureHandle? = null
+    private var canvasSize = Vec2.ZERO
 
     /** Bumped when a layer's *pixels* change, as opposed to where it sits. */
     private val revisions = HashMap<LayerId, Int>()
@@ -66,12 +82,66 @@ class DocumentRenderer(
         scale: Float = 1f,
         fonts: Map<LayerId, FontFile> = emptyMap(),
         effectsBypassed: Boolean = false,
+        viewport: Viewport? = null,
     ) {
         val errors = ArrayList<ExecutionError>()
+        val width = kotlin.math.ceil(document.canvas.width * scale).toInt().coerceAtLeast(1)
+        val height = kotlin.math.ceil(document.canvas.height * scale).toInt().coerceAtLeast(1)
+        prepareCanvas(width, height, document.color.precision.bytesPerPixel)
+
+        device.bindTarget(canvasFront)
+        device.clearTarget()
         for (layer in document.layers) {
             renderLayer(document, layer, scale, fonts, effectsBypassed, errors)
         }
+
+        // The camera applies once, here, rather than to every layer: panning re-runs one textured
+        // quad instead of every effect stack, which is what keeps the canvas under the finger.
+        present(document, viewport)
         lastErrors = errors
+    }
+
+    /**
+     * Draws the finished canvas to whatever target is bound after this call returns to the caller.
+     *
+     * Separated from [render] only so an export can skip it — a saved file wants the canvas itself,
+     * not the canvas as the user happens to be looking at it.
+     */
+    fun present(document: Document, viewport: Viewport?) {
+        val canvas = canvasFront ?: return
+        device.bindTarget(null)
+        device.setBlend(false)
+        if (!device.useProgram(Shaders.PRESENT.id)) return
+        device.bindInput("uSource", canvas)
+
+        val map = if (viewport == null || viewport.screenSize == Vec2.ZERO) {
+            Affine.IDENTITY
+        } else {
+            Compositing.screenUvToCanvasUv(
+                screenSize = viewport.screenSize,
+                canvasSize = document.canvas.size,
+                offset = viewport.offset,
+                zoom = viewport.zoom,
+                rotation = viewport.rotation,
+            )
+        }
+        device.setMat3("uMap", map.values)
+        device.setVec2("uTexelSize", 1f / document.canvas.width, 1f / document.canvas.height)
+        // Neutral grey around the artboard, matching the interface chrome; a tint here would shift
+        // how the artwork's own colours read.
+        device.setVec4("uSurround", SURROUND_GREY, SURROUND_GREY, SURROUND_GREY, 1f)
+        device.draw(1)
+    }
+
+    /** Allocates or resizes the composite buffers. */
+    private fun prepareCanvas(width: Int, height: Int, bytesPerPixel: Int) {
+        val size = Vec2(width.toFloat(), height.toFloat())
+        if (canvasFront != null && canvasSize == size) return
+        canvasFront?.let(device::deleteTexture)
+        canvasBack?.let(device::deleteTexture)
+        canvasFront = device.createTexture(width, height, bytesPerPixel)
+        canvasBack = device.createTexture(width, height, bytesPerPixel)
+        canvasSize = size
     }
 
     /** Peak memory the current document would need, so a big export can be refused before it starts. */
@@ -85,6 +155,11 @@ class DocumentRenderer(
     fun dispose() {
         content.values.forEach { device.deleteTexture(it.texture) }
         content.clear()
+        canvasFront?.let(device::deleteTexture)
+        canvasBack?.let(device::deleteTexture)
+        canvasFront = null
+        canvasBack = null
+        canvasSize = Vec2.ZERO
         effectTextures.dispose()
         executor.dispose()
     }
@@ -115,12 +190,68 @@ class DocumentRenderer(
         val result = executor.execute(
             graph = graph,
             layerTexture = silhouette,
+            // Frosted glass samples what is already composited beneath, which is exactly the
+            // buffer being read from this frame.
+            backdropTexture = canvasFront,
             scale = scale,
             globalLightAngle = document.globalLight.angle,
             color = document.color,
         )
         errors += result.errors
-        result.output?.let(executor::recycle)
+
+        val appearance = result.output
+        if (appearance == null) {
+            errors += ExecutionError(Shaders.COMPOSITE.id, "layer '${layer.name}' produced nothing")
+            return
+        }
+        composite(document, layer, graph.textureBounds, appearance, scale, errors)
+        executor.recycle(appearance)
+    }
+
+    /**
+     * Draws a finished layer onto the canvas.
+     *
+     * The step that carries the three things a layer has that its effects do not: where it sits,
+     * how opaque it is, and how it blends. Without it every layer renders correctly into a buffer
+     * that is then thrown away, which looks exactly like a renderer that does nothing at all.
+     */
+    private fun composite(
+        document: Document,
+        layer: Layer,
+        textureBounds: Rect,
+        appearance: TextureHandle,
+        scale: Float,
+        errors: MutableList<ExecutionError>,
+    ) {
+        val front = canvasFront ?: return
+        val back = canvasBack ?: return
+        if (!device.useProgram(Shaders.COMPOSITE.id)) {
+            errors += ExecutionError(Shaders.COMPOSITE.id, "composite program unavailable")
+            return
+        }
+
+        device.bindTarget(back)
+        // The blend is done in the shader, so fixed-function blending has to be off or it would
+        // be applied a second time on top.
+        device.setBlend(false)
+        device.bindInput("uSource", appearance)
+        device.bindInput("uBackdrop", front)
+        device.setMat3(
+            "uMap",
+            Compositing.canvasUvToLayerUv(
+                canvasSize = document.canvas.size * scale,
+                textureBounds = textureBounds,
+                transform = layer.transform,
+            ).values,
+        )
+        device.setFloat("uOpacity", layer.opacity)
+        device.setInt("uBlendMode", BlendShaders.uniformValue(layer.blendMode))
+        device.setVec2("uTexelSize", 1f / canvasSize.x, 1f / canvasSize.y)
+        device.draw(1)
+
+        // What was just written becomes what the next layer reads.
+        canvasFront = back
+        canvasBack = front
     }
 
     private fun graphFor(
@@ -222,5 +353,8 @@ class DocumentRenderer(
     private companion object {
         /** Stand-in extent when a text layer has no resolved font yet, so it still selects. */
         val UNMEASURED_TEXT = Vec2(320f, 160f)
+
+        /** 0x2A as a linear fraction — the same neutral grey the Compose chrome uses. */
+        const val SURROUND_GREY = 42f / 255f
     }
 }

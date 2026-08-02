@@ -528,6 +528,54 @@ object Shaders {
         samplers = setOf("uSource", "uFill"),
     )
 
+    /**
+     * Puts a finished layer onto the canvas.
+     *
+     * The step that was missing while every other shader worked: the graph produces a layer's
+     * appearance in its own texture, and without this the texture is simply discarded. It carries
+     * the three things a layer has that its effects do not — where it sits, how opaque it is, and
+     * how it blends — and it reads the canvas as [uBackdrop] rather than relying on fixed-function
+     * blending, because the four non-separable modes need the destination as a value.
+     *
+     * [uMap] converts this pass's own coordinates into the layer texture's. Doing the placement in
+     * the fragment stage keeps the single full-screen triangle: no vertex buffer, no second
+     * geometry path.
+     */
+    val COMPOSITE = ShaderProgram(
+        id = "composite",
+        fragment = BlendShaders.compositeFragment,
+        floatUniforms = setOf("uOpacity"),
+        intUniforms = setOf("uBlendMode"),
+        samplers = setOf("uSource", "uBackdrop"),
+    )
+
+    /**
+     * Draws the finished canvas on screen under the camera.
+     *
+     * Separate from compositing so that panning and zooming re-run one textured quad rather than
+     * every layer's effect stack — the difference between a canvas that tracks the finger and one
+     * that does not.
+     */
+    val PRESENT = program(
+        id = "present",
+        body = """
+            uniform mat3 uMap;
+            uniform vec4 uSurround;
+
+            void main() {
+                vec2 uv = (uMap * vec3(vUv, 1.0)).xy;
+                // Outside the artboard is the neutral surround, not black and not the edge pixel
+                // smeared outwards by clamping.
+                if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+                    fragColor = uSurround;
+                    return;
+                }
+                vec4 c = texture(uSource, uv);
+                fragColor = vec4(mix(uSurround.rgb, c.rgb, c.a), 1.0);
+            }
+        """,
+    )
+
     /** Separable Gaussian, run twice; the workhorse behind shadows and glows. */
     val BLUR = program(
         id = "blur",
@@ -558,6 +606,7 @@ object Shaders {
     val ALL: Map<String, ShaderProgram> = listOf(
         SDF_SEED, SDF_FLOOD, SDF_RESOLVE, STROKE, SHADOW, GLOW, INNER_SHADOW, BEVEL, SATIN, OVERLAY,
         EXTRUDE_STEP, REFLECTION, CHROMATIC_OFFSET, BACKDROP_BLUR, NOISE, EDGE_ROUGHEN, BLUR, FILL,
+        COMPOSITE, PRESENT,
     ).associateBy { it.id }
 
     operator fun get(id: String): ShaderProgram? = ALL[id]

@@ -203,6 +203,14 @@ class AndroidGlDevice(private val context: GlContext) : GlDevice {
         current?.let { GLES30.glUniform1i(locate(it, name), value) }
     }
 
+    override fun setVec4(name: String, x: Float, y: Float, z: Float, w: Float) {
+        current?.let { GLES30.glUniform4f(locate(it, name), x, y, z, w) }
+    }
+
+    override fun setMat3(name: String, values: FloatArray) {
+        current?.let { GLES30.glUniformMatrix3fv(locate(it, name), 1, false, values, 0) }
+    }
+
     override fun draw(instances: Int) {
         // Three vertices, no buffer: the vertex shader derives the triangle from gl_VertexID.
         GLES30.glDrawArraysInstanced(GLES30.GL_TRIANGLES, 0, 3, instances.coerceAtLeast(1))
