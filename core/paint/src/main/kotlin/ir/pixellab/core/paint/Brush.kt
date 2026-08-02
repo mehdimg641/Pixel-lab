@@ -151,6 +151,20 @@ data class BrushPreset(
 
     /** Removes rather than adds, which is the same engine with the coverage subtracted. */
     val erase: Boolean = false,
+
+    /**
+     * Paints with pixels copied from elsewhere on the layer rather than with [color].
+     *
+     * The clone stamp. It sits here rather than as a separate tool because everything else about it
+     * *is* a brush — the tip, the falloff, the spacing, the flow, the dynamics all apply unchanged —
+     * and the only difference is where the colour of each dab comes from. Splitting it out would
+     * mean maintaining a second copy of the dab machinery that slowly drifts from this one.
+     *
+     * It is not a replacement for healing. Healing solves for a patch that matches its surroundings
+     * and is the right tool for a blemish; a clone stamp copies exactly what the user points at and
+     * is the right tool for taking a whole object out. Photoshop ships both for that reason.
+     */
+    val clone: Boolean = false,
 ) {
     init {
         require(size > 0f) { "a brush needs a positive size, got $size" }
@@ -212,6 +226,20 @@ data class BrushPreset(
 
         val ERASER = BrushPreset(name = "پاک‌کن", tip = BrushTip.Round(hardness = 0.9f), erase = true)
 
-        val ALL = listOf(HARD, SOFT, AIRBRUSH, MARKER, SPRAY, ERASER)
+        /**
+         * The clone stamp: soft enough that the copied patch blends, opaque enough to cover.
+         *
+         * A hard edge is what gives a clone away — the copied disc reads as a disc. Photoshop's
+         * default clone brush is soft for exactly this reason.
+         */
+        val CLONE = BrushPreset(
+            name = "مهر کپی",
+            tip = BrushTip.Round(hardness = 0.5f),
+            size = 80f,
+            spacing = 0.05f,
+            clone = true,
+        )
+
+        val ALL = listOf(HARD, SOFT, AIRBRUSH, MARKER, SPRAY, CLONE, ERASER)
     }
 }

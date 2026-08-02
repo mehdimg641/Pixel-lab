@@ -1,9 +1,12 @@
 package ir.pixellab.engine.android
 
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.BlendMode as AndroidBlendMode
 import android.graphics.BlendModeColorFilter
 import android.graphics.Canvas
+import android.graphics.ComposeShader
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
@@ -69,6 +72,49 @@ class BrushRasterizer {
                 is BrushTip.Round -> drawRound(stroke.canvas, stamp, shape.hardness)
                 is BrushTip.Sampled -> if (tip != null) drawSampled(stroke.canvas, stamp, tip)
             }
+        }
+    }
+
+    /**
+     * Adds dabs that copy from elsewhere on the layer — the clone stamp.
+     *
+     * Each dab is the source image, shifted by [offset], seen through the same round falloff an
+     * ordinary dab has. That is done with a single composed shader rather than by drawing the patch
+     * and then masking it: masking needs an offscreen layer per dab, and a stroke lays down hundreds.
+     *
+     * The source is a snapshot taken when the stroke began, not the layer as it is now. Sampling the
+     * live layer makes the brush read its own output the moment the two overlap, and the copied
+     * texture smears into a spiral — which is the classic way a clone tool is got wrong.
+     *
+     * @param offset how far the destination is from the source, so a dab at `p` copies from
+     *   `p - offset`.
+     */
+    fun addClone(stroke: Stroke, stamps: List<Stamp>, source: Bitmap, offset: ir.pixellab.core.model.Vec2) {
+        val patch = BitmapShader(source, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+            // The shader maps a device point through the inverse of this matrix, so translating by
+            // the offset makes a dab at p read the source at p - offset.
+            setLocalMatrix(Matrix().apply { setTranslate(offset.x, offset.y) })
+        }
+
+        for (stamp in stamps) {
+            if (stamp.size <= 0f || stamp.flow <= 0f) continue
+            stroke.touched = true
+            val radius = stamp.size / 2f
+            val hardness = (stroke.preset.tip as? BrushTip.Round)?.hardness ?: DEFAULT_CLONE_HARDNESS
+            val core = ((stamp.flow * MAX_ALPHA).toInt().coerceIn(0, MAX_ALPHA.toInt()) shl 24) or WHITE
+
+            val falloff = RadialGradient(
+                stamp.position.x, stamp.position.y, radius,
+                intArrayOf(core, core, WHITE),
+                floatArrayOf(0f, hardness.coerceIn(0f, ALMOST_ONE), 1f),
+                Shader.TileMode.CLAMP,
+            )
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                // DST_IN keeps the patch's colour and multiplies its alpha by the falloff's, which
+                // is exactly a soft-edged dab of copied pixels.
+                shader = ComposeShader(patch, falloff, PorterDuff.Mode.DST_IN)
+            }
+            stroke.canvas.drawCircle(stamp.position.x, stamp.position.y, radius, paint)
         }
     }
 
@@ -219,5 +265,11 @@ class BrushRasterizer {
 
         /** A hardness of exactly 1 is handled without a gradient; this keeps the stops ordered. */
         const val ALMOST_ONE = 0.999f
+
+        /** Transparent white: the falloff carries coverage only, and never tints the copied pixels. */
+        const val WHITE = 0x00FFFFFF
+
+        /** Only reached by a sampled tip in clone mode, where the falloff still has to be soft. */
+        const val DEFAULT_CLONE_HARDNESS = 0.5f
     }
 }

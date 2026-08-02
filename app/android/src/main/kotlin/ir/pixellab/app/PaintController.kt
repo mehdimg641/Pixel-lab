@@ -36,6 +36,43 @@ class PaintController(private val assets: AssetStore) {
     var selection: PixelSelection? by mutableStateOf(null)
 
     /**
+     * Where the clone stamp copies from.
+     *
+     * Held across strokes, the way Photoshop's aligned mode works: the user sets the source once and
+     * then paints in as many passes as they like, with the offset between finger and source staying
+     * fixed so the copied region is continuous. Re-anchoring on every stroke would make the second
+     * pass copy a different part of the image and the repair would not line up with itself.
+     */
+    private var anchor: Vec2? by mutableStateOf(null)
+
+    val cloneSource: Vec2? get() = anchor
+
+    /** True once the stamp knows where to copy from, so the UI can stop asking. */
+    val cloneReady: Boolean get() = anchor != null
+
+    private var cloneOffset: Vec2? = null
+
+    /**
+     * The layer as it was when the stroke began.
+     *
+     * Read from rather than the live layer: a stamp that samples its own output smears the copied
+     * texture into a spiral the moment the brush crosses where it has already painted.
+     */
+    private var cloneSnapshot: android.graphics.Bitmap? = null
+
+    /**
+     * Points the stamp somewhere new.
+     *
+     * The offset is cleared with it: keeping the old one would mean the next stroke copied from
+     * wherever the *previous* source happened to sit relative to the finger, which is the one thing
+     * a user setting a source is trying to control.
+     */
+    fun setCloneSource(at: Vec2?) {
+        anchor = at
+        cloneOffset = null
+    }
+
+    /**
      * Bumped whenever painted pixels change.
      *
      * The renderer caches a layer's texture against its asset id, and a painted layer keeps the
@@ -57,6 +94,17 @@ class PaintController(private val assets: AssetStore) {
     fun begin(layer: Layer?, at: Vec2, pressure: Float): Boolean {
         val image = layer as? Layer.Image ?: return false
         val pixels = assets.source.load(image.asset) ?: return false
+        // A clone stamp with nowhere to copy from would paint nothing and look broken; refusing the
+        // stroke leaves the sheet's "set the source" instruction on screen, which is the answer.
+        val source = anchor
+        if (preset.clone) {
+            if (source == null) return false
+            // Fixed at the first stroke and kept: the offset is what makes several passes line up.
+            if (cloneOffset == null) cloneOffset = at - source
+            cloneSnapshot = android.graphics.Bitmap.createBitmap(
+                pixels.pixels, pixels.width, pixels.height, android.graphics.Bitmap.Config.ARGB_8888,
+            )
+        }
 
         target = image.asset
         before = pixels
@@ -73,8 +121,24 @@ class PaintController(private val assets: AssetStore) {
     fun extend(at: Vec2, pressure: Float) {
         val current = stroke ?: return
         val plan = planner ?: return
-        rasterizer.add(current, plan.plan(listOf(StrokePoint(at, pressure))))
+        lay(current, plan.plan(listOf(StrokePoint(at, pressure))))
         publish()
+    }
+
+    /**
+     * Draws a planned batch of dabs, with whatever supplies their colour.
+     *
+     * The one place the clone stamp differs from every other brush. Everything before this — the
+     * spacing, the dynamics, the jitter — has already happened identically for both.
+     */
+    private fun lay(current: BrushRasterizer.Stroke, stamps: List<ir.pixellab.core.paint.Stamp>) {
+        val offset = cloneOffset
+        val snapshot = cloneSnapshot
+        if (preset.clone && offset != null && snapshot != null) {
+            rasterizer.addClone(current, stamps, snapshot, offset)
+        } else {
+            rasterizer.add(current, stamps)
+        }
     }
 
     /**
@@ -87,12 +151,13 @@ class PaintController(private val assets: AssetStore) {
     fun end(at: Vec2, pressure: Float): PaintEdit? {
         val current = stroke ?: return null
         val plan = planner ?: return null
-        rasterizer.add(current, plan.finish(StrokePoint(at, pressure)))
+        lay(current, plan.finish(StrokePoint(at, pressure)))
 
         val asset = target
         val previous = before
         publish()
         current.recycle()
+        releaseSnapshot()
         stroke = null
         planner = null
         target = null
@@ -105,6 +170,7 @@ class PaintController(private val assets: AssetStore) {
 
     fun cancel() {
         stroke?.recycle()
+        releaseSnapshot()
         before?.let { image -> target?.let { assets.put(it, image) } }
         stroke = null
         planner = null
@@ -122,6 +188,11 @@ class PaintController(private val assets: AssetStore) {
     fun restore(edit: PaintEdit, redo: Boolean) {
         assets.put(edit.asset, if (redo) edit.after else edit.before)
         generation++
+    }
+
+    private fun releaseSnapshot() {
+        cloneSnapshot?.recycle()
+        cloneSnapshot = null
     }
 
     private fun publish() {

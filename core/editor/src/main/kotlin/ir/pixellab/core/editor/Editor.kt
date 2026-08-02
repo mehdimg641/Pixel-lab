@@ -415,6 +415,109 @@ class Editor(
     /** Clips a layer to the first unclipped layer beneath it, or releases it. */
     fun setClipped(id: LayerId, clipped: Boolean) = edit(id) { it.with(clipped = clipped) }
 
+    /**
+     * Moves a layer one place up or down within whatever list it is already in.
+     *
+     * Within its own list, and no further: a layer at the top of a group does not silently escape
+     * the group on the next press. Leaving a group is [moveOutOfGroup], which the user asks for
+     * explicitly, because a layer that drifts out of a group has quietly stopped being clipped,
+     * masked and blended by it.
+     */
+    fun raiseLayer(id: LayerId): Boolean = restack(id, +1)
+
+    fun lowerLayer(id: LayerId): Boolean = restack(id, -1)
+
+    private fun restack(id: LayerId, delta: Int): Boolean {
+        val reordered = restacked(state.document.layers, id, delta) ?: return false
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(layers = reordered),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return true
+    }
+
+    /**
+     * Puts a layer inside a group, at the top of it.
+     *
+     * At the top rather than at the bottom because the layer the user is dragging in is the one they
+     * are working on, and burying it under the group's existing contents hides it.
+     */
+    fun moveIntoGroup(id: LayerId, group: LayerId): Boolean {
+        if (id == group) return false
+        val layer = state.document.findLayer(id) ?: return false
+        val target = state.document.findLayer(group) as? Layer.Group ?: return false
+        // A group cannot contain itself at any depth; the document would stop being a tree and
+        // every walk over it would run forever.
+        if (layer is Layer.Group && containsLayer(layer, group)) return false
+        if (target.children.any { it.id == id }) return false
+
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.removeLayer(id)
+                .mapLayer(group) { (it as Layer.Group).copy(children = it.children + layer) },
+            selection = Selection.of(id),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return true
+    }
+
+    /**
+     * Lifts a layer out of its group, leaving it directly above the group.
+     *
+     * Above rather than below: the layer was drawn on top of the group's contents a moment ago, and
+     * dropping it underneath them makes it disappear.
+     */
+    fun moveOutOfGroup(id: LayerId): Boolean {
+        val parent = parentOf(state.document.layers, id) ?: return false
+        val layer = state.document.findLayer(id) ?: return false
+        history.record(state.document)
+        val without = state.document.removeLayer(id)
+        state = state.copy(
+            document = without.copy(layers = insertAfter(without.layers, parent.id, layer)),
+            selection = Selection.of(id),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return true
+    }
+
+    /**
+     * Reorders within one list, returning null when [id] is not in this subtree or cannot move.
+     *
+     * The two are deliberately the same answer. A layer already at the end of its list has nowhere
+     * to go, and reporting that separately would only give the caller a second way to write the
+     * same no-op.
+     */
+    private fun restacked(layers: List<Layer>, id: LayerId, delta: Int): List<Layer>? {
+        val index = layers.indexOfFirst { it.id == id }
+        if (index >= 0) {
+            val target = index + delta
+            if (target !in layers.indices) return null
+            return layers.toMutableList().apply { add(target, removeAt(index)) }
+        }
+        for ((i, layer) in layers.withIndex()) {
+            if (layer !is Layer.Group) continue
+            val changed = restacked(layer.children, id, delta) ?: continue
+            return layers.toMutableList().also { it[i] = layer.copy(children = changed) }
+        }
+        return null
+    }
+
+    private fun containsLayer(group: Layer.Group, id: LayerId): Boolean =
+        group.children.any { it.id == id || (it is Layer.Group && containsLayer(it, id)) }
+
+    private fun parentOf(layers: List<Layer>, id: LayerId): Layer.Group? {
+        for (layer in layers) {
+            if (layer !is Layer.Group) continue
+            if (layer.children.any { it.id == id }) return layer
+            parentOf(layer.children, id)?.let { return it }
+        }
+        return null
+    }
+
     /** Whether a group flattens its children before meeting what is beneath it. */
     fun setGroupPassThrough(id: LayerId, passThrough: Boolean) {
         val group = state.document.findLayer(id) as? Layer.Group ?: return
@@ -491,15 +594,98 @@ class Editor(
 
     fun setLayerLocked(id: LayerId, locked: Boolean) = edit(id) { it.with(locked = locked) }
 
-    fun setLayerOpacity(id: LayerId, opacity: Float, continuous: Boolean = false) {
+    fun setLayerOpacity(id: LayerId, opacity: Float, continuous: Boolean = false) =
+        scrub(id, continuous) { it.with(opacity = opacity.coerceIn(0f, 1f)) }
+
+    /**
+     * Fill opacity: the layer's own paint, leaving its effects at full strength.
+     *
+     * The distinction Photoshop draws between Opacity and Fill, and it is not a nicety — it is how
+     * a hollow title is made. Dropping layer opacity fades the stroke and the shadow along with the
+     * letterform; dropping fill opacity takes the letterform away and leaves the stroke standing.
+     */
+    fun setFillOpacity(id: LayerId, opacity: Float, continuous: Boolean = false) =
+        scrub(id, continuous) { it.withStyle(it.style.copy(fillOpacity = opacity.coerceIn(0f, 1f))) }
+
+    fun setLayerBlendMode(id: LayerId, mode: ir.pixellab.core.model.BlendMode) =
+        edit(id) { it.with(blendMode = mode) }
+
+    /**
+     * One change from a control the user is dragging.
+     *
+     * The first frame of a scrub records history and the rest do not, so a one-second drag is a
+     * single undo step rather than several hundred.
+     */
+    private fun scrub(id: LayerId, continuous: Boolean, change: (Layer) -> Layer) {
+        if (state.document.findLayer(id) == null) return
         if (!continuous || !scrubbing) history.record(state.document)
         scrubbing = continuous
         state = state.copy(
-            document = state.document.mapLayer(id) { it.with(opacity = opacity.coerceIn(0f, 1f)) },
+            document = state.document.mapLayer(id, change),
             canUndo = history.canUndo,
             canRedo = history.canRedo,
         )
     }
+
+    // ---- the canvas itself ------------------------------------------------------------------------
+
+    /**
+     * Resizes the canvas without touching what is on it.
+     *
+     * Photoshop's Canvas Size, and the anchor is the whole point: growing a 1080 square to a 1080×1920
+     * story from the top-left leaves the artwork where it was and adds space below, while the same
+     * change anchored in the centre splits the new space above and below it. Everything moves by one
+     * offset, so the composition holds together rather than every layer being re-placed individually.
+     */
+    fun resizeCanvas(width: Int, height: Int, anchor: CanvasAnchor = CanvasAnchor.CENTER) {
+        if (width <= 0 || height <= 0) return
+        val canvas = state.document.canvas
+        if (width == canvas.width && height == canvas.height) return
+        val offset = anchor.offsetFor(canvas.width, canvas.height, width, height)
+        applyCanvas(canvas.copy(width = width, height = height), offset)
+    }
+
+    /**
+     * Crops to a rectangle in canvas coordinates.
+     *
+     * The rectangle is rounded outwards rather than to nearest: rounding inwards clips a pixel off
+     * an edge the user aligned something to, and a crop that loses content is the one mistake here
+     * that undo is the only recovery from.
+     */
+    fun cropCanvas(rect: Rect) {
+        val left = floor(rect.left)
+        val top = floor(rect.top)
+        val width = ceil(rect.right) - left
+        val height = ceil(rect.bottom) - top
+        if (width < 1 || height < 1) return
+        applyCanvas(
+            state.document.canvas.copy(width = width, height = height),
+            Vec2(-left.toFloat(), -top.toFloat()),
+        )
+    }
+
+    private fun applyCanvas(canvas: ir.pixellab.core.model.CanvasSpec, offset: Vec2) {
+        history.record(state.document)
+        // Top-level layers only: a layer inside a group already moves with its parent, and shifting
+        // both would move it twice.
+        val moved = if (offset == Vec2.ZERO) {
+            state.document.layers
+        } else {
+            state.document.layers.map {
+                it.withTransform(it.transform.copy(translation = it.transform.translation + offset))
+            }
+        }
+        state = state.copy(
+            document = state.document.copy(canvas = canvas, layers = moved),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        fitCanvas()
+    }
+
+    private fun floor(value: Float): Int = kotlin.math.floor(value).toInt()
+
+    private fun ceil(value: Float): Int = kotlin.math.ceil(value).toInt()
 
     fun renameLayer(id: LayerId, name: String) = edit(id) { it.with(name = name) }
 

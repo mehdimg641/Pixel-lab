@@ -111,6 +111,12 @@ sealed interface SheetContent {
     /** Saved styles and starting templates. */
     data object LibraryPanel : SheetContent
 
+    /** The canvas and what arrives on it: size, crop, fill, and placing a file as a layer. */
+    data object CanvasTools : SheetContent
+
+    /** The shape tool: which primitive, and the parameters of the one already selected. */
+    data object ShapeTools : SheetContent
+
     /** The layer this sheet is about, if any — used to keep it out from under the sheet. */
     val subject: LayerId?
         get() = when (this) {
