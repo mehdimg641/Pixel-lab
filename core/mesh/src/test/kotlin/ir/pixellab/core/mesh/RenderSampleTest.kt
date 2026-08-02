@@ -104,6 +104,84 @@ class RenderSampleTest {
         (different > flat.pixels.size / 8) shouldBe true
     }
 
+    /**
+     * A letter whose weight changes across it, which is what Persian actually is.
+     *
+     * A heavy bowl with a thin join running out of it — the shape of ب, ن, س and every connected
+     * form in the script. The join is a fifth of the bowl's weight, so the bevel that suits one
+     * cannot suit the other, and that is the whole case for the guard.
+     */
+    private fun connected(): List<List<Vec2>> = listOf(
+        listOf(
+            Vec2(10f, 10f), Vec2(70f, 10f), Vec2(70f, 62f), Vec2(150f, 62f),
+            Vec2(150f, 74f), Vec2(70f, 74f), Vec2(70f, 126f), Vec2(10f, 126f),
+        ),
+    )
+
+    @Test
+    fun `the bevel guard saves a thin join that an unguarded bevel destroys`() {
+        // The pair of pictures this feature exists to produce. Same letter, same bevel, and the
+        // only difference between them is whether the letter was measured first.
+        val look = goldOnWhite.copy(depth = 18f, bevelSize = 9f, rotation = Vec3(-6f, 16f, 0f))
+        fun render(mesh: Mesh) = Rasteriser.render(mesh, look, 420, 300, 3)
+
+        val guarded = render(Extruder.extrude(connected(), depth = 18f, bevelSize = 9f, bevelSegments = 6))
+        val unguarded = render(
+            Extruder.extrude(
+                connected(),
+                depth = 18f,
+                bevelSize = 9f,
+                bevelSegments = 6,
+                protectThinStrokes = false,
+            ),
+        )
+        write("join-guarded", guarded)
+        write("join-unguarded", unguarded)
+
+        // What the pictures show, stated as a measurement.
+        //
+        // Both renders are of the same outline at the same depth with the same bevel, so the camera
+        // frames them identically and the two images can be compared pixel for pixel. Anything the
+        // unguarded one paints where the guarded one has background is the letter covering ground
+        // it does not occupy: the bevel is nine units and the join is twelve thick, so unguarded the
+        // inset crosses itself, and the face — tessellated from a self-crossing outline — spills out
+        // of the letter as a wedge across the space beside the arm.
+        //
+        // Comparing against an unbevelled render instead would be the obvious thing and does not
+        // work: the rasteriser frames the camera to the mesh, and a bevelled letter is deeper in z,
+        // so the two are drawn at different scales and their areas are not comparable.
+        var escaped = 0
+        var escapedFace = 0
+        for (i in guarded.pixels.indices) {
+            if ((guarded.pixels[i] ushr 24) > 128) continue
+            val pixel = unguarded.pixels[i]
+            if ((pixel ushr 24) <= 128) continue
+            escaped++
+            // White is the face material and gold is the bevel and the walls.
+            if ((pixel and 0xFF) + 40 > ((pixel shr 16) and 0xFF)) escapedFace++
+        }
+        // A substantial spill, not a rounding difference along a shared edge.
+        (escaped > guarded.pixels.size / 100) shouldBe true
+        // And it is the *face* that has escaped rather than a wider bevel, which is the signature of
+        // a self-crossing inset: the tessellator was handed an outline that folds through itself and
+        // filled the fold.
+        (escapedFace > escaped / 2) shouldBe true
+
+        // And it is a real bevel rather than an absence of one: along the arm there is gold at both
+        // edges and white down the middle, which is what a bevelled stroke looks like.
+        var face = 0
+        var gold = 0
+        for (y in guarded.height / 3 until guarded.height * 2 / 3) {
+            for (x in guarded.width / 2 until guarded.width) {
+                val pixel = guarded.pixels[y * guarded.width + x]
+                if ((pixel ushr 24) < 128) continue
+                if ((pixel and 0xFF) + 40 > ((pixel shr 16) and 0xFF)) face++ else gold++
+            }
+        }
+        (face > 0) shouldBe true
+        (gold > 0) shouldBe true
+    }
+
     @Test
     fun `a counter stays a hole all the way through the extrusion`() {
         // A ه or a ۵: the inner contour has to be a hole in the front cap, in the back cap *and*

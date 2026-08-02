@@ -24,10 +24,14 @@ object Extruder {
      *   screen coordinates must flip first — extruding a y-down outline turns every letter inside
      *   out, and the result looks like correct geometry lit from behind.
      * @param depth how far back the letter goes.
-     * @param bevelSize how far in from the outline the bevel reaches. Clamped, because a bevel
-     *   wider than the thinnest stroke of the letter turns that stroke into a ridge with no face.
+     * @param bevelSize how far in from the outline the bevel reaches, at most. Where the letter is
+     *   too thin to give up that much from both sides, [BevelGuard] quietly takes less.
      * @param bevelSegments rings across the bevel. Two is a chamfer, eight is a rounded edge; the
      *   difference is entirely in how the highlight travels.
+     * @param protectThinStrokes measure the letter and limit the bevel per point rather than
+     *   applying one width everywhere. On by default, and it should stay on for Persian: without it
+     *   a bevel sized for a bowl passes straight through the join beside it. Turning it off is for
+     *   comparing against the unguarded result, which is what the tests do.
      */
     fun extrude(
         contours: List<List<Vec2>>,
@@ -35,6 +39,7 @@ object Extruder {
         bevelSize: Float = 0f,
         bevelProfile: Curve = Curve.LINEAR,
         bevelSegments: Int = 6,
+        protectThinStrokes: Boolean = true,
     ): Mesh {
         val cleaned = contours.filter { it.size >= 3 }
         if (cleaned.isEmpty()) return Mesh.EMPTY
@@ -43,22 +48,39 @@ object Extruder {
         val bevel = bevelSize.coerceAtLeast(0f)
         val segments = if (bevel <= 0f) 0 else bevelSegments.coerceIn(1, MAX_SEGMENTS)
 
-        // The face sits at the front of the bevel, inset by its full width. Tessellating the
-        // original outline and *then* insetting would leave the face and the bevel disagreeing
-        // about where the letter's edge is, which shows as a hairline crack all the way round.
-        val faceContours = if (bevel <= 0f) cleaned else cleaned.map { inset(it, bevel) }
+        // Measured against the whole letter rather than against one contour at a time, because a
+        // stroke's thickness is decided by every outline near it: the wall between a counter and the
+        // outside is thin on account of where *both* run, and measuring against one alone would
+        // report it as solid.
+        val prepared = cleaned.mapNotNull { contour ->
+            val rims = rimsOf(contour) ?: return@mapNotNull null
+            val limits = when {
+                bevel <= 0f -> FloatArray(rims.size)
+                !protectThinStrokes -> FloatArray(rims.size) { bevel }
+                else -> BevelGuard.limits(rims, cleaned, bevel)
+            }
+            Bevelled(rims, limits)
+        }
+        if (prepared.isEmpty()) return Mesh.EMPTY
+
+        // The face sits at the front of the bevel, inset by the bevel's width *at each point*.
+        // Tessellating the original outline and *then* insetting would leave the face and the bevel
+        // disagreeing about where the letter's edge is, which shows as a hairline crack all round.
+        val faceContours = if (bevel <= 0f) cleaned else prepared.map { inset(it) }
         val faceZ = if (bevel <= 0f) 0f else bevelDepth(bevel)
 
         addCap(builder, faceContours, z = faceZ, front = true, surface = Surface.FACE)
         addCap(builder, cleaned, z = -depth, front = false, surface = Surface.BACK)
 
-        for (contour in cleaned) {
-            val rims = rimsOf(contour) ?: continue
-            val rings = buildRings(rims, bevel, segments, bevelProfile)
+        for (contour in prepared) {
+            val rings = buildRings(contour, segments, bevelProfile, bevelDepth(bevel))
             stitch(builder, rings, depth)
         }
         return builder.build()
     }
+
+    /** One outline, with how far the bevel may reach at each of its points. */
+    private class Bevelled(val rims: List<Rim>, val limits: FloatArray)
 
     /**
      * The rings the side of a letter is made of: the bevel's, then the back.
@@ -67,19 +89,27 @@ object Extruder {
      * a corner of a letter is where two edges meet at an angle and the normal has to turn with them.
      */
     private fun buildRings(
-        rims: List<Rim>,
-        bevel: Float,
+        contour: Bevelled,
         segments: Int,
         profile: Curve,
+        depth: Float,
     ): List<List<Pair<Vec3, Vec3>>> {
+        val rims = contour.rims
         val rings = ArrayList<List<Pair<Vec3, Vec3>>>(segments + 2)
 
         for (step in segments downTo 0) {
             val t = if (segments == 0) 0f else step.toFloat() / segments
             // t = 1 is the outline itself, t = 0 is where the bevel meets the face.
-            val inward = bevel * (1f - t)
-            val forward = bevelDepth(bevel) * profileAt(profile, 1f - t)
-            rings += rims.map { rim ->
+            //
+            // The inward reach varies per point and the forward one does not, which makes the bevel
+            // steeper wherever the guard has taken width away. That asymmetry is deliberate: the
+            // face has to stay in one plane — it is the front surface of the letter, and a face that
+            // wandered in z would shade as a dent — so the depth is what stays fixed. A steep
+            // micro-bevel on a thin join still turns its normal through the full sweep below, which
+            // is what keeps a highlight on it rather than leaving it black.
+            val forward = depth * profileAt(profile, 1f - t)
+            rings += rims.mapIndexed { index, rim ->
+                val inward = contour.limits[index] * (1f - t)
                 val position = Vec3(
                     rim.point.x - rim.outward.x * inward,
                     rim.point.y - rim.outward.y * inward,
@@ -191,15 +221,25 @@ object Extruder {
         }
     }
 
-    /** The face contour, pulled in by the bevel's width. */
-    private fun inset(contour: List<Vec2>, by: Float): List<Vec2> {
-        val rims = rimsOf(contour) ?: return contour
-        val moved = rims.map { Vec2(it.point.x - it.outward.x * by, it.point.y - it.outward.y * by) }
-        // If the inset turned the contour inside out the stroke was thinner than the bevel, and the
-        // honest answer is to leave the face where it was rather than emit a self-crossing outline.
-        val before = Tessellator.signedArea(contour)
+    /**
+     * The face contour, pulled in by the bevel's width at each point.
+     *
+     * The area check at the end is a net under the guard rather than the guard itself. With
+     * [BevelGuard] on it should never fire, because no point is allowed to reach past the middle of
+     * its own stroke; it stays because the guard can be turned off, and because an outline that was
+     * already self-intersecting in the font survives no amount of correct arithmetic. Falling back
+     * to the original leaves a letter with no bevel, which is worse than intended and far better
+     * than a face turned inside out.
+     */
+    private fun inset(contour: Bevelled): List<Vec2> {
+        val original = contour.rims.map { it.point }
+        val moved = contour.rims.mapIndexed { index, rim ->
+            val by = contour.limits[index]
+            Vec2(rim.point.x - rim.outward.x * by, rim.point.y - rim.outward.y * by)
+        }
+        val before = Tessellator.signedArea(original)
         val after = Tessellator.signedArea(moved)
-        return if (before == 0f || after / before <= 0f) contour else moved
+        return if (before == 0f || after / before <= 0f) original else moved
     }
 
     /** A bevel is as deep as it is wide, which is what makes a 45° chamfer the default shape. */
