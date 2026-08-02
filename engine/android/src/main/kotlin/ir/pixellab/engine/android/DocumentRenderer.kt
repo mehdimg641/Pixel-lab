@@ -592,6 +592,15 @@ class DocumentRenderer(
         val key = "curves" to adjustment
         adjustmentTables[key]?.let { return it }
 
+        // Selective Color rides in the same texture as the curves — nine texels of ink rather than
+        // 256 of tone — so it is answered before the curve path rather than through it.
+        if (adjustment is ir.pixellab.core.model.Adjustment.SelectiveColor) {
+            val handle = device.createTexture(TABLE_SIZE, 1, bytesPerPixel = 4)
+            device.uploadArgb(handle, TABLE_SIZE, 1, AdjustmentUniforms.selectiveColorTable(adjustment, TABLE_SIZE))
+            adjustmentTables[key] = handle
+            return handle
+        }
+
         val curves = when (adjustment) {
             is ir.pixellab.core.model.Adjustment.Curves ->
                 listOf(adjustment.rgb, adjustment.red, adjustment.green, adjustment.blue)

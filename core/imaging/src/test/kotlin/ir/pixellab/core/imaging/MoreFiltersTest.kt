@@ -341,4 +341,55 @@ class MoreFiltersTest {
         }
         return max - min
     }
+
+    // ---- smart sharpen -------------------------------------------------------------------------
+
+    @Test
+    fun `smart sharpen fades out of the highlights`() {
+        // A halo in a highlight has nowhere to go — the channel is already near clipping — so it
+        // shows as a hard white rim. That is the artefact the fade exists to prevent.
+        fun edgeAt(base: Float): Float {
+            val size = 32
+            val r = Raster(size, size, 1)
+            for (y in 0 until size) {
+                for (x in 0 until size) r[x, y, 0] = if (x < size / 2) base - 0.1f else base
+            }
+            val out = Sharpen.smart(r, amount = 2f, radius = 2f, fadeHighlights = 1f, fadeShadows = 0f)
+            return abs(out[14, 16, 0] - r[14, 16, 0])
+        }
+        (edgeAt(0.95f) < edgeAt(0.5f)) shouldBe true
+    }
+
+    @Test
+    fun `smart sharpen fades out of the shadows`() {
+        fun edgeAt(base: Float): Float {
+            val size = 32
+            val r = Raster(size, size, 1)
+            for (y in 0 until size) {
+                for (x in 0 until size) r[x, y, 0] = if (x < size / 2) base else base + 0.1f
+            }
+            val out = Sharpen.smart(r, amount = 2f, radius = 2f, fadeHighlights = 0f, fadeShadows = 1f)
+            return abs(out[14, 16, 0] - r[14, 16, 0])
+        }
+        (edgeAt(0.02f) < edgeAt(0.5f)) shouldBe true
+    }
+
+    @Test
+    fun `undoing a lens blur uses a wider mask than undoing a Gaussian`() {
+        // A lens kernel is flat-topped, so the mask that inverts it has to reach further than its
+        // nominal radius. Using the Gaussian's mask is where the haloes come from.
+        val size = 48
+        val r = Raster(size, size, 1)
+        for (y in 0 until size) {
+            for (x in 0 until size) r[x, y, 0] = if (x < size / 2) 0.35f else 0.65f
+        }
+
+        fun reach(lens: Boolean): Float {
+            val out = Sharpen.smart(r, amount = 1.5f, radius = 3f, lens = lens, fadeShadows = 0f, fadeHighlights = 0f)
+            var total = 0f
+            for (x in 0 until size) total += abs(out[x, 24, 0] - r[x, 24, 0])
+            return total
+        }
+        (reach(lens = true) > reach(lens = false)) shouldBe true
+    }
 }

@@ -629,7 +629,7 @@ object Shaders {
 
 
     /**
-     * The fourteen colour corrections, as one program.
+     * The sixteen colour corrections, as one program.
      *
      * An adjustment layer does not add pixels, it re-reads what is beneath it — so this samples the
      * composited backdrop and writes a corrected copy, which the compositor then blends back with
@@ -720,6 +720,16 @@ object Shaders {
                     + w1.x * max(0.0, min(c.b - c.r, c.b - c.g))
                     + w1.y * max(0.0, min(c.r, c.b) - c.g);
                 return clamp(mn + weight, 0.0, 1.0);
+            }
+
+            /**
+             * One family's ink shift, unbiased back to -1..1.
+             *
+             * The table is the same texture the curves use, read a texel at a time: nine families
+             * of four inks would otherwise be nine vec4 uniforms for something one fetch answers.
+             */
+            vec4 selectiveInk(int family) {
+                return texture(uCurves, vec2((float(family) + 0.5) / 256.0, 0.5)) * 2.0 - 1.0;
             }
 
             /** A 512x512 strip holding a 64-cube, which is what every LUT file on disk is. */
@@ -839,6 +849,55 @@ object Shaders {
                     c = vec3(luma(c) >= uP0.x ? 1.0 : 0.0);
                 } else if (uMode == 13) {
                     c = mix(c, lookup(c), clamp(uP0.x, 0.0, 1.0));
+                } else if (uMode == 14) {
+                    vec3 rgb = clamp(c, 0.0, 1.0);
+                    float mx = max(rgb.r, max(rgb.g, rgb.b));
+                    float mn = min(rgb.r, min(rgb.g, rgb.b));
+
+                    // The six chromatic weights sum to exactly the pixel's saturation, so a fully
+                    // desaturated pixel is untouched by every colour slider and belongs entirely to
+                    // the three achromatic ranges. That partition is what lets the greens of a
+                    // landscape move without dragging a grey road along with them.
+                    float w[9];
+                    w[0] = max(0.0, min(rgb.r - rgb.g, rgb.r - rgb.b));
+                    w[1] = max(0.0, min(rgb.r, rgb.g) - rgb.b);
+                    w[2] = max(0.0, min(rgb.g - rgb.r, rgb.g - rgb.b));
+                    w[3] = max(0.0, min(rgb.g, rgb.b) - rgb.r);
+                    w[4] = max(0.0, min(rgb.b - rgb.r, rgb.b - rgb.g));
+                    w[5] = max(0.0, min(rgb.r, rgb.b) - rgb.g);
+                    float whites = clamp((mn - 0.5) * 2.0, 0.0, 1.0);
+                    float blacks = clamp((0.5 - mx) * 2.0, 0.0, 1.0);
+                    w[6] = whites;
+                    w[7] = clamp(1.0 - whites - blacks, 0.0, 1.0);
+                    w[8] = blacks;
+
+                    vec4 ink = vec4(0.0);
+                    for (int i = 0; i < 9; i++) ink += w[i] * selectiveInk(i);
+
+                    // Into CMYK with full black generation and back out again. Without the K
+                    // separation the black slider has nothing to act on, and it is the slider that
+                    // makes a shadow deeper rather than merely darker.
+                    float k = 1.0 - mx;
+                    vec3 cmy = (vec3(mx) - rgb) / max(mx, 0.0001);
+                    if (uP0.x > 0.5) {
+                        cmy += ink.rgb;
+                        k += ink.a;
+                    } else {
+                        // Relative: a ten per cent push on a pixel holding half its cyan adds five,
+                        // so the correction cannot invent ink where there was none — which is the
+                        // whole reason this mode is the safe one on skin.
+                        cmy += cmy * ink.rgb;
+                        k += k * ink.a;
+                    }
+                    c = (1.0 - clamp(cmy, 0.0, 1.0)) * (1.0 - clamp(k, 0.0, 1.0));
+                } else if (uMode == 15) {
+                    // Monochrome arrives as the same recipe in all three rows, so there is no flag
+                    // and no second path.
+                    c = vec3(
+                        dot(c, uP0.rgb) + uP0.w,
+                        dot(c, uP1.rgb) + uP1.w,
+                        dot(c, uP2.rgb) + uP2.w
+                    );
                 }
 
                 fragColor = vec4(clamp(c, 0.0, 1.0) * src.a, src.a);

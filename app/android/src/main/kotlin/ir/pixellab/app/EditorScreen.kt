@@ -102,6 +102,19 @@ fun EditorScreen(model: EditorViewModel) {
         }
     }
 
+    // Its own launcher rather than a mode flag on the image one: the two want different MIME
+    // filters, and a picker that offers a photo when the user asked for a curve preset is the kind
+    // of thing that makes people give up on a feature rather than report it.
+    val pickingPreset = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                loadCurvePreset(context, uri)
+                    .onSuccess { (curves, name) -> model.addAdjustment(curves, name) }
+                    .onFailure { outcome = FileOutcome.Refused(it.message ?: "پریست خوانده نشد") }
+            }
+        }
+    }
+
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink.Chrome)) {
         val screenHeight = maxHeight
 
@@ -201,7 +214,12 @@ fun EditorScreen(model: EditorViewModel) {
                         is SheetContent.FontPicker -> FontPickerBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.BrushSettings -> BrushSheetBody(model, Modifier.fillMaxHeight())
                         is SheetContent.PixelSelection -> SelectionSheetBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.Adjustments -> AdjustmentSheetBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.Adjustments -> AdjustmentSheetBody(
+                            state = state,
+                            model = model,
+                            onImportPreset = { pickingPreset.launch(PRESET_MIME) },
+                            modifier = Modifier.fillMaxHeight(),
+                        )
                         is SheetContent.Retouch -> RetouchSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Vector -> VectorSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.LibraryPanel -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
@@ -465,6 +483,15 @@ private fun BarButton(
 
 /** What the picker accepts. Every still image; video is deliberately not part of this app. */
 private const val IMAGE_MIME = "image/*"
+
+/**
+ * Everything, because a `.acv` has no registered MIME type.
+ *
+ * Filtering on one Android does not recognise hides the very files the picker was opened for, which
+ * looks to the user like the presets are not there at all. The reader checks the content instead,
+ * and refuses anything that is not a preset.
+ */
+private const val PRESET_MIME = "*/*"
 
 /**
  * Renders a document to pixels on the GL thread.

@@ -146,6 +146,28 @@ suspend fun loadImage(
 }
 
 /**
+ * Reads a Photoshop `.acv` curve preset the user picked.
+ *
+ * Worth supporting out of all proportion to the format's size: every colour-grading pack sold or
+ * given away for the last twenty years ships as a folder of these, so reading them means a user's
+ * existing looks work here on the first day instead of being redrawn by hand.
+ */
+suspend fun loadCurvePreset(
+    context: Context,
+    uri: android.net.Uri,
+): Result<Pair<ir.pixellab.core.model.Adjustment.Curves, String>> = withContext(Dispatchers.IO) {
+    runCatching {
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: throw java.io.IOException("فایل باز نشد")
+        val curves = ir.pixellab.core.codec.CurvePreset.read(bytes)
+            ?: throw java.io.IOException("این فایل یک پریست منحنی معتبر نیست")
+        // The file's own name, because a grading pack's meaning is entirely in its file names and a
+        // layer called "Curves" tells the user nothing about which of the forty they just applied.
+        curves to (displayName(context, uri)?.substringBeforeLast('.') ?: "منحنی")
+    }
+}
+
+/**
  * Halves the image until it fits, rather than resampling to an exact size.
  *
  * Whole-pixel steps average a fixed block, which is both fast and free of the ringing a general

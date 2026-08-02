@@ -276,7 +276,69 @@ object Sharpen {
         return out
     }
 
+    /**
+     * Smart Sharpen: the same detail, but faded out of the extremes.
+     *
+     * The two things it does that an unsharp mask cannot. It knows which blur it is undoing — lens
+     * blur has a flat-topped kernel, so removing it needs a wider mask than removing a Gaussian of
+     * the same nominal radius, and using the wrong one is where haloes come from. And it fades the
+     * sharpening out of the shadows and the highlights, which is where the two artefacts live: a
+     * shadow is where the noise is, and a highlight is already near clipping, so a halo there has
+     * nowhere to go and shows as a hard white rim.
+     *
+     * @param fadeShadows 0..1, how much of the sharpening is withheld from the darkest tones.
+     * @param fadeHighlights 0..1, the same at the top.
+     */
+    fun smart(
+        src: Raster,
+        amount: Float,
+        radius: Float,
+        lens: Boolean = false,
+        fadeShadows: Float = 0.3f,
+        fadeHighlights: Float = 0.3f,
+    ): Raster {
+        if (amount <= 0f || radius <= 0f) return src.copy()
+        val blurred = Blur.gaussian(src, if (lens) radius * LENS_WIDENING else radius)
+        val out = src.copy()
+        val channels = minOf(src.channels, 3)
+        for (y in 0 until src.height) {
+            for (x in 0 until src.width) {
+                // One fade for the whole pixel, from its luminance. Per channel it would sharpen a
+                // red edge harder than a blue one and pull the colour apart along every contour.
+                val tone = if (channels >= 3) {
+                    LUMA_R * src[x, y, 0] + LUMA_G * src[x, y, 1] + LUMA_B * src[x, y, 2]
+                } else {
+                    src[x, y, 0]
+                }
+                val fade = (1f - fadeShadows.coerceIn(0f, 1f) * ramp(1f - tone)) *
+                    (1f - fadeHighlights.coerceIn(0f, 1f) * ramp(tone))
+                if (fade <= 0f) continue
+                for (c in 0 until channels) {
+                    val original = src[x, y, c]
+                    val detail = original - blurred[x, y, c]
+                    out[x, y, c] = (original + detail * amount * fade).coerceIn(0f, 1f)
+                }
+            }
+        }
+        return out
+    }
+
+    /** Full strength through the midtones, tapering only in the last quarter of the range. */
+    private fun ramp(distanceIntoRange: Float): Float {
+        val t = ((distanceIntoRange - FADE_START) / (1f - FADE_START)).coerceIn(0f, 1f)
+        return t * t * (3f - 2f * t)
+    }
+
     private const val NEUTRAL = 0.5f
+
+    /** A lens blur's kernel is flat-topped, so undoing it needs a mask wider than its radius. */
+    private const val LENS_WIDENING = 1.4f
+
+    private const val FADE_START = 0.75f
+
+    private const val LUMA_R = 0.2126f
+    private const val LUMA_G = 0.7152f
+    private const val LUMA_B = 0.0722f
 }
 
 /**

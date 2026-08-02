@@ -878,6 +878,74 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         ir.pixellab.engine.android.PixelFilters.sharpen(image, amount, radius, threshold, select.selection)
     }
 
+    /**
+     * Opens the shadows and pulls back the highlights, each on a local mask.
+     *
+     * Here among the filters rather than among the adjustment layers, and that is not a shortcut:
+     * the correction at a pixel depends on the pixels a radius away, which is not something a
+     * compositing shader can read. Photoshop puts it under Image for the same reason.
+     */
+    suspend fun shadowHighlight(
+        shadowAmount: Float,
+        highlightAmount: Float,
+        radius: Float,
+        midtoneContrast: Float = 0f,
+    ) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters.shadowHighlight(
+            source = image,
+            shadowAmount = shadowAmount,
+            highlightAmount = highlightAmount,
+            radius = radius,
+            midtoneContrast = midtoneContrast,
+            selection = select.selection,
+        )
+    }
+
+    suspend fun reduceNoise(strength: Float, colorStrength: Float, preserveDetail: Float) =
+        transform { image ->
+            ir.pixellab.engine.android.PixelFilters
+                .reduceNoise(image, strength, colorStrength, preserveDetail, select.selection)
+        }
+
+    suspend fun dustAndScratches(radius: Int, threshold: Float) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters.dustAndScratches(image, radius, threshold, select.selection)
+    }
+
+    suspend fun smartSharpen(amount: Float, radius: Float, lens: Boolean) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters
+            .smartSharpen(image, amount, radius, lens, selection = select.selection)
+    }
+
+    /**
+     * High pass, onto a copy of the layer set to Overlay.
+     *
+     * Onto a copy because a high pass applied in place destroys the picture — it *is* the detail
+     * with the picture subtracted. The only useful form of it is as a layer over the original, and
+     * building that arrangement is the whole operation rather than a convenience.
+     */
+    suspend fun highPass(radius: Float) {
+        val layer = state.primaryLayer as? Layer.Image ?: return
+        val source = assetStore.source.load(layer.asset) ?: return
+        val detail = withContext(kotlinx.coroutines.Dispatchers.Default) {
+            ir.pixellab.engine.android.PixelFilters.highPass(source, radius)
+        }
+        edit {
+            val id = nextLayerId("highpass")
+            val asset = ir.pixellab.core.model.AssetId(id.value)
+            assetStore.put(asset, detail)
+            paint.bumpGeneration()
+            addLayer(
+                layer.copy(
+                    id = id,
+                    asset = asset,
+                    name = "جزئیات",
+                    blendMode = ir.pixellab.core.model.BlendMode.OVERLAY,
+                    mask = null,
+                ),
+            )
+        }
+    }
+
     suspend fun vignette(amount: Float) = transform { image ->
         ir.pixellab.engine.android.PixelFilters.vignette(image, amount)
     }

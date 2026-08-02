@@ -151,6 +151,90 @@ object PixelFilters {
         return blend(source, sharper.toImage(), selection)
     }
 
+    /**
+     * Opens the shadows and pulls back the highlights, each on its own local mask.
+     *
+     * Destructive, and necessarily so: the correction at a pixel depends on the pixels a radius
+     * around it, which is not something a compositing shader can evaluate from the one texel it
+     * holds. Photoshop keeps it under Image rather than offering it as an adjustment layer for
+     * exactly that reason.
+     */
+    fun shadowHighlight(
+        source: RasterImage,
+        shadowAmount: Float,
+        highlightAmount: Float,
+        radius: Float = 30f,
+        shadowTone: Float = 0.5f,
+        highlightTone: Float = 0.5f,
+        midtoneContrast: Float = 0f,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        if (shadowAmount <= 0f && highlightAmount <= 0f && midtoneContrast == 0f) return source
+        val corrected = ir.pixellab.core.imaging.ShadowHighlight.apply(
+            src = source.toRaster(),
+            shadowAmount = shadowAmount,
+            shadowTone = shadowTone,
+            highlightAmount = highlightAmount,
+            highlightTone = highlightTone,
+            radius = radius,
+            midtoneContrast = midtoneContrast,
+        )
+        return blend(source, corrected.toImage(), selection)
+    }
+
+    /** Photoshop's Reduce Noise: bilateral on the brightness, a much heavier hand on the colour. */
+    fun reduceNoise(
+        source: RasterImage,
+        strength: Float,
+        colorStrength: Float,
+        preserveDetail: Float,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        if (strength <= 0f && colorStrength <= 0f) return source
+        val cleaned = ir.pixellab.core.imaging.Denoise
+            .reduceNoise(source.toRaster(), strength, colorStrength, preserveDetail)
+        return blend(source, cleaned.toImage(), selection)
+    }
+
+    /** Dust and scratches: a median, applied only where the pixel is an outlier. */
+    fun dustAndScratches(
+        source: RasterImage,
+        radius: Int,
+        threshold: Float,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        if (radius < 1) return source
+        val cleaned = ir.pixellab.core.imaging.Denoise
+            .dustAndScratches(source.toRaster(), radius, threshold)
+        return blend(source, cleaned.toImage(), selection)
+    }
+
+    /** Smart Sharpen: the same detail as an unsharp mask, faded out of the shadows and highlights. */
+    fun smartSharpen(
+        source: RasterImage,
+        amount: Float,
+        radius: Float,
+        lens: Boolean = false,
+        fadeShadows: Float = 0.3f,
+        fadeHighlights: Float = 0.3f,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        if (amount <= 0f) return source
+        val sharper = ir.pixellab.core.imaging.Sharpen
+            .smart(source.toRaster(), amount, radius, lens, fadeShadows, fadeHighlights)
+        return blend(source, sharper.toImage(), selection)
+    }
+
+    /**
+     * High pass: the detail on its own, over mid grey.
+     *
+     * Replaces the layer rather than blending through a selection, because the result is not a
+     * finished picture — it is an ingredient, meant to be set to Overlay or Soft Light over the
+     * original, where mid grey is the value that changes nothing.
+     */
+    fun highPass(source: RasterImage, radius: Float): RasterImage =
+        ir.pixellab.core.imaging.Sharpen.highPass(source.toRaster(), radius).toImage()
+
     /** Darkens or lightens towards the corners, following the frame's own proportions. */
     fun vignette(source: RasterImage, amount: Float, midpoint: Float = 0.5f): RasterImage {
         if (amount == 0f) return source

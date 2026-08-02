@@ -23,7 +23,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.model.Adjustment
+import ir.pixellab.core.model.ChannelRecipe
 import ir.pixellab.core.model.Color
+import ir.pixellab.core.model.ColorFamily
+import ir.pixellab.core.model.ColorRange
 import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.GradientStop
 import ir.pixellab.core.model.Layer
@@ -41,7 +44,12 @@ import ir.pixellab.core.render.ParameterSpec
  * ninety.
  */
 @Composable
-fun AdjustmentSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
+fun AdjustmentSheetBody(
+    state: EditorState,
+    model: EditorViewModel,
+    onImportPreset: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     val selected = state.primaryLayer as? Layer.AdjustmentLayer
     // Local rather than editor state: which of the two tabs is open is not something the document
     // knows about, and it is not worth an undo step.
@@ -61,6 +69,9 @@ fun AdjustmentSheetBody(state: EditorState, model: EditorViewModel, modifier: Mo
         }
 
         AddRow(model)
+        // Beside the catalogue rather than buried in the Curves panel: a user with a folder of
+        // presets is looking for a way in, not for a curve to edit.
+        SheetAction("آوردن پریست منحنی (acv.)", onClick = onImportPreset)
         if (selected != null) {
             Text(
                 selected.name,
@@ -68,7 +79,7 @@ fun AdjustmentSheetBody(state: EditorState, model: EditorViewModel, modifier: Mo
                 color = Ink.TextMuted,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
             )
-            Controls(selected, model)
+            Controls(selected, model, onImportPreset)
         } else {
             Text(
                 "یک لایهٔ تنظیم اضافه کنید یا یکی را انتخاب کنید",
@@ -105,7 +116,7 @@ private fun AddRow(model: EditorViewModel) {
 }
 
 @Composable
-private fun Controls(layer: Layer.AdjustmentLayer, model: EditorViewModel) {
+private fun Controls(layer: Layer.AdjustmentLayer, model: EditorViewModel, onImportPreset: () -> Unit) {
     val id = layer.id
     when (val adjustment = layer.adjustment) {
         is Adjustment.BrightnessContrast -> {
@@ -118,6 +129,26 @@ private fun Controls(layer: Layer.AdjustmentLayer, model: EditorViewModel) {
         }
 
         is Adjustment.Levels -> {
+            // The histogram sits above the sliders because Levels without one is guesswork: the
+            // black and white points are decisions about *where the pixels are*, and the panel that
+            // does not show them is asking the user to remember what they saw a moment ago.
+            HistogramView(
+                model.histogram(ir.pixellab.core.imaging.HistogramChannel.LUMINANCE),
+                ir.pixellab.core.imaging.HistogramChannel.LUMINANCE,
+            )
+            SheetAction("تنظیم از روی هیستوگرام") {
+                val histogram = model.histogram(ir.pixellab.core.imaging.HistogramChannel.LUMINANCE)
+                val points = histogram?.let { ir.pixellab.core.imaging.Histogram.autoLevels(it) }
+                if (points != null) {
+                    model.setAdjustment(
+                        id,
+                        adjustment.copy(
+                            inputBlack = points.first / MAX_CHANNEL,
+                            inputWhite = points.second / MAX_CHANNEL,
+                        ),
+                    )
+                }
+            }
             Slider("سیاه ورودی", adjustment.inputBlack, 0f..1f) {
                 model.setAdjustment(id, adjustment.copy(inputBlack = it))
             }
@@ -138,6 +169,10 @@ private fun Controls(layer: Layer.AdjustmentLayer, model: EditorViewModel) {
         is Adjustment.Curves -> {
             var channel by remember { mutableStateOf(CurveChannel.COMPOSITE) }
             CurveChannelRow(channel) { channel = it }
+            HistogramView(
+                model.histogram(ir.pixellab.core.imaging.HistogramChannel.LUMINANCE),
+                ir.pixellab.core.imaging.HistogramChannel.LUMINANCE,
+            )
             CurveEditor(
                 curve = when (channel) {
                     CurveChannel.COMPOSITE -> adjustment.rgb
@@ -270,7 +305,85 @@ private fun Controls(layer: Layer.AdjustmentLayer, model: EditorViewModel) {
         is Adjustment.ColorLookup -> Slider("مقدار", adjustment.amount, 0f..1f) {
             model.setAdjustment(id, adjustment.copy(amount = it))
         }
+
+        is Adjustment.SelectiveColor -> {
+            // One family at a time, because nine families of four inks is thirty-six sliders and a
+            // panel of thirty-six sliders is one nobody reads. Photoshop shows one too.
+            var family by remember { mutableStateOf(ColorFamily.REDS) }
+            SheetChips {
+                for (option in ColorFamily.entries) {
+                    SheetChip(option.persianLabel, chosen = family == option) { family = option }
+                }
+            }
+            val range = adjustment.ranges.firstOrNull { it.family == family } ?: ColorRange(family)
+            fun put(next: ColorRange) {
+                val ranges = adjustment.ranges.filter { it.family != family } + next
+                model.setAdjustment(id, adjustment.copy(ranges = ranges.sortedBy { it.family.ordinal }))
+            }
+            Slider("فیروزه‌ای", range.cyan, -1f..1f) { put(range.copy(cyan = it)) }
+            Slider("سرخابی", range.magenta, -1f..1f) { put(range.copy(magenta = it)) }
+            Slider("زرد", range.yellow, -1f..1f) { put(range.copy(yellow = it)) }
+            Slider("سیاه", range.black, -1f..1f) { put(range.copy(black = it)) }
+            Toggle("مطلق", adjustment.absolute) { model.setAdjustment(id, adjustment.copy(absolute = it)) }
+            SheetHint(
+                if (adjustment.absolute) {
+                    "مطلق مقدار کامل را اضافه می‌کند — برای گریدهای سنگین"
+                } else {
+                    "نسبی به اندازهٔ جوهری که پیکسل دارد تغییر می‌دهد — امن روی پوست"
+                },
+            )
+        }
+
+        is Adjustment.ChannelMixer -> {
+            Toggle("تک‌رنگ", adjustment.monochrome) {
+                model.setAdjustment(id, adjustment.copy(monochrome = it))
+            }
+            if (adjustment.monochrome) {
+                // A red filter on black-and-white film is exactly red 1, green 0, blue 0 — which is
+                // how a pale sky becomes dramatic, and why the mixer beats desaturation.
+                RecipeRow("خاکستری", adjustment.gray) { model.setAdjustment(id, adjustment.copy(gray = it)) }
+                SheetHint("جمع سه ضریب نزدیک به ۱ باشد، وگرنه تصویر روشن‌تر یا تیره‌تر از اصل می‌شود")
+            } else {
+                var output by remember { mutableStateOf(CurveChannel.RED) }
+                SheetChips {
+                    for (option in listOf(CurveChannel.RED, CurveChannel.GREEN, CurveChannel.BLUE)) {
+                        SheetChip(option.label, chosen = output == option) { output = option }
+                    }
+                }
+                val recipe = when (output) {
+                    CurveChannel.GREEN -> adjustment.green
+                    CurveChannel.BLUE -> adjustment.blue
+                    else -> adjustment.red
+                }
+                RecipeRow(output.label, recipe) { next ->
+                    model.setAdjustment(
+                        id,
+                        when (output) {
+                            CurveChannel.GREEN -> adjustment.copy(green = next)
+                            CurveChannel.BLUE -> adjustment.copy(blue = next)
+                            else -> adjustment.copy(red = next)
+                        },
+                    )
+                }
+            }
+        }
     }
+}
+
+/** One output channel's recipe: how much of each input, and a constant to lift or drop it. */
+@Composable
+private fun RecipeRow(label: String, recipe: ChannelRecipe, onChange: (ChannelRecipe) -> Unit) {
+    Text(
+        "خروجی $label",
+        style = MaterialTheme.typography.labelMedium,
+        color = Ink.TextMuted,
+        modifier = Modifier.padding(start = 16.dp, top = 8.dp),
+    )
+    // Past ±200 % the result is clipping in every picture, which is the range Photoshop stops at.
+    Slider("از قرمز", recipe.red, -2f..2f) { onChange(recipe.copy(red = it)) }
+    Slider("از سبز", recipe.green, -2f..2f) { onChange(recipe.copy(green = it)) }
+    Slider("از آبی", recipe.blue, -2f..2f) { onChange(recipe.copy(blue = it)) }
+    Slider("ثابت", recipe.constant, -1f..1f) { onChange(recipe.copy(constant = it)) }
 }
 
 @Composable
@@ -342,4 +455,9 @@ private val CATALOG: List<Pair<String, () -> Adjustment>> = listOf(
     "پوستری" to { Adjustment.Posterize() },
     "آستانه" to { Adjustment.Threshold() },
     "جدول رنگ" to { Adjustment.ColorLookup(ir.pixellab.core.model.AssetId("lut")) },
+    "رنگ انتخابی" to { Adjustment.SelectiveColor() },
+    "میکسر کانال" to { Adjustment.ChannelMixer() },
 )
+
+/** Photoshop's own 0..255, which is what the histogram counts in and Levels stores as a fraction. */
+private const val MAX_CHANNEL = 255f

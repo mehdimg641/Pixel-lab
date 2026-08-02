@@ -36,9 +36,11 @@ class AdjustmentsTest {
             Adjustment.Posterize(),
             Adjustment.Threshold(),
             Adjustment.ColorLookup(ir.pixellab.core.model.AssetId("lut")),
+            Adjustment.SelectiveColor(),
+            Adjustment.ChannelMixer(),
         )
-        // Every one of the fourteen, and each to a distinct mode: two adjustments sharing a mode is
-        // one of them silently doing the other's job.
+        // Every one of them, and each to a distinct mode: two adjustments sharing a mode is one of
+        // them silently doing the other's job.
         all.map { AdjustmentMode.of(it) }.distinct().size shouldBe all.size
         all.size shouldBe AdjustmentMode.entries.size
     }
@@ -153,6 +155,84 @@ class AdjustmentsTest {
         )
         packed.needsLut shouldBe true
         packed.p0[0] shouldBe 0.6f
+    }
+
+    @Test
+    fun `selective colour rides in the table rather than in uniforms`() {
+        val packed = AdjustmentUniforms.of(
+            Adjustment.SelectiveColor(absolute = true),
+        )
+        // Nine families of four inks is thirty-six numbers. Packed as uniforms that is nine vec4s
+        // for something one texture read answers.
+        packed.needsCurves shouldBe true
+        packed.p0[0] shouldBe 1f
+    }
+
+    @Test
+    fun `each family lands in its own texel, with the inks in the shader's own order`() {
+        val table = AdjustmentUniforms.selectiveColorTable(
+            Adjustment.SelectiveColor(
+                ranges = listOf(
+                    ir.pixellab.core.model.ColorRange(
+                        ir.pixellab.core.model.ColorFamily.YELLOWS,
+                        cyan = 1f, magenta = -1f, yellow = 0f, black = 0.5f,
+                    ),
+                ),
+            ),
+            size = 256,
+        )
+
+        // Yellows is the second family, so the second texel. The shader reads r as cyan, g as
+        // magenta, b as yellow and a as black — a swap here is a correction applied to the wrong
+        // ink, which looks like a colour cast rather than like a bug.
+        val yellows = table[1]
+        ((yellows shr 16) and 0xFF) shouldBe 255
+        ((yellows shr 8) and 0xFF) shouldBe 0
+        (yellows and 0xFF) shouldBe 128
+        ((yellows ushr 24) and 0xFF) shouldBe 191
+    }
+
+    @Test
+    fun `a family the user never touched shifts nothing`() {
+        val table = AdjustmentUniforms.selectiveColorTable(Adjustment.SelectiveColor(), size = 256)
+        // Biased storage means "no change" is 128, not 0 — and a texel left at zero would push a
+        // full negative correction into every range the user never opened.
+        for (texel in table) {
+            for (shift in intArrayOf(24, 16, 8, 0)) ((texel shr shift) and 0xFF) shouldBe 128
+        }
+    }
+
+    @Test
+    fun `the channel mixer packs one recipe per row`() {
+        val packed = AdjustmentUniforms.of(
+            Adjustment.ChannelMixer(
+                red = ir.pixellab.core.model.ChannelRecipe(red = 1f, green = 0.2f, constant = 0.05f),
+                green = ir.pixellab.core.model.ChannelRecipe(green = 1f),
+                blue = ir.pixellab.core.model.ChannelRecipe(blue = 1f),
+            ),
+        )
+        packed.p0[0] shouldBe 1f
+        packed.p0[1] shouldBe 0.2f
+        packed.p0[3] shouldBe 0.05f
+        packed.p1[1] shouldBe 1f
+        packed.p2[2] shouldBe 1f
+    }
+
+    @Test
+    fun `monochrome is the same recipe in all three rows`() {
+        val packed = AdjustmentUniforms.of(
+            Adjustment.ChannelMixer(
+                monochrome = true,
+                gray = ir.pixellab.core.model.ChannelRecipe(red = 0.8f, green = 0.1f, blue = 0.1f),
+            ),
+        )
+        // Not a shader flag: a monochrome mix *is* three identical rows, so writing it that way
+        // leaves the branch with one path and makes the preview literally the exported picture.
+        for (row in listOf(packed.p0, packed.p1, packed.p2)) {
+            row[0] shouldBe 0.8f
+            row[1] shouldBe 0.1f
+            row[2] shouldBe 0.1f
+        }
     }
 
     @Test

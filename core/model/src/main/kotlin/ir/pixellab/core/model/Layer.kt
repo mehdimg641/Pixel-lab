@@ -164,7 +164,90 @@ sealed interface Adjustment {
 
     @Serializable @SerialName("lut")
     data class ColorLookup(val asset: AssetId, val amount: Float = 1f) : Adjustment
+
+    /**
+     * Per-colour-family CMYK correction — Photoshop's Selective Color.
+     *
+     * The one adjustment that can push the greens of a landscape without touching a face, because
+     * it works on colour *families* rather than on a channel or a hue wheel. Retouchers reach for
+     * it when Hue/Saturation is too blunt: shifting the yellows towards magenta warms skin and
+     * leaves a blue sky exactly where it was.
+     *
+     * The three achromatic ranges are the reason it beats a curve for grading. Whites, neutrals and
+     * blacks each take their own CMYK, so a cool shadow and a warm highlight are two sliders rather
+     * than a hand-drawn three-channel curve.
+     */
+    @Serializable @SerialName("selective_color")
+    data class SelectiveColor(
+        val ranges: List<ColorRange> = ColorFamily.entries.map { ColorRange(it) },
+        /**
+         * Photoshop's Relative/Absolute switch. Relative scales each correction by how much of that
+         * ink the pixel already has, so it cannot invent cyan in a pixel that has none — which is
+         * what keeps it safe on skin. Absolute adds the full amount regardless, and is what the
+         * heavy-handed looks are made of.
+         */
+        val absolute: Boolean = false,
+    ) : Adjustment
+
+    /**
+     * Builds each output channel from a weighted sum of all three inputs.
+     *
+     * Its real use is monochrome conversion: a red filter on black-and-white film is exactly
+     * `red = 1, green = 0, blue = 0` here, and that is how a pale sky becomes dramatic. It is also
+     * the only sane way to swap or rebalance channels — doing it with curves means matching three
+     * of them by eye.
+     */
+    @Serializable @SerialName("channel_mixer")
+    data class ChannelMixer(
+        val red: ChannelRecipe = ChannelRecipe(red = 1f),
+        val green: ChannelRecipe = ChannelRecipe(green = 1f),
+        val blue: ChannelRecipe = ChannelRecipe(blue = 1f),
+        /** When set, [gray] drives all three outputs and the per-channel recipes are ignored. */
+        val monochrome: Boolean = false,
+        val gray: ChannelRecipe = ChannelRecipe(red = 0.4f, green = 0.4f, blue = 0.2f),
+    ) : Adjustment
 }
+
+/** The nine families Selective Color divides the spectrum into, in Photoshop's own menu order. */
+@Serializable
+enum class ColorFamily {
+    REDS, YELLOWS, GREENS, CYANS, BLUES, MAGENTAS, WHITES, NEUTRALS, BLACKS,
+    ;
+
+    val persianLabel: String
+        get() = when (this) {
+            REDS -> "قرمزها"
+            YELLOWS -> "زردها"
+            GREENS -> "سبزها"
+            CYANS -> "فیروزه‌ای‌ها"
+            BLUES -> "آبی‌ها"
+            MAGENTAS -> "سرخابی‌ها"
+            WHITES -> "سفیدها"
+            NEUTRALS -> "خنثی‌ها"
+            BLACKS -> "سیاه‌ها"
+        }
+}
+
+/** One family's ink shift, each component in -1..1. */
+@Serializable
+data class ColorRange(
+    val family: ColorFamily,
+    val cyan: Float = 0f,
+    val magenta: Float = 0f,
+    val yellow: Float = 0f,
+    val black: Float = 0f,
+) {
+    val isIdentity: Boolean get() = cyan == 0f && magenta == 0f && yellow == 0f && black == 0f
+}
+
+/** One output channel of the mixer: how much of each input, plus a constant offset. */
+@Serializable
+data class ChannelRecipe(
+    val red: Float = 0f,
+    val green: Float = 0f,
+    val blue: Float = 0f,
+    val constant: Float = 0f,
+)
 
 /**
  * A node in the document tree.

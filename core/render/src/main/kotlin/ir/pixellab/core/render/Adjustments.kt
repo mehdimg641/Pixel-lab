@@ -24,6 +24,8 @@ enum class AdjustmentMode {
     POSTERIZE,
     THRESHOLD,
     COLOR_LOOKUP,
+    SELECTIVE_COLOR,
+    CHANNEL_MIXER,
     ;
 
     companion object {
@@ -42,6 +44,8 @@ enum class AdjustmentMode {
             is Adjustment.Posterize -> POSTERIZE
             is Adjustment.Threshold -> THRESHOLD
             is Adjustment.ColorLookup -> COLOR_LOOKUP
+            is Adjustment.SelectiveColor -> SELECTIVE_COLOR
+            is Adjustment.ChannelMixer -> CHANNEL_MIXER
         }
     }
 }
@@ -58,7 +62,13 @@ data class AdjustmentUniforms(
     val p0: FloatArray,
     val p1: FloatArray,
     val p2: FloatArray,
-    /** True when the shader needs the four-channel curve table bound. */
+    /**
+     * True when the shader needs the 256-sample table bound.
+     *
+     * Usually the four curves, but Selective Color rides in the same texture: nine families of four
+     * inks is thirty-six numbers, and thirty-six numbers is nine vec4 uniforms for something one
+     * texture read answers.
+     */
     val needsCurves: Boolean = false,
     /** True when it needs a gradient ramp. */
     val needsRamp: Boolean = false,
@@ -195,8 +205,58 @@ data class AdjustmentUniforms(
                     p2 = FloatArray(4),
                     needsLut = true,
                 )
+
+                is Adjustment.SelectiveColor -> AdjustmentUniforms(
+                    mode = mode,
+                    p0 = floatArrayOf(if (adjustment.absolute) 1f else 0f, 0f, 0f, 0f),
+                    p1 = FloatArray(4),
+                    p2 = FloatArray(4),
+                    needsCurves = true,
+                )
+
+                is Adjustment.ChannelMixer -> {
+                    // Monochrome is not a shader flag: it *is* the same recipe in all three rows,
+                    // and writing it that way means the branch has one path instead of two and the
+                    // preview of a monochrome mix is literally the mix it will export.
+                    val red = if (adjustment.monochrome) adjustment.gray else adjustment.red
+                    val green = if (adjustment.monochrome) adjustment.gray else adjustment.green
+                    val blue = if (adjustment.monochrome) adjustment.gray else adjustment.blue
+                    AdjustmentUniforms(
+                        mode = mode,
+                        p0 = red.toFloats(),
+                        p1 = green.toFloats(),
+                        p2 = blue.toFloats(),
+                    )
+                }
             }
         }
+
+        private fun ir.pixellab.core.model.ChannelRecipe.toFloats() =
+            floatArrayOf(red, green, blue, constant)
+
+        /**
+         * Selective Color's thirty-six numbers as the first nine texels of the table.
+         *
+         * Signed values in an unsigned texture, so they are stored biased by a half. Eight bits over
+         * a range of two is a step of 0.008, and the panel's own sliders move in steps of 0.01 — the
+         * table is finer than the control that feeds it, which is where the line has to be.
+         */
+        fun selectiveColorTable(adjustment: Adjustment.SelectiveColor, size: Int): IntArray {
+            val byFamily = adjustment.ranges.associateBy { it.family }
+            return IntArray(size) { texel ->
+                val family = ir.pixellab.core.model.ColorFamily.entries.getOrNull(texel)
+                    ?: return@IntArray NEUTRAL_TEXEL
+                val range = byFamily[family] ?: return@IntArray NEUTRAL_TEXEL
+                (biased(range.black) shl 24) or (biased(range.cyan) shl 16) or
+                    (biased(range.magenta) shl 8) or biased(range.yellow)
+            }
+        }
+
+        private fun biased(value: Float) =
+            ((value.coerceIn(-1f, 1f) + 1f) * 0.5f * 255f + 0.5f).toInt().coerceIn(0, 255)
+
+        /** Zero shift, biased: the value every texel past the nine families has to hold. */
+        private val NEUTRAL_TEXEL = (128 shl 24) or (128 shl 16) or (128 shl 8) or 128
 
         private fun pack(mode: AdjustmentMode, p0: FloatArray, p1: FloatArray = FloatArray(4)) =
             AdjustmentUniforms(mode, p0, p1, FloatArray(4))

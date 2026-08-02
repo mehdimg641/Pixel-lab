@@ -40,7 +40,18 @@ fun FilterSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
     var angle by remember { mutableStateOf(0f) }
     var distance by remember { mutableStateOf(DEFAULT_DISTANCE) }
     var blades by remember { mutableStateOf(0) }
+    var shadowLift by remember { mutableStateOf(0f) }
+    var highlightPull by remember { mutableStateOf(0f) }
+    var midtone by remember { mutableStateOf(0f) }
+    var localRadius by remember { mutableStateOf(DEFAULT_LOCAL_RADIUS) }
+    var lumaNoise by remember { mutableStateOf(0f) }
+    var chromaNoise by remember { mutableStateOf(DEFAULT_CHROMA_NOISE) }
+    var detail by remember { mutableStateOf(DEFAULT_DETAIL) }
+    var dustRadius by remember { mutableStateOf(DEFAULT_DUST_RADIUS) }
+    var dustThreshold by remember { mutableStateOf(DEFAULT_DUST_THRESHOLD) }
     var sharpenAmount by remember { mutableStateOf(DEFAULT_SHARPEN) }
+    var undoLens by remember { mutableStateOf(false) }
+    var highPassRadius by remember { mutableStateOf(DEFAULT_HIGH_PASS) }
     var threshold by remember { mutableStateOf(0f) }
     var vignetteAmount by remember { mutableStateOf(DEFAULT_VIGNETTE) }
     var blockSize by remember { mutableStateOf(DEFAULT_BLOCK) }
@@ -118,13 +129,62 @@ fun FilterSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
         }
         SheetHint("ناحیهٔ شارپ دور انتخاب می‌ماند و به‌تدریج محو می‌شود — تیلت‌شیفت و بوکهٔ پرتره")
 
+        SheetSection("سایه و روشنایی")
+        SheetSlider("باز کردن سایه", shadowLift, 0f..1f, onChange = { value, _ -> shadowLift = value })
+        SheetSlider("مهار روشنایی", highlightPull, 0f..1f, onChange = { value, _ -> highlightPull = value })
+        SheetSlider("کنتراست میانی", midtone, -1f..1f, onChange = { value, _ -> midtone = value })
+        SheetSlider("شعاع", localRadius, 4f..MAX_LOCAL_RADIUS, onChange = { value, _ -> localRadius = value })
+        SheetAction("اعمال", enabled = onPixels) {
+            scope.launch { model.shadowHighlight(shadowLift, highlightPull, localRadius, midtone) }
+        }
+        // The one control people get wrong, and the one that decides whether the result looks like
+        // a photograph or like an HDR.
+        SheetHint("شعاع کوچک دور هر لبه هالهٔ روشن می‌سازد — بزرگ‌تر از جزئیاتی که می‌خواهید حفظ شود")
+
+        SheetSection("کاهش نویز")
+        SheetSlider("نویز روشنایی", lumaNoise, 0f..1f, onChange = { value, _ -> lumaNoise = value })
+        SheetSlider("نویز رنگ", chromaNoise, 0f..1f, onChange = { value, _ -> chromaNoise = value })
+        SheetSlider("حفظ جزئیات", detail, 0f..1f, onChange = { value, _ -> detail = value })
+        SheetAction("اعمال", enabled = onPixels) {
+            scope.launch { model.reduceNoise(lumaNoise, chromaNoise, detail) }
+        }
+        // The single most useful thing to know about noise reduction, and it is not obvious.
+        SheetHint("نویز رنگ را می‌شود خیلی بیشتر از نویز روشنایی کم کرد — چشم جزئیات رنگ را نمی‌بیند")
+
+        SheetSlider("شعاع لکه", dustRadius.toFloat(), 1f..MAX_DUST, onChange = { value, _ ->
+            dustRadius = value.toInt().coerceAtLeast(1)
+        })
+        SheetSlider("آستانهٔ لکه", dustThreshold, 0f..1f, onChange = { value, _ -> dustThreshold = value })
+        SheetAction("گرد و غبار و خط", enabled = onPixels) {
+            scope.launch { model.dustAndScratches(dustRadius, dustThreshold) }
+        }
+        SheetHint("آستانه فقط پیکسل‌های پرت را عوض می‌کند — بدون آن، مژه‌ها هم با گرد و غبار پاک می‌شوند")
+
         SheetSection("تیز کردن")
         SheetSlider("مقدار", sharpenAmount, 0f..MAX_SHARPEN, onChange = { value, _ -> sharpenAmount = value })
         SheetSlider("آستانه", threshold, 0f..MAX_THRESHOLD, onChange = { value, _ -> threshold = value })
-        SheetAction("اعمال", enabled = onPixels) {
+        SheetAction("ماسک آنشارپ", enabled = onPixels) {
             scope.launch { model.unsharpMask(sharpenAmount, SHARPEN_RADIUS, threshold) }
         }
         SheetHint("آستانه، نواحی صاف را دست‌نخورده می‌گذارد — تفاوت تیز کردن عکس با تیز کردن نویزش")
+
+        SheetChips {
+            SheetChip("محو گاوسی", chosen = !undoLens) { undoLens = false }
+            SheetChip("محو لنزی", chosen = undoLens) { undoLens = true }
+        }
+        SheetAction("تیز کردن هوشمند", enabled = onPixels) {
+            scope.launch { model.smartSharpen(sharpenAmount, SHARPEN_RADIUS, undoLens) }
+        }
+        // What "smart" actually means here, said plainly rather than left as a brand name.
+        SheetHint("تیز کردن هوشمند در سایه و روشنایی محو می‌شود — جایی که هاله و نویز پیدا می‌شوند")
+
+        SheetSlider("شعاع بالاگذر", highPassRadius, 0.5f..MAX_HIGH_PASS, onChange = { value, _ ->
+            highPassRadius = value
+        })
+        SheetAction("بالاگذر روی لایهٔ جدید", enabled = onPixels) {
+            scope.launch { model.highPass(highPassRadius) }
+        }
+        SheetHint("بالاگذر روی یک لایهٔ جدید با مود Overlay ساخته می‌شود — روی خود عکس بی‌معنی است")
 
         SheetSection("جلوه‌های پایانی")
         SheetSlider(
@@ -163,6 +223,21 @@ private const val FULL_TURN = 360f
 
 private const val DEFAULT_DISTANCE = 24f
 private const val MAX_DISTANCE = 200f
+
+/** Photoshop's own default radius for shadow/highlight, and a sane one on a phone-sized canvas. */
+private const val DEFAULT_LOCAL_RADIUS = 30f
+private const val MAX_LOCAL_RADIUS = 200f
+
+/** Colour noise can take a heavy hand from the start; brightness noise cannot, so it begins at nil. */
+private const val DEFAULT_CHROMA_NOISE = 0.5f
+private const val DEFAULT_DETAIL = 0.5f
+
+private const val DEFAULT_DUST_RADIUS = 2
+private const val MAX_DUST = 8f
+private const val DEFAULT_DUST_THRESHOLD = 0.15f
+
+private const val DEFAULT_HIGH_PASS = 3f
+private const val MAX_HIGH_PASS = 40f
 
 private const val DEFAULT_SHARPEN = 1f
 private const val MAX_SHARPEN = 4f
