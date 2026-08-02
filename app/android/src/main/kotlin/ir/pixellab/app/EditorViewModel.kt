@@ -189,6 +189,31 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         recordedDepth = editor.undoDepth
     }
 
+    /**
+     * How many steps there are, and where along them the document currently sits.
+     *
+     * Exposed as plain numbers so the history strip can draw one chip per step without knowing what
+     * a step *is* — half of them are document edits and half are painted pixels, and the strip has
+     * nothing useful to say about the difference.
+     */
+    val historyLength: Int get() = steps.size + undone.size
+
+    val historyPosition: Int get() = steps.size
+
+    /**
+     * Moves the document to a given point in the history.
+     *
+     * By replaying [undo] and [redo] rather than by restoring a snapshot. Painted pixels live on
+     * their own buffer and are re-applied by the paint controller, so a snapshot of the document
+     * alone would silently drop every stroke between here and there — which is the same defect the
+     * interleaved stack exists to prevent.
+     */
+    fun jumpTo(position: Int) {
+        val target = position.coerceIn(0, historyLength)
+        while (steps.size > target) undo()
+        while (steps.size < target) redo()
+    }
+
     val current: Editor get() = editor
 
     fun act(body: Editor.() -> Unit) = edit(body)

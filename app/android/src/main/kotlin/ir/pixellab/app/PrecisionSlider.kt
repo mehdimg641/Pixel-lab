@@ -61,7 +61,7 @@ fun PrecisionSlider(
     var entry by remember { mutableStateOf("") }
     var gain by remember { mutableStateOf(1f) }
 
-    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Column(modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = Space.small)) {
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -73,7 +73,7 @@ fun PrecisionSlider(
                     value = entry,
                     onValueChange = { entry = it },
                     singleLine = true,
-                    textStyle = TextStyle(color = Ink.Accent, textAlign = TextAlign.End),
+                    textStyle = NumericStyle.copy(color = Ink.Accent, textAlign = TextAlign.End),
                     cursorBrush = SolidColor(Ink.Accent),
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                         keyboardType = KeyboardType.Number,
@@ -86,16 +86,17 @@ fun PrecisionSlider(
                         },
                     ),
                     modifier = Modifier
-                        .background(Ink.ChromeSunken, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                        .background(Ink.ChromeSunken, Corners.button)
+                        .padding(horizontal = Space.small, vertical = Space.tight),
                 )
             } else {
-                Text(
+                // Through [Numeric], so the readout carries `tnum`. Without tabular figures the
+                // number shifts sideways as it counts, under the very finger that is changing it.
+                Numeric(
                     spec.format(value),
-                    style = MaterialTheme.typography.bodyMedium,
                     // Showing the current gain while a precise drag is under way is the only
                     // feedback that the finger's distance from the track is doing anything.
-                    color = if (gain < PRECISE) Ink.Accent else Ink.TextMuted,
+                    tone = if (gain < PRECISE) Ink.Accent else Ink.TextMuted,
                 )
             }
         }
@@ -103,7 +104,7 @@ fun PrecisionSlider(
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(36.dp)
+                .height(TOUCH_STRIP)
                 .onSizeChanged { trackWidth = it.width.toFloat() }
                 .pointerInput(spec.key, value, trackWidth) {
                     awaitEachGesture {
@@ -176,6 +177,9 @@ fun PrecisionSlider(
 
 /** Thin, because the knob is what the eye finds and a heavy track competes with it. */
 private val TRACK = 4.dp
+
+/** The band the finger may land on. Comfortably over the 4dp track it controls. */
+private val TOUCH_STRIP = 36.dp
 
 /** Small enough not to hide the value it points at, large enough to see against a busy sheet. */
 private val KNOB = 16.dp

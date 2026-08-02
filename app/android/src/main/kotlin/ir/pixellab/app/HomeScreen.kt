@@ -22,16 +22,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Brush
-import androidx.compose.material.icons.filled.ContentCut
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Face
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material.icons.filled.ViewInAr
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Brush
+import androidx.compose.material.icons.outlined.ContentCut
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Face
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.ViewInAr
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -125,7 +125,7 @@ private fun Masthead(onSettings: () -> Unit) {
                     color = Ink.TextMuted,
                 )
             }
-            BarIcon(Icons.Filled.Settings, "تنظیمات", onClick = onSettings)
+            BarIcon(Icons.Outlined.Settings, "تنظیمات", onClick = onSettings)
         }
     }
 }
@@ -152,16 +152,22 @@ private fun QuickActionRow(onQuickAction: (QuickAction) -> Unit) {
     }
 }
 
-/** What a person opens the app to do. Each one opens a canvas with the right sheet already up. */
-enum class QuickAction(val icon: ImageVector, val label: String) {
+/**
+ * What a person opens the app to do.
+ *
+ * Each one lands on a canvas with the right dock entry chosen and the right panel already open, so
+ * the ribbon underneath is showing the tools for the job rather than a default the user has to
+ * navigate away from.
+ */
+enum class QuickAction(val icon: ImageVector, val label: String, val dock: Dock) {
     /** The reason this app exists. First, and it stays first. */
-    DIMENSIONAL(Icons.Filled.ViewInAr, "متن سه‌بعدی"),
-    PHOTO(Icons.Filled.Image, "ویرایش عکس"),
-    CUTOUT(Icons.Filled.ContentCut, "حذف پس‌زمینه"),
-    RETOUCH(Icons.Filled.Face, "روتوش چهره"),
-    TEXT(Icons.Filled.TextFields, "متن"),
-    PAINT(Icons.Filled.Brush, "نقاشی"),
-    EFFECTS(Icons.Filled.AutoAwesome, "افکت"),
+    DIMENSIONAL(Icons.Outlined.ViewInAr, "متن سه‌بعدی", Dock.DIMENSIONAL),
+    PHOTO(Icons.Outlined.Image, "ویرایش عکس", Dock.PHOTO),
+    CUTOUT(Icons.Outlined.ContentCut, "حذف پس‌زمینه", Dock.PHOTO),
+    RETOUCH(Icons.Outlined.Face, "روتوش چهره", Dock.PHOTO),
+    TEXT(Icons.Outlined.TextFields, "متن", Dock.TEXT),
+    PAINT(Icons.Outlined.Brush, "نقاشی", Dock.PHOTO),
+    EFFECTS(Icons.Outlined.AutoAwesome, "افکت", Dock.PHOTO),
 }
 
 /**
@@ -205,14 +211,14 @@ private fun BlankCard(onClick: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                Icons.Filled.Add,
+                Icons.Outlined.Add,
                 contentDescription = null,
                 tint = Ink.Accent,
                 modifier = Modifier.size(28.dp),
             )
         }
         Text("بوم خالی", style = MaterialTheme.typography.labelLarge, color = Ink.Text, maxLines = 1)
-        Text("۱۰۸۰ × ۱۰۸۰", style = MaterialTheme.typography.labelSmall, color = Ink.TextMuted)
+        Numeric("${BLANK.width} × ${BLANK.height}")
     }
 }
 
@@ -243,7 +249,11 @@ private fun TemplateCard(template: TemplatePreset, onClick: () -> Unit) {
                     .fillMaxSize()
                     .wrapToAspect(template.width.toFloat() / template.height)
                     .clip(Corners.small)
-                    .background(Ink.Text),
+                    // Paper, not a token. This little rectangle *depicts the canvas*, and the
+                    // canvas is white whichever theme the interface is wearing — following
+                    // `text.primary` turned every page black the moment the light theme was
+                    // looked at.
+                    .background(PAPER),
             )
         }
         Text(
@@ -253,12 +263,9 @@ private fun TemplateCard(template: TemplatePreset, onClick: () -> Unit) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Text(
-            "${digits(template.width)} × ${digits(template.height)}",
-            style = MaterialTheme.typography.labelSmall,
-            color = Ink.TextMuted,
-            maxLines = 1,
-        )
+        // Latin digits, because a canvas dimension is technical input the user types back in —
+        // specification §۱۳.۳. The prose above and below it stays in Persian numerals.
+        Numeric("${Digits.technical(template.width)} × ${Digits.technical(template.height)}")
     }
 }
 
@@ -308,9 +315,9 @@ private fun ProjectRow(file: File, onOpen: () -> Unit) {
                 .background(Ink.ChromeSunken),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Filled.Description, contentDescription = null, tint = Ink.TextMuted, modifier = Modifier.size(20.dp))
+            Icon(Icons.Outlined.Description, contentDescription = null, tint = Ink.TextMuted, modifier = Modifier.size(20.dp))
         }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.hair)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.tight)) {
             Text(
                 file.nameWithoutExtension,
                 style = MaterialTheme.typography.titleMedium,
@@ -341,41 +348,25 @@ internal fun relativeTime(millis: Long, now: Long = System.currentTimeMillis()):
     val days = hours / 24
     return when {
         minutes < 1 -> "همین حالا"
-        minutes < 60 -> "${digits(minutes)} دقیقه پیش"
-        hours < 24 -> "${digits(hours)} ساعت پیش"
-        days < 30 -> "${digits(days)} روز پیش"
-        else -> "${digits(days / 30)} ماه پیش"
+        minutes < 60 -> "${Digits.prose(minutes)} دقیقه پیش"
+        hours < 24 -> "${Digits.prose(hours)} ساعت پیش"
+        days < 30 -> "${Digits.prose(days)} روز پیش"
+        else -> "${Digits.prose(days / 30)} ماه پیش"
     }
 }
 
 /** Bytes, at the precision a person actually wants: none. */
 internal fun sizeOf(bytes: Long): String = when {
-    bytes < 1024 -> "${digits(bytes)} بایت"
-    bytes < 1024 * 1024 -> "${digits(bytes / 1024)} کیلوبایت"
-    else -> "${digits(bytes / (1024 * 1024))} مگابایت"
+    bytes < 1024 -> "${Digits.prose(bytes)} بایت"
+    bytes < 1024 * 1024 -> "${Digits.prose(bytes / 1024)} کیلوبایت"
+    else -> "${Digits.prose(bytes / (1024 * 1024))} مگابایت"
 }
-
-/**
- * Latin digits rendered as Persian ones.
- *
- * Done by hand rather than through a locale-aware formatter, because the app forces its own locale
- * and a device set to English would otherwise show ۱۰۸۰ as 1080 in a sentence that is Persian on
- * both sides of it. Mixed numerals inside one line are the detail that makes a Persian interface
- * read as translated rather than as written.
- */
-internal fun digits(value: Long): String = buildString {
-    val text = value.toString(10)
-    for (character in text) {
-        append(if (character in '0'..'9') PERSIAN_DIGITS[character - '0'] else character)
-    }
-}
-
-internal fun digits(value: Int): String = digits(value.toLong())
-
-private const val PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹"
 
 /** The blank start. Square, because a cover is square more often than it is anything else. */
 private val BLANK = TemplatePreset("سند تازه", 1080, 1080, "عمومی")
+
+/** The colour of the page a template starts as. See [TemplateCard]. */
+private val PAPER = androidx.compose.ui.graphics.Color.White
 
 private val CARD = 132.dp
 private val PREVIEW = 132.dp

@@ -76,12 +76,12 @@ class ScreenshotTest {
      * in the card background [frame] uses would hide exactly the thing worth looking at — whether
      * the screen's own surfaces separate from each other.
      */
-    private fun page(name: String, content: @Composable () -> Unit) =
-        render(name) { Box(Modifier.fillMaxSize()) { content() } }
+    private fun page(name: String, dark: Boolean = true, content: @Composable () -> Unit) =
+        render(name, dark) { Box(Modifier.fillMaxSize()) { content() } }
 
-    private fun render(name: String, content: @Composable () -> Unit) {
+    private fun render(name: String, dark: Boolean = true, content: @Composable () -> Unit) {
         compose.setContent {
-            PixelLabTheme {
+            PixelLabTheme(dark = dark) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                     content()
                 }
@@ -154,19 +154,31 @@ class ScreenshotTest {
                 Modifier.fillMaxSize().background(Ink.Surround),
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                TopBar(
-                    state = model.state,
-                    model = model,
-                    onHome = {},
-                    onSave = {},
-                    onExport = {},
-                    onOpen = {},
-                )
+                TopBar(state = model.state, model = model, onHome = {})
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    ContextualBar(model.state, model, onEditText = {})
-                    Toolbar(model.state, model)
+                    SelectionCard(model.state, model, onEditText = {})
+                    Ribbon(
+                        dock = Dock.PHOTO,
+                        state = model.state,
+                        model = model,
+                        onPickImage = {},
+                        onExport = {},
+                        onSave = {},
+                        onOpen = {},
+                    )
+                    MainDock(Dock.PHOTO, model.state, model) {}
                 }
             }
+        }
+    }
+
+    @Test
+    fun `the light theme draws`() {
+        // The specification calls the light theme optional, which is exactly why it needs a picture:
+        // an optional theme is the one that quietly stops being legible, and the failure is always
+        // the same — a colour that was chosen against black and never looked at against white.
+        page("home-light", dark = false) {
+            HomeScreen(projects = emptyList(), onNew = {}, onOpen = {}, onQuickAction = {}, onSettings = {})
         }
     }
 

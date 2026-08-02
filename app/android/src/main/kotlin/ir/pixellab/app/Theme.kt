@@ -1,113 +1,240 @@
 package ir.pixellab.app
 
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ProvidableCompositionLocal
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.toFontFamily
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * The design system.
+ * The design system — «کارگاه» (Workshop).
  *
- * Two references, taken for different things. **Airbrush** for the editor's own chrome: a dark
- * ground, a raised rounded card holding the tools, pill-shaped chips, one live accent. **Canva** for
- * everything around the canvas: generous space, large obvious targets, one clear primary action per
- * screen, and enough air that a beginner is not looking at a control panel.
+ * Every value here comes from the specification: the token table in the build constitution (§۶) and
+ * the creative direction in the product document (§۱۳.۵). Nothing is invented, and nothing outside
+ * this file may name a raw colour or a raw dimension.
  *
- * The dark ground is not a style preference. A light interface around a design makes the design's
- * own colours read darker than they are — simultaneous contrast, and the reason every professional
- * editor is dark. What the Canva half contributes is not brightness but *clarity*: the previous
- * interface was dark and also grey, cramped and undifferentiated, which is a different failure and
- * the one the user actually objected to.
- *
- * Everything below is a token. Nothing in the app should name a raw colour or a raw dimension —
- * that is what made the last interface impossible to restyle without touching two hundred files.
+ * The governing metaphor is a workshop rather than a toolbox: the light matters, the work surface
+ * matters, and the tools are laid out within reach instead of buried in nested menus. What that
+ * means concretely is the rule the whole palette serves — **the canvas is the only bright thing on
+ * the screen, and the interface steps back.**
  */
 object Ink {
 
-    // ---- surfaces --------------------------------------------------------------------------
+    // ---- surfaces ----------------------------------------------------------------------------
     //
-    // Four steps, each about one stop apart, so a card on a sheet on the ground is legible without
-    // a border. Neutral greys with a *faint* blue bias: a perfectly neutral grey next to a saturated
-    // accent reads as slightly warm, and a warm surround shifts colour judgement on the artwork.
+    // Four steps, from the specification's dark theme. Near-black behind everything so a design
+    // floats rather than glowing on grey, then three raised planes for card, panel and field.
 
-    /** Behind everything. Nearly black, so a bright design floats rather than glowing on grey. */
-    val Ground = Color(0xFF0B0F12)
+    /** `canvas.backdrop` — behind everything. */
+    val Ground get() = tokens.ground
 
-    /** Bars and the sheet's backing. */
-    val Chrome = Color(0xFF11171C)
+    /** `surface.1` — card and panel. */
+    val Chrome get() = tokens.surface1
 
-    /** Cards and the raised tool tray — the Airbrush surface. */
-    val ChromeRaised = Color(0xFF161D23)
+    /** `surface.2` — raised panel, the tool tray. */
+    val ChromeRaised get() = tokens.surface2
 
-    /** Wells: a text field, a histogram's backing, the inside of a slider's track. */
-    val ChromeSunken = Color(0xFF0D1317)
-
-    /** Around the canvas. Mid grey on purpose: white and black artwork must both read against it. */
-    val Surround = Color(0xFF262E34)
-
-    // ---- accent ----------------------------------------------------------------------------
+    /** `surface.3` — input and field. */
+    val ChromeSunken get() = tokens.surface3
 
     /**
-     * The one live colour. Selection, the active tool, a primary action — nothing else.
+     * Around the artwork.
      *
-     * Teal, and the reason is the job rather than the fashion: it is a colour almost nothing in a
-     * cover design is, so a selected chip never blends into the artwork behind it, and it stays
-     * distinguishable from the red used for warnings by hue rather than by brightness alone.
+     * Mid grey, and it is the one surface not taken from the four-step ladder: white and black
+     * artwork must both read against it, which neither end of the ladder allows.
      */
-    val Accent = Color(0xFF22D3C5)
+    val Surround get() = tokens.surround
 
-    /** Text on the accent. Very dark rather than white: teal at full chroma is a light colour. */
-    val OnAccent = Color(0xFF04211F)
+    // ---- accent ------------------------------------------------------------------------------
 
-    /** The accent at low opacity, for a chosen chip's fill. */
-    val AccentSoft = Color(0x2622D3C5)
+    /**
+     * `accent.primary` — the brand colour. Selection, the active tool, a primary action.
+     *
+     * A warm amber, and the reasoning in the specification is cultural rather than decorative: it
+     * shares a root with gold leaf, copper and wood — the right reference for a workshop in Yazd —
+     * and it is the opposite of the cold blue every competitor reaches for.
+     */
+    val Accent get() = tokens.accent
 
-    /** A second step down, for hover and pressed states on already-tinted surfaces. */
-    val AccentFaint = Color(0x1422D3C5)
+    /** `accent.pressed`. */
+    val AccentPressed get() = tokens.accentPressed
 
-    /** The accent as a wash, for the one place a gradient earns itself: the primary action. */
-    val AccentGradient = Brush.horizontalGradient(listOf(Color(0xFF22D3C5), Color(0xFF17B8D4)))
+    /** `accent.subtle` — a chosen chip's fill. */
+    val AccentSoft get() = tokens.accentSubtle
 
-    // ---- text ------------------------------------------------------------------------------
+    /** Text on a filled accent. Very dark: amber at full chroma is a light colour. */
+    val OnAccent get() = tokens.onAccent
 
-    val Text = Color(0xFFEDF2F4)
+    /**
+     * `secondary.teal` — selection and mask, and nothing else.
+     *
+     * Kept strictly to that role. A second colour used decoratively would leave the interface with
+     * two accents and therefore none; used for *marching ants, mask overlays and chosen pixels* it
+     * says something the amber cannot, because the amber already means "the tool you are holding".
+     */
+    val Selection get() = tokens.selection
 
-    /** Labels and secondary readouts. Still passes contrast on [ChromeRaised] at body size. */
-    val TextMuted = Color(0xFF93A2AC)
+    // ---- text --------------------------------------------------------------------------------
 
-    /** Disabled. Deliberately below the contrast floor, because that *is* what disabled means. */
-    val TextDisabled = Color(0xFF4C585F)
+    /** `text.primary`. */
+    val Text get() = tokens.textPrimary
 
-    // ---- lines and semantics ---------------------------------------------------------------
+    /** `text.secondary`. */
+    val TextMuted get() = tokens.textSecondary
 
-    val Divider = Color(0xFF232C33)
-    val Outline = Color(0xFF2E3A42)
+    /** `text.disabled`. Deliberately below the contrast floor, because that *is* what it means. */
+    val TextDisabled get() = tokens.textDisabled
 
-    val Danger = Color(0xFFFF6B6B)
-    val Warning = Color(0xFFE0A93F)
-    val Success = Color(0xFF4ADE80)
+    // ---- lines and semantics -----------------------------------------------------------------
 
-    /** Snap guides. Magenta: nothing in a design is likely to be exactly this. */
+    /** `border.subtle`. */
+    val Divider get() = tokens.borderSubtle
+
+    /** `border.strong`. */
+    val Outline get() = tokens.borderStrong
+
+    /** `state.error`. */
+    val Danger get() = tokens.error
+
+    /** `state.warning`. */
+    val Warning get() = tokens.warning
+
+    /** `state.success`. */
+    val Success get() = tokens.success
+
+    /** `overlay.scrim`. */
+    val Scrim get() = tokens.scrim
+
+    /**
+     * Snap guides.
+     *
+     * Magenta rather than either accent: a guide sits *on top of the artwork* while the amber sits
+     * on the chrome, and a guide the same colour as the active tool is a guide that disappears the
+     * moment it crosses a warm-toned photograph.
+     */
     val Guide = Color(0xFFFF3FB4)
+
+    /** The palette currently in force. Swapped wholesale by [PixelLabTheme]. */
+    internal var tokens: Palette = Palette.Dark
+        private set
+
+    internal fun use(palette: Palette) {
+        tokens = palette
+    }
 }
 
 /**
- * Spacing, on a four-point grid.
+ * One complete set of colour values.
  *
- * A scale rather than free numbers. The previous interface used 2, 3, 4, 6, 8, 9, 10, 11, 12, 14 and
- * 16 dp in adjacent files, and the result reads as slightly wrong everywhere without any single
- * place being identifiably at fault.
+ * A table rather than a `when` inside each accessor, because the light theme is a *second table*,
+ * not a set of exceptions: the specification gives its own hex values and several of them are not
+ * derivable from the dark ones.
+ */
+internal data class Palette(
+    val ground: Color,
+    val surface1: Color,
+    val surface2: Color,
+    val surface3: Color,
+    val surround: Color,
+    val borderSubtle: Color,
+    val borderStrong: Color,
+    val textPrimary: Color,
+    val textSecondary: Color,
+    val textDisabled: Color,
+    val accent: Color,
+    val accentPressed: Color,
+    val accentSubtle: Color,
+    val onAccent: Color,
+    val selection: Color,
+    val success: Color,
+    val warning: Color,
+    val error: Color,
+    val scrim: Color,
+) {
+    companion object {
+
+        /** The default, and the one the whole product is designed in. Specification §۶. */
+        val Dark = Palette(
+            ground = Color(0xFF0B0C0E),
+            surface1 = Color(0xFF141619),
+            surface2 = Color(0xFF1C1F23),
+            surface3 = Color(0xFF262A2F),
+            // Not in the token table: the one surface the specification describes in prose instead
+            // ("the canvas must be the brightest element"), so it is derived to sit above the field
+            // colour without approaching the artwork.
+            surround = Color(0xFF31363C),
+            borderSubtle = Color(0xFF2E3338),
+            borderStrong = Color(0xFF3D444B),
+            textPrimary = Color(0xFFF2F4F6),
+            textSecondary = Color(0xFFA3ABB4),
+            textDisabled = Color(0xFF5C646D),
+            accent = Color(0xFFE8A33D),
+            accentPressed = Color(0x63C98739),
+            accentSubtle = Color(0x1AE8A33D),
+            // Derived, because a token table that gives a fill has to be read together with the
+            // contrast floor: white on #E8A33D is 2.1:1 and fails, so filled controls take ink.
+            onAccent = Color(0xFF1B1206),
+            selection = Color(0xFF3DCCC0),
+            success = Color(0xFF4ADE80),
+            warning = Color(0xFFFBBF24),
+            error = Color(0xFFF87171),
+            scrim = Color(0xB3000000),
+        )
+
+        /**
+         * The optional light theme, specification §۶.
+         *
+         * Five values are given and the rest are derived to hold the same relationships — the
+         * ladder still climbs away from the ground, the borders still separate, and the semantic
+         * colours darken, because `#4ADE80` on white is 1.8:1 and would announce success by
+         * becoming invisible.
+         */
+        val Light = Palette(
+            ground = Color(0xFFF5F6F7),
+            surface1 = Color(0xFFFFFFFF),
+            surface2 = Color(0xFFEDEFF1),
+            surface3 = Color(0xFFE3E6E9),
+            surround = Color(0xFFC9CDD2),
+            borderSubtle = Color(0xFFDCE0E4),
+            borderStrong = Color(0xFFB6BCC3),
+            textPrimary = Color(0xFF16181B),
+            textSecondary = Color(0xFF5A626B),
+            textDisabled = Color(0xFF9BA3AC),
+            accent = Color(0xFFC9873A),
+            accentPressed = Color(0x63A66C2A),
+            accentSubtle = Color(0x1AC9873A),
+            onAccent = Color(0xFFFFFFFF),
+            selection = Color(0xFF199B90),
+            success = Color(0xFF15803D),
+            warning = Color(0xFFB45309),
+            error = Color(0xFFB91C1C),
+            scrim = Color(0x66000000),
+        )
+    }
+}
+
+/**
+ * Spacing. The specification's scale, and nothing between its steps.
+ *
+ * `4 · 8 · 12 · 16 · 24 · 32 · 48`
  */
 object Space {
-    val hair = 2.dp
     val tight = 4.dp
     val small = 8.dp
     val medium = 12.dp
@@ -115,82 +242,232 @@ object Space {
     val wide = 24.dp
     val huge = 32.dp
 
-    /**
-     * The gutter every screen's content sits inside.
-     *
-     * Generous, and that is the Canva half of the brief: the old sheet ran controls to within twelve
-     * points of the edge, which is what made it read as a control panel rather than as a tool.
-     */
-    val gutter = 20.dp
+    /** The screen's gutter. On the scale, unlike the 20dp it replaces. */
+    val gutter = 16.dp
 
-    /** The platform's minimum touch target. A mis-tap on a canvas costs an undo. */
+    /** The platform minimum, and the specification's: a mis-tap on a canvas costs an undo. */
     val touch = 48.dp
 }
 
-/**
- * Corner radii.
- *
- * Softer than Material's defaults throughout, because both references are: Airbrush's tool tray and
- * Canva's template cards are notably round, and roundness is most of what makes an interface read as
- * approachable rather than as instrumentation.
- */
+/** Corner radii. Specification §۶: `button 8 · card 12 · sheet 20 · chip 999`. */
 object Corners {
+    val button = RoundedCornerShape(8.dp)
+    val small = RoundedCornerShape(8.dp)
+    val card = RoundedCornerShape(12.dp)
+    val large = RoundedCornerShape(12.dp)
     val chip = RoundedCornerShape(999.dp)
-    val small = RoundedCornerShape(10.dp)
-    val card = RoundedCornerShape(16.dp)
-    val large = RoundedCornerShape(20.dp)
-    val sheet = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    val sheet = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
 }
 
 /**
- * The type scale.
+ * The fixed heights of the screen's furniture. Specification §۶ and §۱۳.۵.
  *
- * Persian text needs more line height than Latin at the same size — the ascenders and descenders of
- * the script overlap at Material's defaults and a two-line label runs into itself. Every style below
- * carries that, and trims the extra space at the top and bottom so the block still aligns.
+ * Named rather than written where they are used, because the whole point of the layout is that
+ * these three bars are *the same height on every screen* — the moment one is set locally, the canvas
+ * starts moving as the user switches tools.
  */
-private val persianLineHeight = LineHeightStyle(
-    alignment = LineHeightStyle.Alignment.Center,
-    trim = LineHeightStyle.Trim.None,
-)
+object Frame {
+    /** History strip, along the top. */
+    val history = 56.dp
 
-private fun style(size: Int, height: Int, weight: FontWeight, spacing: Double = 0.0) = TextStyle(
+    /** Contextual ribbon, directly under the canvas. Changes with what is selected. */
+    val ribbon = 88.dp
+
+    /** The main dock. Five entries, always. */
+    val dock = 64.dp
+
+    /** Icon stroke. Specification: monochrome, 1.5dp. */
+    val stroke = 1.5.dp
+
+    /** Icon box. Sized so a 1.5dp stroke reads as a line rather than as a smudge. */
+    val icon = 24.dp
+}
+
+/**
+ * Motion. Specification §۶.
+ *
+ * Three durations and one curve. The two rules that matter more than the numbers: a slider changing
+ * a value updates the canvas **immediately and without animation** — an eased canvas reads as a slow
+ * app — and no animation may block the interaction after it.
+ */
+object Motion {
+    const val MICRO = 150
+    const val STANDARD = 200
+    const val SHEET = 250
+
+    /** `easeOutCubic`. */
+    val ease = CubicBezierEasing(0.33f, 1f, 0.68f, 1f)
+}
+
+/**
+ * The interface typeface.
+ *
+ * Vazirmatn Variable, bundled under the SIL Open Font License (see `docs/licenses/`). Bundled rather
+ * than taken from the device, for the reason the specification gives about shaping in general: a
+ * face that varies with the Android version means the interface measures differently on different
+ * phones, and a Persian label that fits on one and wraps on another is a layout nobody can design
+ * against.
+ *
+ * The weight axis is set explicitly per style rather than by synthesising bold, which on a variable
+ * face produces a smeared outline instead of the drawn weight.
+ */
+@OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+private fun vazirmatn(weight: Int): FontFamily = Font(
+    resId = R.font.vazirmatn,
+    weight = FontWeight(weight),
+    variationSettings = FontVariation.Settings(FontVariation.weight(weight)),
+).toFontFamily()
+
+private val displayFace = vazirmatn(600)
+private val titleFace = vazirmatn(500)
+private val bodyFace = vazirmatn(400)
+private val labelFace = vazirmatn(500)
+private val captionFace = vazirmatn(400)
+
+/**
+ * Line height is a multiple in the specification, so it is written as one here.
+ *
+ * The multiples are generous — 1.6 for body — because Persian needs it: the ascenders and descenders
+ * of the script overlap at the ratios Latin type gets away with, and a two-line label runs into
+ * itself.
+ */
+private fun style(
+    family: FontFamily,
+    size: Int,
+    multiple: Double,
+    weight: Int,
+    features: String? = null,
+) = TextStyle(
+    fontFamily = family,
     fontSize = size.sp,
-    lineHeight = height.sp,
-    fontWeight = weight,
-    letterSpacing = spacing.sp,
-    lineHeightStyle = persianLineHeight,
+    lineHeight = (size * multiple).sp,
+    fontWeight = FontWeight(weight),
+    fontFeatureSettings = features,
+    lineHeightStyle = LineHeightStyle(
+        alignment = LineHeightStyle.Alignment.Center,
+        trim = LineHeightStyle.Trim.None,
+    ),
 )
 
+/**
+ * The type scale, specification §۶.
+ *
+ * ```
+ * display  22sp / 600 / 1.4
+ * title    17sp / 500 / 1.45
+ * body     15sp / 400 / 1.6
+ * label    13sp / 500 / 1.4
+ * caption  11sp / 400 / 1.4
+ * ```
+ *
+ * Five roles, mapped onto the Material slots the components already ask for. Material has more slots
+ * than the specification has roles, so several map to the same style — which is the point: an
+ * interface with five sizes is one somebody designed, and one with thirteen is one that accumulated.
+ */
 private val typography = Typography(
-    displaySmall = style(30, 42, FontWeight.Bold, -0.3),
-    headlineMedium = style(24, 34, FontWeight.Bold, -0.2),
-    headlineSmall = style(20, 30, FontWeight.SemiBold),
-    titleLarge = style(18, 28, FontWeight.SemiBold),
-    titleMedium = style(16, 26, FontWeight.SemiBold),
-    bodyLarge = style(15, 26, FontWeight.Normal),
-    bodyMedium = style(14, 24, FontWeight.Normal),
-    labelLarge = style(14, 20, FontWeight.Medium),
-    labelMedium = style(13, 18, FontWeight.Medium),
-    labelSmall = style(12, 18, FontWeight.Normal),
+    displayLarge = style(displayFace, 22, 1.4, 600),
+    displayMedium = style(displayFace, 22, 1.4, 600),
+    displaySmall = style(displayFace, 22, 1.4, 600),
+    headlineLarge = style(displayFace, 22, 1.4, 600),
+    headlineMedium = style(displayFace, 22, 1.4, 600),
+    headlineSmall = style(titleFace, 17, 1.45, 500),
+    titleLarge = style(titleFace, 17, 1.45, 500),
+    titleMedium = style(titleFace, 17, 1.45, 500),
+    titleSmall = style(labelFace, 13, 1.4, 500),
+    bodyLarge = style(bodyFace, 15, 1.6, 400),
+    bodyMedium = style(bodyFace, 15, 1.6, 400),
+    bodySmall = style(captionFace, 11, 1.4, 400),
+    labelLarge = style(labelFace, 13, 1.4, 500),
+    labelMedium = style(labelFace, 13, 1.4, 500),
+    labelSmall = style(captionFace, 11, 1.4, 400),
 )
 
-private val scheme = darkColorScheme(
-    primary = Ink.Accent,
-    onPrimary = Ink.OnAccent,
-    secondary = Ink.Accent,
-    background = Ink.Ground,
-    onBackground = Ink.Text,
-    surface = Ink.ChromeRaised,
-    onSurface = Ink.Text,
-    surfaceVariant = Ink.ChromeSunken,
-    onSurfaceVariant = Ink.TextMuted,
-    outline = Ink.Outline,
-    outlineVariant = Ink.Divider,
-    error = Ink.Danger,
-)
+/**
+ * The numeric style: 14sp, weight 500, **tabular figures**.
+ *
+ * Its own style rather than a variant of `label`, because `tnum` is the whole reason it exists. A
+ * proportional `1` is narrower than a `0`, so a readout that counts while a slider moves jitters
+ * sideways under the finger, and a column of values in a panel refuses to line up.
+ */
+val NumericStyle: TextStyle = style(vazirmatn(500), 14, 1.4, 500, features = "tnum")
 
+/**
+ * Renders digits the way the specification asks for each context.
+ *
+ * §۱۳.۳ is explicit and easy to get backwards: **numeric panels use Latin digits**, because they are
+ * technical input and the user types them back in; running Persian prose uses Persian digits,
+ * because mixed numerals inside one sentence are what makes an interface read as translated rather
+ * than written. So this is not a global setting — it is a decision per string, and the two helpers
+ * are named for the decision rather than for the script.
+ */
+object Digits {
+
+    /** For a measurement, a coordinate, a percentage — anything the user could type back in. */
+    fun technical(value: Int): String = value.toString()
+
+    /** For a count or a duration inside a Persian sentence. */
+    fun prose(value: Long): String = buildString {
+        for (character in value.toString()) {
+            append(if (character in '0'..'9') PERSIAN[character - '0'] else character)
+        }
+    }
+
+    fun prose(value: Int): String = prose(value.toLong())
+
+    private const val PERSIAN = "۰۱۲۳۴۵۶۷۸۹"
+}
+
+/** Whether the interface is currently dark, for the few controls that must know. */
+val LocalDarkTheme: ProvidableCompositionLocal<Boolean> = compositionLocalOf { true }
+
+private fun schemeFor(palette: Palette, dark: Boolean) = if (dark) {
+    darkColorScheme(
+        primary = palette.accent,
+        onPrimary = palette.onAccent,
+        secondary = palette.selection,
+        background = palette.ground,
+        onBackground = palette.textPrimary,
+        surface = palette.surface1,
+        onSurface = palette.textPrimary,
+        surfaceVariant = palette.surface3,
+        onSurfaceVariant = palette.textSecondary,
+        outline = palette.borderStrong,
+        outlineVariant = palette.borderSubtle,
+        error = palette.error,
+        scrim = palette.scrim,
+    )
+} else {
+    lightColorScheme(
+        primary = palette.accent,
+        onPrimary = palette.onAccent,
+        secondary = palette.selection,
+        background = palette.ground,
+        onBackground = palette.textPrimary,
+        surface = palette.surface1,
+        onSurface = palette.textPrimary,
+        surfaceVariant = palette.surface3,
+        onSurfaceVariant = palette.textSecondary,
+        outline = palette.borderStrong,
+        outlineVariant = palette.borderSubtle,
+        error = palette.error,
+        scrim = palette.scrim,
+    )
+}
+
+/**
+ * @param dark which palette to use. Defaults to the system setting, so a user whose phone is light
+ *   gets the light theme the specification calls optional — and everyone else gets the dark one the
+ *   product is designed in.
+ */
 @Composable
-fun PixelLabTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = scheme, typography = typography, content = content)
+fun PixelLabTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+    val palette = if (dark) Palette.Dark else Palette.Light
+    Ink.use(palette)
+    CompositionLocalProvider(LocalDarkTheme provides dark) {
+        MaterialTheme(
+            colorScheme = schemeFor(palette, dark),
+            typography = typography,
+            content = content,
+        )
+    }
 }
