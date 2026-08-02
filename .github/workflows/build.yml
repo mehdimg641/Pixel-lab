@@ -1,19 +1,20 @@
 name: build
 
-# On every push and every pull request. A check that only runs on one branch is a check that
-# discovers a break after it has already been merged.
+# Pushes to the default branch, and every pull request.
+#
+# Deliberately *not* `push: branches: ["**"]` alongside `pull_request:`. Both fire for a branch
+# with a pull request open, and no concurrency group can merge them: a `push` event carries no
+# `pull_request.number`, so any expression that falls back to the ref puts the two in different
+# groups and the whole build runs twice for every commit. Restricting the push trigger is the only
+# thing that actually stops it. The cost is that a branch with no pull request open gets no CI,
+# which is the standard trade and the reason opening the PR early is worth doing.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
 
 # A second push to the same branch cancels the first. The older run is testing code nobody will
 # merge, and on a shared runner pool it is delaying the one that matters.
-#
-# Keyed on the pull request number when there is one, rather than on the ref. Both triggers above
-# fire for a branch with a PR open — `push` on `refs/heads/x` and `pull_request` on
-# `refs/pull/N/merge` — so a group keyed on the ref puts them in *different* groups and runs the
-# whole build twice for every commit. Folding both onto the PR number leaves one run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
