@@ -1,7 +1,11 @@
 package ir.pixellab.app
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -9,8 +13,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.ViewInAr
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.LayoutDirection
@@ -20,6 +32,7 @@ import ir.pixellab.core.imaging.HistogramChannel
 import ir.pixellab.core.model.Color
 import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.GradientStop
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -53,11 +66,24 @@ class ScreenshotTest {
 
     private val output = File("build/screenshots").apply { mkdirs() }
 
-    private fun frame(name: String, content: @Composable () -> Unit) {
+    private fun frame(name: String, content: @Composable () -> Unit) =
+        render(name) { Column(Modifier.fillMaxWidth().background(Ink.ChromeRaised)) { content() } }
+
+    /**
+     * A whole screen, drawn edge to edge.
+     *
+     * Separate from [frame] because a screen paints its own ground and its own gutters. Wrapping one
+     * in the card background [frame] uses would hide exactly the thing worth looking at — whether
+     * the screen's own surfaces separate from each other.
+     */
+    private fun page(name: String, content: @Composable () -> Unit) =
+        render(name) { Box(Modifier.fillMaxSize()) { content() } }
+
+    private fun render(name: String, content: @Composable () -> Unit) {
         compose.setContent {
             PixelLabTheme {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                    Column(Modifier.fillMaxWidth().background(Ink.ChromeRaised)) { content() }
+                    content()
                 }
             }
         }
@@ -86,6 +112,85 @@ class ScreenshotTest {
         val pixels = IntArray(bitmap.width * bitmap.height)
         bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         (pixels.distinct().size > MIN_DISTINCT_COLOURS) shouldBe true
+    }
+
+    @Test
+    fun `the home screen draws`() {
+        // The real screen with real content: the strip of templates, the row of jobs, and a couple
+        // of saved projects. An empty list is a different picture — it is the next test — and the
+        // one thing a screenshot of this screen has to prove is that the *populated* case lays out.
+        val projects = listOf(
+            File(output, "کاور آلبوم.pxl"),
+            File(output, "استوری تخفیف.pxl"),
+        )
+        projects.forEach { it.writeText("x") }
+        page("home") {
+            HomeScreen(
+                projects = projects,
+                onNew = {},
+                onOpen = {},
+                onQuickAction = {},
+                onSettings = {},
+            )
+        }
+    }
+
+    @Test
+    fun `the home screen says so when there is nothing saved`() {
+        page("home-empty") {
+            HomeScreen(projects = emptyList(), onNew = {}, onOpen = {}, onQuickAction = {}, onSettings = {})
+        }
+    }
+
+    @Test
+    fun `the editor chrome draws`() {
+        // The real bars, driven by a real view model, because the thing worth looking at is how the
+        // top bar, the selection card and the toolbar sit *together*. Each one alone always looked
+        // fine; it was the three of them at once that read as unfinished.
+        val model = EditorViewModel(ApplicationProvider.getApplicationContext())
+        model.act { select(state.document.layers.first().id) }
+        page("editor-chrome") {
+            Column(
+                Modifier.fillMaxSize().background(Ink.Surround),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                TopBar(
+                    state = model.state,
+                    model = model,
+                    onHome = {},
+                    onSave = {},
+                    onExport = {},
+                    onOpen = {},
+                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    ContextualBar(model.state, model, onEditText = {})
+                    Toolbar(model.state, model)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `the shared components draw`() {
+        frame("components") {
+            var chosen by remember { mutableStateOf(1) }
+            SectionHeader("اجزای مشترک", action = "همه") {}
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                IconTile(Icons.Filled.ViewInAr, "متن سه‌بعدی", selected = true) {}
+                IconTile(Icons.Filled.Brush, "نقاشی") {}
+                IconTile(Icons.Filled.Image, "عکس", enabled = false) {}
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (i in 0..2) Pill("گزینهٔ $i", selected = chosen == i) { chosen = i }
+            }
+            Panel {
+                Text("یک پنل", style = MaterialTheme.typography.titleMedium, color = Ink.Text)
+                Note("توضیحی که زیر عنوان می‌آید و باید خواناتر از عنوان نباشد.")
+            }
+            PrimaryAction("شروع طراحی", icon = Icons.Filled.ViewInAr) {}
+            SecondaryAction("بعداً") {}
+            PrimaryAction("غیرفعال", enabled = false) {}
+        }
     }
 
     @Test

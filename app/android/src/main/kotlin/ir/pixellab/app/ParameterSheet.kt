@@ -228,7 +228,9 @@ fun SheetDivider() {
 @Composable
 fun SheetGrip(modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-        Box(Modifier.width(36.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Ink.Divider))
+        // Outline rather than divider: a grip drawn in the same value as a hairline rule is
+        // invisible on the sheet's own surface, and a grip nobody can see is a sheet nobody drags.
+        Box(Modifier.width(36.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Ink.Outline))
     }
 }
 

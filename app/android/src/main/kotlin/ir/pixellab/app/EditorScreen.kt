@@ -6,7 +6,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -17,11 +19,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.automirrored.filled.AlignHorizontalLeft
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Category
@@ -34,6 +39,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.automirrored.filled.Redo
@@ -42,10 +48,13 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VerticalAlignTop
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,8 +65,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import ir.pixellab.core.editor.Editor
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.editor.SheetContent
 import ir.pixellab.core.editor.SheetDetent
@@ -77,9 +90,18 @@ import kotlinx.coroutines.launch
  * Three layers of control, and the layout rule behind them is a physical one: the device is 6.7
  * inches, so a thumb cannot reach the top. Everything frequent lives in the bottom third; the top
  * bar holds only what is rare and expensive to hit by accident.
+ *
+ * @param entry what the user pressed on the home screen, or null if they came in another way. It is
+ *   consumed once — [onEntryHandled] — so that returning to the editor later does not re-open a
+ *   sheet the user has since closed.
  */
 @Composable
-fun EditorScreen(model: EditorViewModel) {
+fun EditorScreen(
+    model: EditorViewModel,
+    entry: QuickAction? = null,
+    onEntryHandled: () -> Unit = {},
+    onHome: (() -> Unit)? = null,
+) {
     val state = model.state
     val bounds = model.bounds
     val context = LocalContext.current
@@ -90,14 +112,28 @@ fun EditorScreen(model: EditorViewModel) {
     var opening by remember { mutableStateOf<List<java.io.File>?>(null) }
     var editingText by remember { mutableStateOf<LayerId?>(null) }
 
+    /**
+     * The panel to open once an imported picture has actually landed.
+     *
+     * "Remove the background" needs a background to remove. Opening the selection panel over an
+     * empty canvas and then asking for a photo is the order that makes a quick action feel like a
+     * detour; this way the picker comes first and the tool is waiting when the image arrives.
+     */
+    var afterImport by remember { mutableStateOf<SheetContent?>(null) }
+
     // Registered once for the screen rather than inside the sheet: a launcher created inside a
     // conditionally composed subtree is unregistered the moment that subtree leaves, and the result
     // then arrives with nowhere to go.
     val picking = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val pending = afterImport
+        afterImport = null
         if (uri != null) {
             scope.launch {
                 loadImage(context, uri)
-                    .onSuccess { (image, name) -> model.placeImage(image, name) }
+                    .onSuccess { (image, name) ->
+                        model.placeImage(image, name)
+                        if (pending != null) model.act { openSheet(pending, SheetDetent.FULL) }
+                    }
                     .onFailure { outcome = FileOutcome.Refused(it.message ?: "تصویر خوانده نشد") }
             }
         }
@@ -116,7 +152,46 @@ fun EditorScreen(model: EditorViewModel) {
         }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Ink.Chrome)) {
+    LaunchedEffect(entry) {
+        val action = entry ?: return@LaunchedEffect
+        when (action) {
+            QuickAction.DIMENSIONAL -> model.act {
+                setTool(Tool.TEXT)
+                openSheet(SheetContent.Dimensional, SheetDetent.FULL)
+            }
+            QuickAction.TEXT -> model.act {
+                setTool(Tool.TEXT)
+                openSheet(SheetContent.FontPicker, SheetDetent.FULL)
+            }
+            QuickAction.PAINT -> {
+                if (model.state.primaryLayer !is Layer.Image) model.addPaintLayer()
+                model.act {
+                    setTool(Tool.BRUSH)
+                    openSheet(SheetContent.BrushSettings, SheetDetent.HALF)
+                }
+            }
+            QuickAction.EFFECTS -> model.act {
+                setTool(Tool.ADJUST)
+                openSheet(SheetContent.Adjustments, SheetDetent.FULL)
+            }
+            // The three that need a photograph first. The tool is remembered and opens on arrival.
+            QuickAction.PHOTO -> {
+                afterImport = SheetContent.CanvasTools
+                picking.launch(IMAGE_MIME)
+            }
+            QuickAction.CUTOUT -> {
+                afterImport = SheetContent.PixelSelection
+                picking.launch(IMAGE_MIME)
+            }
+            QuickAction.RETOUCH -> {
+                afterImport = SheetContent.Retouch
+                picking.launch(IMAGE_MIME)
+            }
+        }
+        onEntryHandled()
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize().background(Ink.Ground)) {
         val screenHeight = maxHeight
 
         EditorCanvas(
@@ -138,13 +213,18 @@ fun EditorScreen(model: EditorViewModel) {
             TopBar(
                 state = state,
                 model = model,
+                onHome = onHome,
                 onSave = {
                     scope.launch { outcome = saveProject(context, model.currentProject()) }
                 },
                 onExport = { exporting = true },
                 onOpen = { scope.launch { opening = Storage.listProjects(context) } },
             )
-            outcome?.let { OutcomeBanner(it, Modifier.padding(top = 6.dp)) { outcome = null } }
+            outcome?.let {
+                OutcomeBanner(it, Modifier.padding(top = Space.small, start = Space.medium, end = Space.medium)) {
+                    outcome = null
+                }
+            }
         }
 
         Column(
@@ -208,12 +288,11 @@ fun EditorScreen(model: EditorViewModel) {
                 Modifier
                     .fillMaxWidth()
                     .height(screenHeight * state.sheet.detent.screenFraction)
-                    .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                    .background(Ink.ChromeRaised),
+                    .clip(Corners.sheet)
+                    .background(Ink.Chrome),
             ) {
                 Column(Modifier.fillMaxSize()) {
                     SheetHeader(state, model)
-                    SheetDivider()
                     when (val content = state.sheet.content) {
                         is SheetContent.EffectParameters ->
                             ParameterSheetBody(state, content, model, Modifier.fillMaxHeight())
@@ -265,111 +344,184 @@ fun EditorScreen(model: EditorViewModel) {
 /**
  * The top bar.
  *
- * Deliberately sparse and deliberately out of thumb reach: these are the actions whose accidental
- * press is expensive. Undo and redo are here as a discoverable fallback — the fast path is the
- * two- and three-finger tap on the canvas.
+ * Six icons and a title fitted across a 411dp phone was the single worst thing about the interface
+ * this replaces: every one of them ended up too small to hit and too anonymous to read, so the bar
+ * looked busy and did nothing well. What is left is what a person presses *while* editing — back,
+ * undo, redo, export — and the five rare, expensive actions moved behind the overflow, where hitting
+ * one by accident is no longer possible.
  */
 @Composable
-private fun TopBar(
+internal fun TopBar(
     state: EditorState,
     model: EditorViewModel,
+    onHome: (() -> Unit)?,
     onSave: () -> Unit,
     onExport: () -> Unit,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var menu by remember { mutableStateOf(false) }
     Row(
         modifier
             .fillMaxWidth()
-            .background(Ink.Chrome.copy(alpha = 0.92f))
+            .background(Ink.Chrome.copy(alpha = SCRIM))
             .systemBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = Space.small, vertical = Space.small),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(Space.hair),
     ) {
-        Row {
-            // Through the view model, not the editor: painted pixels are on the same stack, and
-            // an undo that only knew about the document would skip every stroke.
-            BarButton(Icons.AutoMirrored.Filled.Undo, "برگشت", enabled = model.canUndo, onClick = model::undo)
-            BarButton(Icons.AutoMirrored.Filled.Redo, "جلو", enabled = model.canRedo, onClick = model::redo)
+        if (onHome != null) {
+            // Auto-mirrored, so it resolves to the right-pointing arrow that means "back" in a
+            // right-to-left interface. The un-mirrored icon would point the way the user came from
+            // in an English app and the way they are going in this one.
+            BarIcon(Icons.AutoMirrored.Filled.ArrowBack, "خانه", onClick = onHome)
         }
+
         Text(
             state.document.name,
             style = MaterialTheme.typography.labelLarge,
             color = Ink.TextMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(horizontal = Space.small),
         )
-        Row {
-            BarButton(Icons.Filled.FitScreen, "اندازهٔ صفحه") { model.act { fitCanvas() } }
-            // Up here rather than on the toolbar: a template replaces the whole document, which is
-            // exactly the kind of expensive, rare action the top bar exists for.
-            BarButton(Icons.Filled.Star, "کتابخانه") {
-                model.act { openSheet(SheetContent.LibraryPanel, SheetDetent.FULL) }
+
+        // Through the view model, not the editor: painted pixels are on the same stack, and an undo
+        // that only knew about the document would skip every stroke.
+        BarIcon(Icons.AutoMirrored.Filled.Undo, "برگشت", enabled = model.canUndo, onClick = model::undo)
+        BarIcon(Icons.AutoMirrored.Filled.Redo, "جلو", enabled = model.canRedo, onClick = model::redo)
+
+        Box {
+            BarIcon(Icons.Filled.MoreVert, "بیشتر") { menu = true }
+            DropdownMenu(
+                expanded = menu,
+                onDismissRequest = { menu = false },
+                containerColor = Ink.ChromeRaised,
+            ) {
+                MenuAction("ذخیره", Icons.Filled.Save) { menu = false; onSave() }
+                MenuAction("باز کردن", Icons.Filled.FolderOpen) { menu = false; onOpen() }
+                MenuAction("اندازهٔ صفحه", Icons.Filled.FitScreen) {
+                    menu = false
+                    model.act { fitCanvas() }
+                }
+                // A template replaces the whole document, which is exactly the kind of expensive,
+                // rare action this menu exists for.
+                MenuAction("کتابخانه", Icons.Filled.Star) {
+                    menu = false
+                    model.act { openSheet(SheetContent.LibraryPanel, SheetDetent.FULL) }
+                }
+                MenuAction("تنظیمات", Icons.Filled.Settings) {
+                    menu = false
+                    model.act { openSheet(SheetContent.Settings, SheetDetent.FULL) }
+                }
             }
-            BarButton(Icons.Filled.Settings, "تنظیمات") {
-                model.act { openSheet(SheetContent.Settings, SheetDetent.FULL) }
-            }
-            BarButton(Icons.Filled.FolderOpen, "باز کردن", onClick = onOpen)
-            BarButton(Icons.Filled.Save, "ذخیره", onClick = onSave)
-            BarButton(Icons.Filled.IosShare, "خروجی", onClick = onExport)
         }
+
+        ExportPill(onExport)
+    }
+}
+
+@Composable
+private fun MenuAction(label: String, icon: ImageVector, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label, style = MaterialTheme.typography.bodyMedium, color = Ink.Text) },
+        leadingIcon = { Icon(icon, contentDescription = null, tint = Ink.TextMuted, modifier = Modifier.size(20.dp)) },
+        onClick = onClick,
+    )
+}
+
+/**
+ * Export, as the bar's one filled control.
+ *
+ * The gradient is the app's single one, and this is where it goes in the editor: getting the picture
+ * out is what the whole screen is in service of, and it was previously a grey icon indistinguishable
+ * from the five beside it.
+ */
+@Composable
+private fun ExportPill(onExport: () -> Unit) {
+    Row(
+        Modifier
+            .height(PILL)
+            .clip(Corners.chip)
+            .background(Ink.AccentGradient)
+            .clickable(onClick = onExport)
+            .padding(horizontal = Space.large)
+            .semantics { role = Role.Button },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.tight),
+    ) {
+        Icon(Icons.Filled.IosShare, contentDescription = null, tint = Ink.OnAccent, modifier = Modifier.size(16.dp))
+        Text("خروجی", style = MaterialTheme.typography.labelLarge, color = Ink.OnAccent, maxLines = 1)
     }
 }
 
 /**
  * The contextual bar: what to do with what is selected.
  *
- * The five actions match the muscle memory of the app the user already works in. Familiarity is
- * worth keeping even where a different arrangement might read better on paper.
+ * A floating card above the toolbar rather than another full-width strip. Two stacked bars of equal
+ * weight is the arrangement that makes an editor feel walled in at the bottom; a card that is
+ * visibly narrower than the canvas reads as *about the selection* rather than as more chrome.
  */
 @Composable
-private fun ContextualBar(state: EditorState, model: EditorViewModel, onEditText: (LayerId) -> Unit) {
+internal fun ContextualBar(state: EditorState, model: EditorViewModel, onEditText: (LayerId) -> Unit) {
     val id = state.selection.primary ?: return
     val isText = state.selectedLayers.any { it.id == id && it is Layer.Text }
     Row(
         Modifier
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .padding(horizontal = Space.large, vertical = Space.small)
+            .clip(Corners.chip)
             .background(Ink.ChromeRaised)
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+            .border(1.dp, Ink.Outline, Corners.chip)
+            .padding(horizontal = Space.small, vertical = Space.small),
+        horizontalArrangement = Arrangement.spacedBy(Space.hair),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (isText) {
-            BarButton(Icons.Filled.TextFields, "متن") { onEditText(id) }
+            BarAction(Icons.Filled.TextFields, "متن") { onEditText(id) }
         }
-        BarButton(Icons.Filled.Tune, "لایه") {
+        BarAction(Icons.Filled.Tune, "لایه") {
             // Blend mode, both opacities, clipping and masking — the panel that used to be a
             // placeholder, and the one people open most often after moving something.
             model.act { openSheet(SheetContent.LayerParameters(id), SheetDetent.FULL) }
         }
-        BarButton(Icons.Filled.Add, "افکت") {
+        // The same glyph the home screen puts on "افکت", so the two places agree about what an
+        // effect is. A plus would have meant "add" — which is true and says nothing about what.
+        BarAction(Icons.Filled.AutoAwesome, "افکت") {
             // A stroke is the effect people reach for first, and it is immediately visible, so the
             // sheet that opens has something to show.
             model.act { addEffect(id, Effect.Stroke(8f, Fill.Solid(Color.WHITE))) }
         }
-        BarButton(Icons.AutoMirrored.Filled.AlignHorizontalLeft, "چیدمان") {
+        BarAction(Icons.AutoMirrored.Filled.AlignHorizontalLeft, "چیدمان") {
             model.act { openSheet(SheetContent.Arrange, SheetDetent.FULL) }
         }
-        BarButton(Icons.Filled.ContentCopy, "کپی") {
+        BarAction(Icons.Filled.ContentCopy, "کپی") {
             // The id comes from the document rather than from a count: a count collides the first
             // time a layer is deleted, and two layers with one id is an editor that loses work.
             model.act { duplicateLayer(id, nextLayerId(id.value)) }
         }
-        BarButton(Icons.Filled.VerticalAlignTop, "به جلو") { model.act { bringToFront(id) } }
-        BarButton(Icons.Filled.Delete, "حذف", tint = Ink.Danger) { model.act { deleteLayer(id) } }
+        BarAction(Icons.Filled.VerticalAlignTop, "به جلو") { model.act { bringToFront(id) } }
+        BarAction(Icons.Filled.Delete, "حذف", tint = Ink.Danger) { model.act { deleteLayer(id) } }
     }
 }
 
-/** The persistent toolbar. Five entries, always inside the thumb's arc. */
+/**
+ * The persistent toolbar.
+ *
+ * Nine tools, and they scroll rather than being squeezed onto one screen width. Dividing 411dp by
+ * nine gives each tool 45dp of everything — target, icon and label — which is below the platform's
+ * touch minimum and far below what a Persian label needs. Scrolling costs discoverability of the
+ * last two; cramming cost the usability of all nine.
+ */
 @Composable
-private fun Toolbar(state: EditorState, model: EditorViewModel) {
+internal fun Toolbar(state: EditorState, model: EditorViewModel) {
     Row(
         Modifier
             .fillMaxWidth()
-            .background(Ink.ChromeRaised)
+            .background(Ink.Chrome)
             .systemBarsPadding()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = Space.small, vertical = Space.small),
+        horizontalArrangement = Arrangement.spacedBy(Space.tight),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ToolButton(Tool.LAYERS, Icons.Filled.Layers, "لایه‌ها", state, model) {
@@ -406,40 +558,60 @@ private fun Toolbar(state: EditorState, model: EditorViewModel) {
     }
 }
 
+/**
+ * The sheet's head: a grip that grows it, and a close.
+ *
+ * The divider under it is gone. On a card that is already a step lighter than the ground, a line
+ * immediately below the grip is a third horizontal edge within twenty points of two others, and
+ * removing it is most of why the sheet now reads as one surface rather than as stacked strips.
+ */
 @Composable
 private fun SheetHeader(state: EditorState, model: EditorViewModel) {
-    Column {
-        SheetGrip(
-            Modifier.clickable {
-                // Tapping the grip walks the detents, so the sheet can be grown without a drag.
-                model.act {
-                    setSheetDetent(
-                        when (state.sheet.detent) {
-                            SheetDetent.PEEK -> SheetDetent.HALF
-                            SheetDetent.HALF -> SheetDetent.FULL
-                            else -> SheetDetent.PEEK
-                        },
-                    )
-                }
-            },
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Space.medium, vertical = Space.small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "بستن",
+            style = MaterialTheme.typography.labelLarge,
+            color = Ink.TextMuted,
+            modifier = Modifier
+                .clip(Corners.chip)
+                .clickable { model.act { closeSheet() } }
+                .padding(horizontal = Space.medium, vertical = Space.small)
+                .semantics { role = Role.Button },
         )
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.End,
-        ) {
-            Text(
-                "بستن",
-                style = MaterialTheme.typography.labelLarge,
-                color = Ink.TextMuted,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { model.act { closeSheet() } }
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            SheetGrip(
+                Modifier.clickable {
+                    // Tapping the grip walks the detents, so the sheet can be grown without a drag.
+                    model.act {
+                        setSheetDetent(
+                            when (state.sheet.detent) {
+                                SheetDetent.PEEK -> SheetDetent.HALF
+                                SheetDetent.HALF -> SheetDetent.FULL
+                                else -> SheetDetent.PEEK
+                            },
+                        )
+                    }
+                },
             )
         }
+        // Balances the close on the other side so the grip sits in the middle of the sheet rather
+        // than in the middle of what is left over after the close.
+        Box(Modifier.width(CLOSE_BALANCE))
     }
 }
 
+/**
+ * One tool.
+ *
+ * The active one is a filled circle, not a tinted icon. A tint alone is the state that disappears in
+ * a screenshot, at a glance, and for anyone with any degree of colour blindness — the filled shape
+ * survives all three.
+ */
 @Composable
 private fun ToolButton(
     tool: Tool,
@@ -452,48 +624,53 @@ private fun ToolButton(
     val active = state.tool == tool
     Column(
         Modifier
-            .clip(RoundedCornerShape(12.dp))
+            .width(TOOL)
+            .clip(Corners.small)
             .clickable {
                 model.act { setTool(tool) }
                 onOpen()
             }
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(vertical = Space.small)
+            .semantics {
+                role = Role.Tab
+                selected = active
+            },
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Space.tight),
     ) {
-        Icon(icon, label, tint = if (active) Ink.Accent else Ink.TextMuted)
+        Box(
+            Modifier
+                .size(TOOL_CIRCLE)
+                .clip(Corners.chip)
+                .background(if (active) Ink.AccentSoft else androidx.compose.ui.graphics.Color.Transparent),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = if (active) Ink.Accent else Ink.TextMuted,
+                modifier = Modifier.size(22.dp),
+            )
+        }
         Text(
             label,
             style = MaterialTheme.typography.labelSmall,
             color = if (active) Ink.Accent else Ink.TextMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
 
-@Composable
-private fun BarButton(
-    icon: ImageVector,
-    label: String,
-    enabled: Boolean = true,
-    tint: androidx.compose.ui.graphics.Color = Ink.Text,
-    onClick: () -> Unit,
-) {
-    Column(
-        Modifier
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled, onClick = onClick)
-            // 48dp of target for a 20dp icon; the platform minimum is not a suggestion on a canvas
-            // where a mis-tap costs an undo.
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(icon, label, tint = if (enabled) tint else Ink.Divider)
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (enabled) Ink.TextMuted else Ink.Divider,
-        )
-    }
-}
+/** How much of the chrome colour the top bar carries. The canvas stays faintly visible behind it. */
+private const val SCRIM = 0.92f
+
+private val PILL = 36.dp
+private val TOOL = 64.dp
+private val TOOL_CIRCLE = 40.dp
+
+/** The close label's width, mirrored on the other side so the grip is centred on the sheet. */
+private val CLOSE_BALANCE = 56.dp
 
 /** What the picker accepts. Every still image; video is deliberately not part of this app. */
 private const val IMAGE_MIME = "image/*"

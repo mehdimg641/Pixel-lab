@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                     val editor: EditorViewModel = viewModel()
                     model = editor
-                    EditorScreen(editor)
+                    PixelLabApp(editor)
                 }
             }
         }

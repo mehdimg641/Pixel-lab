@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -94,7 +95,7 @@ fun PrecisionSlider(
                     style = MaterialTheme.typography.bodyMedium,
                     // Showing the current gain while a precise drag is under way is the only
                     // feedback that the finger's distance from the track is doing anything.
-                    color = if (gain < 0.9f) Ink.Accent else Ink.TextMuted,
+                    color = if (gain < PRECISE) Ink.Accent else Ink.TextMuted,
                 )
             }
         }
@@ -138,21 +139,46 @@ fun PrecisionSlider(
                 },
             contentAlignment = Alignment.CenterStart,
         ) {
-            val fraction = spec.fractionOf(value)
+            val fraction = spec.fractionOf(value).coerceIn(0f, 1f)
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
+                    .height(TRACK)
+                    .clip(RoundedCornerShape(TRACK / 2))
                     .background(Ink.ChromeSunken),
             )
+            // The filled part and the knob in one box: the knob sits at its *end*, which resolves to
+            // the correct side in either direction without the layout knowing which one it is in.
             Box(
-                Modifier
-                    .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Ink.Accent),
-            )
+                Modifier.fillMaxWidth(fraction),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(TRACK)
+                        .clip(RoundedCornerShape(TRACK / 2))
+                        .background(Ink.Accent),
+                )
+                // A track with no knob does not read as draggable — it reads as a progress bar, and
+                // people wait for it rather than touching it. This is the whole reason the control
+                // looked inert in the interface this replaces.
+                Box(
+                    Modifier
+                        .size(KNOB)
+                        .clip(RoundedCornerShape(KNOB / 2))
+                        .background(if (gain < PRECISE) Ink.Accent else Ink.Text),
+                )
+            }
         }
     }
 }
+
+/** Thin, because the knob is what the eye finds and a heavy track competes with it. */
+private val TRACK = 4.dp
+
+/** Small enough not to hide the value it points at, large enough to see against a busy sheet. */
+private val KNOB = 16.dp
+
+/** Below this gain the drag has left the track and is in its magnified mode. */
+private const val PRECISE = 0.9f

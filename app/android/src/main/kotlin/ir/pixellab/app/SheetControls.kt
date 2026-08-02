@@ -1,15 +1,16 @@
 package ir.pixellab.app
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
@@ -37,14 +38,26 @@ import ir.pixellab.core.render.ParameterSpec
  * Shared rather than copied into each sheet, which is what the last few of them did. Two sheets with
  * their own private chip drift apart within a week — one gets a pressed state, the other does not —
  * and the interface starts feeling assembled rather than designed.
+ *
+ * Everything here now draws through [Ink], [Space] and [Corners]. That is the whole reason twenty
+ * sheets could be restyled without opening twenty files: a sheet names a *control*, and the control
+ * names a token. The version this replaced had each of these functions carrying its own literal
+ * dimensions, which is why the interface read as grey and cramped no matter which panel you opened.
  */
 @Composable
 fun SheetSection(title: String, modifier: Modifier = Modifier) {
     Text(
         title,
         style = MaterialTheme.typography.labelMedium,
+        // Uppercase-ish emphasis is unavailable in Persian — the script has no case — so the
+        // heading separates itself from its controls by colour and by the space above it instead.
         color = Ink.TextMuted,
-        modifier = modifier.padding(start = 16.dp, top = 14.dp, bottom = 2.dp),
+        modifier = modifier.padding(
+            start = Space.gutter,
+            end = Space.gutter,
+            top = Space.wide,
+            bottom = Space.tight,
+        ),
     )
 }
 
@@ -54,7 +67,7 @@ fun SheetHint(text: String, modifier: Modifier = Modifier) {
         text,
         style = MaterialTheme.typography.labelSmall,
         color = Ink.TextMuted,
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        modifier = modifier.padding(horizontal = Space.gutter, vertical = Space.tight),
     )
 }
 
@@ -68,12 +81,19 @@ fun SheetHint(text: String, modifier: Modifier = Modifier) {
 @Composable
 fun SheetChips(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     FlowRow(
-        modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = Space.tight),
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+        verticalArrangement = Arrangement.spacedBy(Space.small),
     ) { content() }
 }
 
+/**
+ * One choice among several.
+ *
+ * Outlined when unchosen and tinted when chosen, rather than two greys one step apart. The two-grey
+ * arrangement is what the previous interface used, and in a row of six the user could not tell which
+ * one was on without moving their head — an outline against a fill is unambiguous at arm's length.
+ */
 @Composable
 fun SheetChip(
     label: String,
@@ -82,20 +102,22 @@ fun SheetChip(
     tint: Color = Ink.Accent,
     onClick: () -> Unit,
 ) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelLarge,
-        color = when {
-            !enabled -> Ink.Divider
-            chosen -> tint
-            else -> Ink.Text
-        },
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (chosen) tint.copy(alpha = CHOSEN_TINT) else Ink.Chrome)
+    Box(
+        Modifier
+            .heightIn(min = CHIP_HEIGHT)
+            .clip(Corners.chip)
+            .background(if (chosen) tint.copy(alpha = CHOSEN_TINT) else Color.Transparent)
+            .border(
+                width = if (chosen) CHOSEN_EDGE else PLAIN_EDGE,
+                color = when {
+                    !enabled -> Ink.Divider
+                    chosen -> tint
+                    else -> Ink.Outline
+                },
+                shape = Corners.chip,
+            )
             .clickable(enabled = enabled, onClick = onClick)
-            // The platform's 48dp minimum in spirit: a mis-tap on a canvas costs an undo.
-            .padding(horizontal = 12.dp, vertical = 9.dp)
+            .padding(horizontal = Space.large, vertical = Space.small)
             // A screen reader announces a chip as a button and reads its label; without this it
             // cannot say whether the chip is the *chosen* one, which is the only thing that
             // distinguishes the six chips in a row from each other.
@@ -104,7 +126,19 @@ fun SheetChip(
                 selected = chosen
                 if (!enabled) disabled()
             },
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = when {
+                !enabled -> Ink.TextDisabled
+                chosen -> tint
+                else -> Ink.Text
+            },
+            maxLines = 1,
+        )
+    }
 }
 
 /** A labelled slider over a plain range, for the many controls that are not effect parameters. */
@@ -137,27 +171,42 @@ fun SheetNumberField(
     modifier: Modifier = Modifier,
     onValueChange: (String) -> Unit,
 ) {
-    Column(modifier.padding(horizontal = 4.dp)) {
+    Column(
+        modifier.padding(horizontal = Space.tight),
+        verticalArrangement = Arrangement.spacedBy(Space.tight),
+    ) {
         Text(label, style = MaterialTheme.typography.labelSmall, color = Ink.TextMuted)
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
             singleLine = true,
-            textStyle = TextStyle(color = Ink.Text, fontSize = MaterialTheme.typography.bodyLarge.fontSize),
+            textStyle = TextStyle(
+                color = Ink.Text,
+                fontSize = MaterialTheme.typography.bodyLarge.fontSize,
+            ),
             cursorBrush = SolidColor(Ink.Accent),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             // The visible label is a separate Text, so the field itself would otherwise be
             // announced as an unnamed edit box.
             modifier = Modifier
                 .semantics { contentDescription = label }
-                .clip(RoundedCornerShape(8.dp))
+                .clip(Corners.small)
                 .background(Ink.ChromeSunken)
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                // Sunken rather than outlined, and the outline is on top of the sink: a well with
+                // no edge disappears into a card of nearly the same value, which is what made the
+                // old fields hard to find on a sheet.
+                .border(PLAIN_EDGE, Ink.Divider, Corners.small)
+                .padding(horizontal = Space.medium, vertical = Space.medium),
         )
     }
 }
 
-/** A full-width action. Used where a press *does* something rather than choosing a mode. */
+/**
+ * A full-width action. Used where a press *does* something rather than choosing a mode.
+ *
+ * Tinted rather than gradient-filled: the gradient belongs to [PrimaryAction], which is the one
+ * action a *screen* is about. A sheet has several of these and none of them is the app's headline.
+ */
 @Composable
 fun SheetAction(
     label: String,
@@ -166,28 +215,40 @@ fun SheetAction(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    Row(
+    Box(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 3.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (enabled) tint.copy(alpha = CHOSEN_TINT) else Ink.Chrome)
+            .padding(horizontal = Space.gutter, vertical = Space.tight)
+            .heightIn(min = Space.touch)
+            .clip(Corners.chip)
+            .background(if (enabled) tint.copy(alpha = CHOSEN_TINT) else Color.Transparent)
+            .border(PLAIN_EDGE, if (enabled) tint.copy(alpha = EDGE_TINT) else Ink.Divider, Corners.chip)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 11.dp)
+            .padding(horizontal = Space.large, vertical = Space.small)
             .semantics {
                 role = Role.Button
                 // Announced as unavailable rather than simply not responding, which is what a
                 // greyed control that only *looks* greyed sounds like.
                 if (!enabled) disabled()
             },
-        verticalAlignment = Alignment.CenterVertically,
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (enabled) tint else Ink.Divider,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (enabled) tint else Ink.TextDisabled,
         )
     }
 }
 
-private const val CHOSEN_TINT = 0.18f
+/** How much of the accent a chosen chip's fill carries. Low: the label has to stay readable on it. */
+private const val CHOSEN_TINT = 0.16f
+
+/** The same colour at the strength an edge needs, which is more than a fill does. */
+private const val EDGE_TINT = 0.55f
+
+private val PLAIN_EDGE = 1.dp
+private val CHOSEN_EDGE = 1.5.dp
+
+/** Comfortably inside the platform's touch minimum once the row's own spacing is counted. */
+private val CHIP_HEIGHT = 40.dp
