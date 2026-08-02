@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FitScreen
@@ -87,6 +88,7 @@ fun EditorScreen(model: EditorViewModel) {
             bounds = bounds,
             fonts = model.fonts,
             assets = model.assets,
+            assetGeneration = model.paint.generation,
             handle = handle,
             onGesture = model::onGesture,
             onSize = model::onScreenSize,
@@ -207,8 +209,10 @@ private fun TopBar(
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Row {
-            BarButton(Icons.AutoMirrored.Filled.Undo, "برگشت", enabled = state.canUndo) { model.act { undo() } }
-            BarButton(Icons.AutoMirrored.Filled.Redo, "جلو", enabled = state.canRedo) { model.act { redo() } }
+            // Through the view model, not the editor: painted pixels are on the same stack, and
+            // an undo that only knew about the document would skip every stroke.
+            BarButton(Icons.AutoMirrored.Filled.Undo, "برگشت", enabled = model.canUndo, onClick = model::undo)
+            BarButton(Icons.AutoMirrored.Filled.Redo, "جلو", enabled = model.canRedo, onClick = model::redo)
         }
         Text(
             state.document.name,
@@ -281,6 +285,12 @@ private fun Toolbar(state: EditorState, model: EditorViewModel) {
         }
         ToolButton(Tool.TEXT, Icons.Filled.TextFields, "متن", state, model) {
             model.act { openSheet(SheetContent.FontPicker, SheetDetent.FULL) }
+        }
+        ToolButton(Tool.BRUSH, Icons.Filled.Brush, "قلم‌مو", state, model) {
+            // A brush needs somewhere to paint. Creating the layer on the first press rather than
+            // asking for one is the difference between a tool that works and a tool that reports
+            // that it cannot.
+            if (state.primaryLayer !is Layer.Image) model.addPaintLayer()
         }
         ToolButton(Tool.IMAGE, Icons.Filled.Image, "تصویر", state, model) {}
         ToolButton(Tool.SHAPE, Icons.Filled.Star, "شکل", state, model) {}

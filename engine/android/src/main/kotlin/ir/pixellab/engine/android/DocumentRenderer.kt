@@ -117,6 +117,9 @@ class DocumentRenderer(
             if (value === field) return
             field = value
             clearMasks()
+            imageTextures.values.forEach(device::deleteTexture)
+            imageTextures.clear()
+            imageBitmaps.clear()
         }
 
     private val executor = GraphExecutor(device, textures = effectTextures)
@@ -331,6 +334,9 @@ class DocumentRenderer(
         canvasSize = Vec2.ZERO
         discardPools()
         clearMasks()
+        imageTextures.values.forEach(device::deleteTexture)
+        imageTextures.clear()
+        imageBitmaps.clear()
         whiteTexture?.let(device::deleteTexture)
         whiteTexture = null
         effectTextures.dispose()
@@ -523,9 +529,17 @@ class DocumentRenderer(
     private fun renderContent(frame: Frame, layer: Layer, surface: Surface, clip: TextureHandle?) {
         val font = fontFor(layer)
         val graph = graphFor(frame.document, layer, frame.scale, frame.effectsBypassed, font) ?: return
+        val shape = bounds(layer, font) ?: return
         val silhouette = silhouetteFor(layer, graph.textureBounds, frame.scale, font)
 
         effectTextures.layerFill = layer.style.fill
+        // A placed photograph is its own paint. Everything else takes its colour from the style,
+        // and leaving a previous layer's image set would paint a shape with the last photo.
+        effectTextures.layerImage = (layer as? Layer.Image)?.let { imageTexture(it.asset) }
+        // Where that paint sits inside the texture. The texture is larger than the layer whenever
+        // an effect has asked for bleed, and sampling the paint across the whole of it slides a
+        // photograph inside its own frame by exactly that much.
+        executor.fillMap = Compositing.textureUvToShapeUv(graph.textureBounds, shape).values
         val result = executor.execute(
             graph = graph,
             layerTexture = silhouette,
@@ -543,6 +557,7 @@ class DocumentRenderer(
             frame.errors += ExecutionError(Shaders.COMPOSITE.id, "layer '${layer.name}' produced nothing")
             return
         }
+        effectTextures.layerImage = null
         compositeTexture(
             frame = frame,
             source = appearance,
@@ -900,7 +915,7 @@ class DocumentRenderer(
         }
 
         cached?.let { device.deleteTexture(it.texture) }
-        val raster = rasterizer.silhouette(layer, bounds, scale, font)
+        val raster = rasterizer.silhouette(layer, bounds, scale, font, imageBitmapFor(layer))
         val handle = device.createTexture(raster.bitmap.width, raster.bitmap.height, bytesPerPixel = 4)
         val pixels = IntArray(raster.bitmap.width * raster.bitmap.height)
         raster.bitmap.getPixels(
@@ -921,7 +936,54 @@ class DocumentRenderer(
     private fun contentKey(layer: Layer, font: FontFile?): Int = when (layer) {
         is Layer.Shape -> layer.geometry.hashCode()
         is Layer.Text -> 31 * layer.spec.hashCode() + (font?.path?.hashCode() ?: 0)
+        // A painted layer's pixels change under the same asset id, so the id alone is not enough
+        // to notice a brush stroke; the store bumps a generation whenever it repaints one.
+        is Layer.Image -> 31 * layer.asset.hashCode() + assetGeneration
         else -> 0
+    }
+
+    /**
+     * Bumped by the caller when an asset's pixels have changed.
+     *
+     * A painted layer keeps the same asset id from the first stroke to the last, so nothing else
+     * about it tells the cache that the pixels moved.
+     */
+    var assetGeneration: Int = 0
+        set(value) {
+            if (value == field) return
+            field = value
+            imageTextures.values.forEach(device::deleteTexture)
+            imageTextures.clear()
+            imageBitmaps.clear()
+        }
+
+    private val imageTextures = HashMap<String, TextureHandle>()
+    private val imageBitmaps = HashMap<String, android.graphics.Bitmap>()
+
+    /**
+     * A placed image as a paint texture, with alpha forced opaque.
+     *
+     * Opaque because the fill pass multiplies the paint's alpha by the silhouette's, and the
+     * silhouette is already the image's alpha — leaving it in both would square it, which shows up
+     * as a dark fringe all the way round a cut-out subject.
+     */
+    private fun imageTexture(asset: ir.pixellab.core.model.AssetId): TextureHandle? {
+        imageTextures[asset.value]?.let { return it }
+        val image = assets.load(asset) ?: return null
+        val handle = device.createTexture(image.width, image.height, bytesPerPixel = 4)
+        val opaque = IntArray(image.pixels.size) { image.pixels[it] or (0xFF shl 24) }
+        device.uploadArgb(handle, image.width, image.height, opaque)
+        imageTextures[asset.value] = handle
+        return handle
+    }
+
+    private fun imageBitmapFor(layer: Layer): android.graphics.Bitmap? {
+        val asset = (layer as? Layer.Image)?.asset ?: return null
+        imageBitmaps[asset.value]?.let { return it }
+        val image = assets.load(asset) ?: return null
+        return android.graphics.Bitmap
+            .createBitmap(image.pixels, image.width, image.height, android.graphics.Bitmap.Config.ARGB_8888)
+            .also { imageBitmaps[asset.value] = it }
     }
 
     /** The font a text layer shapes with, or null for every other kind. */
@@ -951,8 +1013,16 @@ class DocumentRenderer(
                 box
             }
         }
-        // An image's extent comes from its decoded asset and a group's from its children; neither
-        // is this class's to invent.
+        // A placed image is exactly as large as its pixels, in canvas units, cropped if it says so.
+        is Layer.Image -> assets.load(layer.asset)?.let { image ->
+            val crop = layer.crop
+            if (crop == null) {
+                Rect(0f, 0f, image.width.toFloat(), image.height.toFloat())
+            } else {
+                Rect(0f, 0f, crop.width * image.width, crop.height * image.height)
+            }
+        }
+        // A group's extent comes from its children, which is not this class's to invent.
         else -> null
     }
 

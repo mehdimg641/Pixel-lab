@@ -10,6 +10,7 @@ import ir.pixellab.core.canvas.CanvasGesture
 import ir.pixellab.core.canvas.Handle
 import ir.pixellab.core.editor.Editor
 import ir.pixellab.core.editor.EditorState
+import ir.pixellab.core.editor.Tool
 import ir.pixellab.core.fonts.Typeface
 import ir.pixellab.core.model.Color
 import ir.pixellab.core.model.Document
@@ -61,6 +62,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     val bounds = LayerMeasure(images = assetStore.sizes)
 
+    /** The brush, and the stroke it currently has in progress. */
+    val paint = PaintController(assetStore)
+
     private val editor = Editor(startingDocument(), bounds)
 
     var state: EditorState by mutableStateOf(editor.state)
@@ -83,11 +87,63 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * One step of history, of either kind.
+     *
+     * Painted pixels are not part of the document, so the editor's own stack cannot hold them — and
+     * two separate stacks would let undo skip a step whenever the user alternated between painting
+     * and moving. This interleaves them.
+     */
+    private sealed interface Step {
+        data object Edit : Step
+        data class Paint(val edit: PaintEdit) : Step
+    }
+
+    private val steps = ArrayList<Step>()
+    private val undone = ArrayList<Step>()
+    private var recordedDepth = 0
+
+    val canUndo: Boolean get() = steps.isNotEmpty()
+    val canRedo: Boolean get() = undone.isNotEmpty()
+
     /** Every mutation goes through here so a state change can never be forgotten. */
     private fun <T> edit(body: Editor.() -> T): T {
         val result = editor.body()
+        // The editor decides for itself whether an action was worth a history entry — a tap that
+        // selected nothing is not. Asking it afterwards is the only way to stay in step.
+        if (editor.undoDepth > recordedDepth) {
+            steps += Step.Edit
+            undone.clear()
+        }
+        recordedDepth = editor.undoDepth
         state = editor.state
         return result
+    }
+
+    fun undo() {
+        val step = steps.removeLastOrNull() ?: return
+        when (step) {
+            is Step.Paint -> paint.restore(step.edit, redo = false)
+            Step.Edit -> {
+                editor.undo()
+                state = editor.state
+            }
+        }
+        undone += step
+        recordedDepth = editor.undoDepth
+    }
+
+    fun redo() {
+        val step = undone.removeLastOrNull() ?: return
+        when (step) {
+            is Step.Paint -> paint.restore(step.edit, redo = true)
+            Step.Edit -> {
+                editor.redo()
+                state = editor.state
+            }
+        }
+        steps += step
+        recordedDepth = editor.undoDepth
     }
 
     val current: Editor get() = editor
@@ -103,7 +159,50 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      * the selected layer manipulates it, and anywhere else pans the camera. Without that split the
      * canvas can only ever do one of the two, and a mobile editor needs both from the same finger.
      */
-    fun onGesture(gesture: CanvasGesture) = edit {
+    fun onGesture(gesture: CanvasGesture) {
+        when (gesture) {
+            CanvasGesture.Undo -> return undo()
+            CanvasGesture.Redo -> return redo()
+            else -> Unit
+        }
+        // While a paint or select tool is active the drag belongs to the tool, not to the layer
+        // under it — otherwise the first brush stroke drags whatever happened to be selected.
+        if (state.tool.ownsDrag && routeToTool(gesture)) return
+        route(gesture)
+    }
+
+    private fun routeToTool(gesture: CanvasGesture): Boolean {
+        if (state.tool != Tool.BRUSH) return false
+        val canvasPoint = { screen: Vec2 -> state.viewport.toCanvas(screen) }
+        return when (gesture) {
+            is CanvasGesture.DragStart -> paint.begin(state.primaryLayer, canvasPoint(gesture.position), 1f)
+            is CanvasGesture.Drag -> {
+                if (!paint.isPainting) return false
+                paint.extend(canvasPoint(gesture.position), 1f)
+                true
+            }
+            is CanvasGesture.DragEnd -> {
+                if (!paint.isPainting) return false
+                paint.end(canvasPoint(gesture.position), 1f)?.let {
+                    steps += Step.Paint(it)
+                    undone.clear()
+                }
+                true
+            }
+            // A tap is a single dab, which is a legitimate thing to draw.
+            is CanvasGesture.Tap -> {
+                if (!paint.begin(state.primaryLayer, canvasPoint(gesture.position), 1f)) return false
+                paint.end(canvasPoint(gesture.position), 1f)?.let {
+                    steps += Step.Paint(it)
+                    undone.clear()
+                }
+                true
+            }
+            else -> false
+        }
+    }
+
+    private fun route(gesture: CanvasGesture) = edit {
         when (gesture) {
             is CanvasGesture.Tap -> tapCanvas(gesture.position)
             is CanvasGesture.DoubleTap -> tapCanvas(gesture.position)
@@ -122,8 +221,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 transformViewport(gesture.pan, gesture.scaleFactor, gesture.rotationDegrees, gesture.pivot)
             CanvasGesture.TransformEnd -> endDrag()
 
-            CanvasGesture.Undo -> undo()
-            CanvasGesture.Redo -> redo()
+            // Routed back out rather than handled here: painted pixels are on the same stack.
+            CanvasGesture.Undo -> Unit
+            CanvasGesture.Redo -> Unit
         }
     }
 
@@ -185,6 +285,24 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 ),
             ),
         )
+    }
+
+    /**
+     * Adds an empty layer to paint on.
+     *
+     * Canvas-sized and transparent. A paint layer smaller than the canvas is the arrangement that
+     * makes a brush stop working halfway across the artwork with no explanation, and one that grows
+     * to fit the stroke reallocates several megabytes mid-gesture.
+     */
+    fun addPaintLayer(name: String = "لایهٔ نقاشی"): LayerId = edit {
+        val id = nextLayerId("paint")
+        val asset = ir.pixellab.core.model.AssetId(id.value)
+        val canvas = state.document.canvas
+        assetStore.put(
+            asset,
+            ir.pixellab.core.codec.RasterImage(canvas.width, canvas.height, IntArray(canvas.width * canvas.height)),
+        )
+        addLayer(Layer.Image(id = id, asset = asset, name = name))
     }
 
     /** Replaces the string of a text layer, keeping everything else about it. */

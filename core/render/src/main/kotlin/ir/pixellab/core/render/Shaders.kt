@@ -517,9 +517,17 @@ object Shaders {
         body = """
             uniform sampler2D uFill;
             uniform float uFillOpacity;
+            // Layer-texture UV to fill UV. Identity for a solid; for a placed photograph it lands
+            // the pixels exactly on the layer's own box, which is smaller than the texture whenever
+            // an effect has grown it. Sampling at vUv instead slides the image inside its own frame
+            // by however much bleed the effect stack asked for.
+            uniform mat3 uFillMap;
 
             void main() {
-                vec4 fill = texture(uFill, vUv);
+                vec2 uv = (uFillMap * vec3(vUv, 1.0)).xy;
+                vec4 fill = (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+                    ? vec4(0.0)
+                    : texture(uFill, uv);
                 float layer = texture(uSource, vUv).a;
                 fragColor = premultiply(vec4(fill.rgb, fill.a * layer * uFillOpacity));
             }

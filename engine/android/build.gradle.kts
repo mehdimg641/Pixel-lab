@@ -51,6 +51,7 @@ dependencies {
     api(project(":core:canvas"))
     api(project(":core:editor"))
     api(project(":core:codec"))
+    api(project(":core:paint"))
     implementation(libs.androidx.annotation)
 
     testImplementation(libs.junit.jupiter)

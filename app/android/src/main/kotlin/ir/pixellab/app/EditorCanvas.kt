@@ -44,6 +44,7 @@ fun EditorCanvas(
     bounds: LayerBounds,
     fonts: FontResolver,
     assets: AssetSource,
+    assetGeneration: Int,
     handle: CanvasHandle,
     onGesture: (ir.pixellab.core.canvas.CanvasGesture) -> Unit,
     onSize: (Vec2) -> Unit,
@@ -74,6 +75,7 @@ fun EditorCanvas(
             update = { surface ->
                 surface.fonts = fonts
                 surface.assets = assets
+                surface.assetGeneration = assetGeneration
                 surface.submit(state.document, state.viewport, state.effectsBypassed)
             },
         )

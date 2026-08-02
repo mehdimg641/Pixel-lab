@@ -72,6 +72,7 @@ class LayerRasterizer(private val text: TextRasterizer = TextRasterizer()) {
         bounds: Rect,
         scale: Float = 1f,
         font: FontFile? = null,
+        image: Bitmap? = null,
     ): RasterizedLayer {
         val width = pixels(bounds.width, scale)
         val height = pixels(bounds.height, scale)
@@ -87,8 +88,21 @@ class LayerRasterizer(private val text: TextRasterizer = TextRasterizer()) {
             is Layer.Text -> if (font != null) {
                 canvas.drawPath(text.rasterize(layer.spec, font).outline, paint)
             }
-            // Image and instance content arrives as a decoded asset, and a group is composited from
-            // its children; neither has a silhouette of its own to draw here.
+            // A photograph's coverage is its own alpha, which is what makes a stroke or a shadow
+            // follow a cut-out subject rather than the rectangle it arrived in.
+            is Layer.Image -> if (image != null) {
+                // Drawn at the layer's own origin and its own size, not across the whole texture:
+                // the texture is larger by however much bleed the effect stack asked for, and
+                // stretching into that would move the photograph away from its selection box.
+                canvas.drawBitmap(
+                    image,
+                    null,
+                    android.graphics.RectF(0f, 0f, image.width.toFloat(), image.height.toFloat()),
+                    Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG),
+                )
+            }
+            // A group is composited from its children and an instance from its source; neither has
+            // a silhouette of its own to draw here.
             else -> Unit
         }
         return RasterizedLayer(bitmap, bounds, scale)

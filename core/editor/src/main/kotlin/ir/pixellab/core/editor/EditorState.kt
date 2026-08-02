@@ -11,7 +11,24 @@ import ir.pixellab.core.model.Transform
 import ir.pixellab.core.model.Vec2
 
 /** The five entries on the persistent toolbar. */
-enum class Tool { LAYERS, TEXT, IMAGE, SHAPE, ADJUST }
+enum class Tool {
+    LAYERS, TEXT, IMAGE, SHAPE, ADJUST,
+
+    /** Painting and erasing. While it is active a drag paints instead of moving a layer. */
+    BRUSH,
+
+    /** Choosing pixels: marquee, lasso and wand. A drag defines a region rather than moving one. */
+    SELECT,
+    ;
+
+    /**
+     * True when a drag on the canvas belongs to the tool rather than to the layer under it.
+     *
+     * The single rule that decides whether painting works: without it the first brush stroke drags
+     * whatever layer happened to be selected across the canvas.
+     */
+    val ownsDrag: Boolean get() = this == BRUSH || this == SELECT
+}
 
 /**
  * What is selected.

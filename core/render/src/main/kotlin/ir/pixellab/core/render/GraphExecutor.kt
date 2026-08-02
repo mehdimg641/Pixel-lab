@@ -170,6 +170,14 @@ class GraphExecutor(
      * @param backdropTexture what is already composited beneath this layer; required only when
      *   [LayerGraph.readsBackdrop], and also owned by the caller
      */
+    /**
+     * Maps layer-texture UV to fill UV, set by the caller before each layer.
+     *
+     * Identity unless the layer's paint is its own pixels, which is the case that needs it: a
+     * photograph occupies the layer's box, and the texture around it is bleed for the effects.
+     */
+    var fillMap: FloatArray = Affine.IDENTITY.values
+
     fun execute(
         graph: LayerGraph,
         layerTexture: TextureHandle,
@@ -258,6 +266,10 @@ class GraphExecutor(
             // Every shader in the library derives its neighbour taps from this, so it is set for
             // all of them rather than declared per effect.
             sizes[pass.output]?.let { device.setVec2("uTexelSize", 1f / it.width, 1f / it.height) }
+            // Where a layer's paint sits inside its texture. Set for every pass rather than
+            // declared per effect, for the same reason as the texel size: the shaders that use it
+            // cannot know they were expanded into several passes.
+            device.setMat3("uFillMap", fillMap)
 
             applyUniforms(pass, context)
             device.draw(pass.instanceCount)

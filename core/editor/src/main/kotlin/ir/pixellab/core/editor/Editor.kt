@@ -49,6 +49,15 @@ class Editor(
         state = state.copy(canUndo = history.canUndo, canRedo = history.canRedo)
     }
 
+    /**
+     * How many document steps are on the undo stack.
+     *
+     * Exposed so a host that has edits of its own — painted pixels, which are not part of the
+     * document — can tell whether a call it just made recorded a step, and interleave its own
+     * history with this one. Without it the two stacks drift and undo starts skipping steps.
+     */
+    val undoDepth: Int get() = history.depth
+
     // ---- viewport ------------------------------------------------------------------------------
 
     fun resizeScreen(size: Vec2, fitIfFirst: Boolean = true) {

@@ -75,6 +75,15 @@ class CanvasSurface @JvmOverloads constructor(
     private val assetsChanged = AtomicBoolean(false)
 
     /**
+     * Bumped when an asset's pixels have been repainted.
+     *
+     * A painted layer keeps the same asset id from the first stroke to the last, so nothing else
+     * about it tells the renderer's texture cache that the pixels moved.
+     */
+    @Volatile
+    var assetGeneration: Int = 0
+
+    /**
      * Renders the document to a file, on the thread that owns the GL context.
      *
      * An export needs the same programs, the same texture pool and the same context the canvas is
@@ -172,6 +181,7 @@ class CanvasSurface @JvmOverloads constructor(
             while (running.get()) {
                 if (fontsChanged.getAndSet(false)) renderer.setFonts(fonts)
                 if (assetsChanged.getAndSet(false)) renderer.assets = assets
+                renderer.assetGeneration = assetGeneration
                 drainExports(exporter)
 
                 val frame = pending.getAndSet(null)

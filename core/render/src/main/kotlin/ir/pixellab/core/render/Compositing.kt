@@ -128,6 +128,23 @@ object Compositing {
     }
 
     /**
+     * Maps a layer texture's UV to the UV of the shape inside it.
+     *
+     * A layer's texture is grown by whatever bleed its effects need — a shadow reaching fifty units
+     * past the shape means fifty units of margin on every side. A paint that belongs to the *shape*
+     * rather than to the texture has to be sampled through this, or a placed photograph slides
+     * inside its own frame by exactly the bleed, and a gradient overlay spans the margin too.
+     */
+    fun textureUvToShapeUv(textureBounds: Rect, shapeBounds: Rect): Affine {
+        if (shapeBounds.width <= 0f || shapeBounds.height <= 0f) return Affine.IDENTITY
+        val textureUvToTexture = Affine.scale(textureBounds.width, textureBounds.height)
+        val textureToCanvas = Affine.translate(textureBounds.left, textureBounds.top)
+        val canvasToShapeUv = Affine.scale(1f / shapeBounds.width, 1f / shapeBounds.height) *
+            Affine.translate(-shapeBounds.left, -shapeBounds.top)
+        return canvasToShapeUv * textureToCanvas * textureUvToTexture
+    }
+
+    /**
      * Maps screen UV to canvas UV, for the pass that puts the finished canvas on screen.
      *
      * This is where the camera finally applies. Rendering every layer through the camera instead

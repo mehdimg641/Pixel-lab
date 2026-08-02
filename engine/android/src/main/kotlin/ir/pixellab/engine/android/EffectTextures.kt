@@ -34,6 +34,9 @@ class EffectTextures(
     var fillSize: Int = DEFAULT_FILL_SIZE
 
     override fun textureFor(effect: Effect?, sampler: String): TextureHandle? {
+        // A placed photograph is its own paint, at its own resolution. Routing it through the fill
+        // cache would resample it down to the fill texture's fixed square and lose most of it.
+        if (effect == null && sampler == "uFill") layerImage?.let { return it }
         val request = request(effect, sampler) ?: return null
         return cache.getOrPut(request.key) { upload(request.build()) }
     }
@@ -96,6 +99,15 @@ class EffectTextures(
      * reaches this through [TextureSource], which deliberately knows nothing about layers.
      */
     var layerFill: Fill = Fill.Solid(Color.BLACK)
+
+    /**
+     * The current layer's own pixels, when it has any.
+     *
+     * Set for an image layer and cleared for every other kind. Owned by the renderer rather than
+     * cached here because it is keyed on an asset, and the renderer is what knows when an asset has
+     * been repainted.
+     */
+    var layerImage: TextureHandle? = null
 
     /** Decoded pattern images, supplied by the asset store. */
     var patterns: Map<String, Bitmap> = emptyMap()
