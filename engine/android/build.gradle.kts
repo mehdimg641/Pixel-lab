@@ -45,6 +45,7 @@ dependencies {
     api(project(":core:text"))
     api(project(":core:fonts"))
     api(project(":core:render"))
+    api(project(":core:canvas"))
     implementation(libs.androidx.annotation)
 
     testImplementation(libs.junit.jupiter)

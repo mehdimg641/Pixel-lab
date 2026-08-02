@@ -20,6 +20,32 @@ data class Vec2(val x: Float = 0f, val y: Float = 0f) {
     operator fun plus(o: Vec2) = Vec2(x + o.x, y + o.y)
     operator fun minus(o: Vec2) = Vec2(x - o.x, y - o.y)
     operator fun times(s: Float) = Vec2(x * s, y * s)
+    operator fun div(s: Float) = Vec2(x / s, y / s)
+
+    /** Component-wise, for applying a [Transform]'s two-axis scale. */
+    operator fun times(o: Vec2) = Vec2(x * o.x, y * o.y)
+
+    val length: Float get() = kotlin.math.hypot(x, y)
+
+    fun dot(o: Vec2): Float = x * o.x + y * o.y
+
+    /**
+     * Rotates clockwise by [degrees].
+     *
+     * Screen and canvas coordinates both grow downwards, so this is the ordinary rotation matrix —
+     * which *looks* clockwise under a downward y axis. Every rotation in the editor uses this
+     * convention, including [Transform.rotation].
+     */
+    fun rotated(degrees: Float): Vec2 {
+        if (degrees == 0f) return this
+        val r = Math.toRadians(degrees.toDouble())
+        val c = cos(r).toFloat()
+        val s = sin(r).toFloat()
+        return Vec2(x * c - y * s, x * s + y * c)
+    }
+
+    /** Angle to the positive x axis in degrees, clockwise, in -180..180. */
+    val angle: Float get() = Math.toDegrees(kotlin.math.atan2(y.toDouble(), x.toDouble())).toFloat()
 
     companion object {
         val ZERO = Vec2(0f, 0f)
