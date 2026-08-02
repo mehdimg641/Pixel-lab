@@ -627,6 +627,146 @@ class Editor(
         )
     }
 
+    // ---- arranging ----------------------------------------------------------------------------
+
+    /**
+     * Lines the chosen layers up.
+     *
+     * Against the selection's own box when more than one is chosen and against the canvas when only
+     * one is — Photoshop's rule, and the only one that makes a single-layer align mean anything at
+     * all. A caller can override it when the user asks for the canvas explicitly.
+     */
+    fun alignLayers(
+        ids: Collection<LayerId>,
+        edge: AlignEdge,
+        target: AlignTarget = if (ids.size > 1) AlignTarget.SELECTION else AlignTarget.CANVAS,
+    ): Boolean = applyMoves(Arrange.align(placedOf(ids), edge, target, state.document.canvas.bounds))
+
+    /** Evens out the gaps between the chosen layers. Needs three; two have one gap and no middle. */
+    fun distributeLayers(ids: Collection<LayerId>, axis: DistributeAxis): Boolean =
+        applyMoves(Arrange.distribute(placedOf(ids), axis))
+
+    /**
+     * Mirrors a layer in place.
+     *
+     * A negative scale rather than a rebuilt geometry: it works for every layer kind without one of
+     * them having to know how to reverse itself, and it survives being flipped back — mirroring a
+     * path by rewriting its nodes accumulates error and eventually reverses its winding.
+     */
+    fun flipLayer(id: LayerId, horizontal: Boolean) = edit(id) { layer ->
+        val scale = layer.transform.scale
+        layer.withTransform(
+            layer.transform.copy(
+                scale = if (horizontal) scale.copy(x = -scale.x) else scale.copy(y = -scale.y),
+            ),
+        )
+    }
+
+    /**
+     * Turns the whole canvas in quarter turns.
+     *
+     * Every top-level layer rotates about the canvas centre and the canvas swaps its sides on an odd
+     * number of turns. Rotating the layers without swapping the canvas is the version that silently
+     * pushes a portrait design off the sides of a landscape artboard.
+     */
+    fun rotateCanvas(quarterTurns: Int) {
+        val turns = ((quarterTurns % 4) + 4) % 4
+        if (turns == 0) return
+        val canvas = state.document.canvas
+        val swapped = turns % 2 == 1
+        val width = if (swapped) canvas.height else canvas.width
+        val height = if (swapped) canvas.width else canvas.height
+
+        history.record(state.document)
+        val degrees = turns * QUARTER_TURN
+        val from = Vec2(canvas.width / 2f, canvas.height / 2f)
+        val to = Vec2(width / 2f, height / 2f)
+        val moved = state.document.layers.map { layer ->
+            val transform = layer.transform
+            val turned = rotateAbout(transform.translation, from, degrees) - from + to
+            layer.withTransform(
+                transform.copy(translation = turned, rotation = transform.rotation + degrees),
+            )
+        }
+        state = state.copy(
+            document = state.document.copy(
+                canvas = canvas.copy(width = width, height = height),
+                layers = moved,
+            ),
+            viewportBeforeSheet = null,
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        fitCanvas()
+    }
+
+    /**
+     * Replaces a run of layers with one, for merging and flattening.
+     *
+     * The editor only does the *structure*: the pixels have to be rendered, which needs the GPU and
+     * therefore the host. Splitting it this way is what keeps merging testable — the rule about
+     * where the merged layer lands and what happens to the selection is decided here, and the host
+     * supplies a picture.
+     *
+     * The result takes the place of the **topmost** of the merged layers, because that is where the
+     * combined image sits in the stack; putting it at the bottom-most position would move it behind
+     * anything that was between them.
+     */
+    fun replaceWithMerged(ids: Collection<LayerId>, merged: Layer): Boolean {
+        val chosen = state.document.layers.filter { it.id in ids }
+        if (chosen.size < 2) return false
+
+        history.record(state.document)
+        val anchor = chosen.last().id
+        state = state.copy(
+            document = state.document.copy(
+                layers = state.document.layers
+                    .filter { it.id !in ids || it.id == anchor }
+                    .map { if (it.id == anchor) merged else it },
+            ),
+            selection = Selection.of(merged.id),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+        return true
+    }
+
+    /** Which top-level layers a merge or flatten would take, front to back. */
+    fun mergeableBelow(id: LayerId): List<LayerId> {
+        val index = state.document.layers.indexOfFirst { it.id == id }
+        if (index <= 0) return emptyList()
+        return listOf(state.document.layers[index - 1].id, id)
+    }
+
+    fun visibleLayers(): List<LayerId> = state.document.layers.filter { it.visible }.map { it.id }
+
+    private fun placedOf(ids: Collection<LayerId>): List<Placed> =
+        state.document.layers
+            .filter { it.id in ids }
+            .map { Placed(it.id, Handles.canvasBounds(bounds.of(it), it.transform)) }
+
+    private fun applyMoves(moves: Map<LayerId, Vec2>): Boolean {
+        if (moves.isEmpty()) return false
+        history.record(state.document)
+        var document = state.document
+        for ((id, delta) in moves) {
+            document = document.mapLayer(id) {
+                it.withTransform(it.transform.copy(translation = it.transform.translation + delta))
+            }
+        }
+        state = state.copy(document = document, canUndo = history.canUndo, canRedo = history.canRedo)
+        return true
+    }
+
+    private fun rotateAbout(point: Vec2, pivot: Vec2, degrees: Float): Vec2 {
+        val radians = degrees * DEGREES_TO_RADIANS
+        val cos = kotlin.math.cos(radians)
+        val sin = kotlin.math.sin(radians)
+        val dx = point.x - pivot.x
+        val dy = point.y - pivot.y
+        return Vec2(pivot.x + dx * cos - dy * sin, pivot.y + dx * sin + dy * cos)
+    }
+
     // ---- the canvas itself ------------------------------------------------------------------------
 
     /**
@@ -849,6 +989,10 @@ class Editor(
 
     private companion object {
         const val FIT_PADDING = 24f
+
+        const val QUARTER_TURN = 90f
+
+        const val DEGREES_TO_RADIANS = (kotlin.math.PI / 180.0).toFloat()
 
         /** Reserved for the top bar, which the canvas must also stay clear of. */
         const val TOP_BAR_HEIGHT = 56f

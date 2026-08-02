@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.automirrored.filled.AlignHorizontalLeft
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Category
@@ -65,6 +66,8 @@ import ir.pixellab.core.model.Effect
 import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.LayerId
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.launch
 
 /**
@@ -209,6 +212,12 @@ fun EditorScreen(model: EditorViewModel) {
                             modifier = Modifier.fillMaxHeight(),
                         )
                         is SheetContent.ShapeTools -> ShapeSheetBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.Arrange -> ArrangeSheetBody(
+                            state = state,
+                            model = model,
+                            render = { document -> renderDocument(handle, document) },
+                            modifier = Modifier.fillMaxHeight(),
+                        )
                         SheetContent.StyleLibrary -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
                         // The sheet is open, so the content is never null; the branch is here
                         // because the type says it could be and a silent `else` would swallow a
@@ -302,6 +311,9 @@ private fun ContextualBar(state: EditorState, model: EditorViewModel, onEditText
             // A stroke is the effect people reach for first, and it is immediately visible, so the
             // sheet that opens has something to show.
             model.act { addEffect(id, Effect.Stroke(8f, Fill.Solid(Color.WHITE))) }
+        }
+        BarButton(Icons.AutoMirrored.Filled.AlignHorizontalLeft, "چیدمان") {
+            model.act { openSheet(SheetContent.Arrange, SheetDetent.FULL) }
         }
         BarButton(Icons.Filled.ContentCopy, "کپی") {
             // The id comes from the document rather than from a count: a count collides the first
@@ -450,3 +462,22 @@ private fun BarButton(
 
 /** What the picker accepts. Every still image; video is deliberately not part of this app. */
 private const val IMAGE_MIME = "image/*"
+
+/**
+ * Renders a document to pixels on the GL thread.
+ *
+ * The bridge merging and rasterising need: both replace layers with a picture, and the picture can
+ * only come from the renderer that draws the canvas. Kept here rather than in the view model
+ * because it needs the view, and a view model that holds a view holds the whole activity with it.
+ */
+private suspend fun renderDocument(
+    handle: CanvasHandle,
+    document: ir.pixellab.core.model.Document,
+): ir.pixellab.core.codec.RasterImage? {
+    val surface = handle.surface ?: return null
+    val result: ir.pixellab.engine.android.ExportResult = suspendCoroutine { continuation ->
+        surface.export(document, ir.pixellab.core.codec.Format.PNG, 1f) { continuation.resume(it) }
+    }
+    val success = result as? ir.pixellab.engine.android.ExportResult.Success ?: return null
+    return runCatching { ir.pixellab.core.codec.Codecs.decode(success.bytes) }.getOrNull()
+}

@@ -117,6 +117,9 @@ sealed interface SheetContent {
     /** The shape tool: which primitive, and the parameters of the one already selected. */
     data object ShapeTools : SheetContent
 
+    /** Where things sit: aligning, distributing, mirroring, turning, merging, exact numbers. */
+    data object Arrange : SheetContent
+
     /** The layer this sheet is about, if any — used to keep it out from under the sheet. */
     val subject: LayerId?
         get() = when (this) {

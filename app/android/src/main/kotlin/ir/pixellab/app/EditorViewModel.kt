@@ -18,6 +18,8 @@ import ir.pixellab.core.model.DocumentId
 import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.FontRef
 import ir.pixellab.core.model.Layer
+import ir.pixellab.core.model.with
+import ir.pixellab.core.model.withTransform
 import ir.pixellab.core.model.LayerId
 import ir.pixellab.core.model.ShapeGeometry
 import ir.pixellab.core.model.TextSpec
@@ -406,6 +408,21 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (state.tool != Tool.BRUSH) return false
         val canvasPoint = { screen: Vec2 -> state.viewport.toCanvas(screen) }
 
+        // An armed eyedropper takes the tap before anything else does, and disarms itself: the
+        // user asked for one colour, not for a mode they then have to remember to leave.
+        if (armingEyedropper) {
+            val at = when (gesture) {
+                is CanvasGesture.Tap -> gesture.position
+                is CanvasGesture.DragEnd -> gesture.position
+                else -> null
+            }
+            if (at != null) {
+                pickColor(canvasPoint(at))?.let { paint.preset = paint.preset.copy(color = it) }
+                armingEyedropper = false
+            }
+            return true
+        }
+
         // The armed clone source swallows the whole gesture, including the drag that would otherwise
         // paint. Letting a drag through would set the source and then immediately paint over it.
         if (paint.armingCloneSource) {
@@ -614,6 +631,153 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     /** The colour behind everything — Photoshop's background layer, without the layer. */
     fun setCanvasBackground(fill: Fill?) = edit { setCanvasBackground(fill) }
+
+    // ---- arranging -------------------------------------------------------------------------------
+
+    /**
+     * Sets a layer's placement from typed numbers.
+     *
+     * Position is the *bounding box's* top-left, not the transform's translation, because that is
+     * what the user is reading off the canvas. On a rotated or scaled layer the two differ, and
+     * showing the raw translation would put a number in the field that does not match the ruler.
+     */
+    fun setPlacement(id: LayerId, left: Float?, top: Float?, rotation: Float?) = edit {
+        val layer = state.document.findLayer(id) ?: return@edit
+        val box = ir.pixellab.core.canvas.Handles.canvasBounds(bounds.of(layer), layer.transform)
+        val delta = Vec2((left ?: box.left) - box.left, (top ?: box.top) - box.top)
+        replaceLayer(id) {
+            it.withTransform(
+                it.transform.copy(
+                    translation = it.transform.translation + delta,
+                    rotation = rotation ?: it.transform.rotation,
+                ),
+            )
+        }
+    }
+
+    /** The box the placement fields show, in canvas units. */
+    fun placementOf(id: LayerId): ir.pixellab.core.model.Rect? {
+        val layer = state.document.findLayer(id) ?: return null
+        return ir.pixellab.core.canvas.Handles.canvasBounds(bounds.of(layer), layer.transform)
+    }
+
+    /**
+     * Merges layers into one picture.
+     *
+     * The pixels have to be rendered, which needs the GL thread, so the caller supplies the render
+     * rather than this holding a view. Each merged layer is drawn *with everything else hidden* —
+     * rendering the whole document and cropping would bake in whatever was underneath.
+     *
+     * @param render draws a document and hands back its pixels, or null if the canvas is not ready.
+     * @return true when the document changed.
+     */
+    suspend fun mergeLayers(
+        ids: List<LayerId>,
+        name: String,
+        render: suspend (Document) -> ir.pixellab.core.codec.RasterImage?,
+    ): Boolean {
+        if (ids.size < 2) return false
+        val document = state.document
+        val onlyThese = document.copy(
+            layers = document.layers.map { it.with(visible = it.id in ids && it.visible) },
+        )
+        val pixels = render(onlyThese) ?: return false
+
+        val id = edit { nextLayerId("merged") }
+        val asset = ir.pixellab.core.model.AssetId(id.value)
+        assetStore.put(asset, pixels)
+        paint.bumpGeneration()
+        // At the origin at natural size: the render already covers the whole canvas, so any
+        // transform on it would move pixels that are already where they belong.
+        return edit {
+            replaceWithMerged(ids, Layer.Image(id = id, asset = asset, name = name))
+        }
+    }
+
+    /** Merge down: this layer and the one beneath it. */
+    suspend fun mergeDown(render: suspend (Document) -> ir.pixellab.core.codec.RasterImage?): Boolean {
+        val id = state.selection.primary ?: return false
+        val pair = editor.mergeableBelow(id)
+        return mergeLayers(pair, name = "ادغام‌شده", render = render)
+    }
+
+    suspend fun mergeVisible(render: suspend (Document) -> ir.pixellab.core.codec.RasterImage?): Boolean =
+        mergeLayers(editor.visibleLayers(), name = "ادغام مرئی‌ها", render = render)
+
+    /**
+     * Rasterises a layer: replaces it with its own pixels.
+     *
+     * The step that turns an editable thing into a picture, and the only way an effect stack ever
+     * becomes something a brush can paint over. Like text-to-shape it is a one-way door, and the
+     * sheet says so before it happens.
+     */
+    suspend fun rasterize(render: suspend (Document) -> ir.pixellab.core.codec.RasterImage?): Boolean {
+        val id = state.selection.primary ?: return false
+        val document = state.document
+        val alone = document.copy(layers = document.layers.map { it.with(visible = it.id == id) })
+        val pixels = render(alone) ?: return false
+
+        val asset = ir.pixellab.core.model.AssetId("raster-${id.value}")
+        assetStore.put(asset, pixels)
+        paint.bumpGeneration()
+        val name = document.findLayer(id)?.name ?: "لایه"
+        edit { replaceLayer(id) { Layer.Image(id = id, asset = asset, name = name) } }
+        bounds.invalidate(id)
+        return true
+    }
+
+    // ---- colour ----------------------------------------------------------------------------------
+
+    /**
+     * The eyedropper: the colour under a canvas point.
+     *
+     * Samples the selected image layer rather than the composited screen, and the sheet says which.
+     * Reading the composite means a round trip to the GL thread for a single pixel, and it would
+     * also pick up the checkerboard behind a transparent area — which is not a colour the user
+     * can see in their document.
+     *
+     * @param radius averages a small square, so a sample on a noisy photograph gives the colour
+     *   the eye reads rather than one stray pixel of sensor noise.
+     */
+    fun pickColor(at: Vec2, radius: Int = SAMPLE_RADIUS): Color? {
+        val layer = state.primaryLayer as? Layer.Image ?: return null
+        val image = assetStore.source.load(layer.asset) ?: return null
+        // Through the layer's own transform, so a moved or scaled photograph is sampled where the
+        // finger actually is rather than where it would have been at the origin.
+        val local = at - layer.transform.translation
+        val scale = layer.transform.scale
+        val x = (local.x / (if (scale.x == 0f) 1f else scale.x)).toInt()
+        val y = (local.y / (if (scale.y == 0f) 1f else scale.y)).toInt()
+
+        var r = 0L
+        var g = 0L
+        var b = 0L
+        var a = 0L
+        var count = 0
+        for (dy in -radius..radius) {
+            for (dx in -radius..radius) {
+                val sx = x + dx
+                val sy = y + dy
+                if (sx !in 0 until image.width || sy !in 0 until image.height) continue
+                val pixel = image[sx, sy]
+                a += (pixel ushr 24) and 0xFF
+                r += (pixel shr 16) and 0xFF
+                g += (pixel shr 8) and 0xFF
+                b += pixel and 0xFF
+                count++
+            }
+        }
+        if (count == 0) return null
+        return Color(
+            r.toFloat() / count / MAX_CHANNEL,
+            g.toFloat() / count / MAX_CHANNEL,
+            b.toFloat() / count / MAX_CHANNEL,
+            a.toFloat() / count / MAX_CHANNEL,
+        )
+    }
+
+    /** True while the next canvas tap samples a colour rather than doing what the tool does. */
+    var armingEyedropper: Boolean by mutableStateOf(false)
 
     // ---- pixels ----------------------------------------------------------------------------------
 
@@ -924,6 +1088,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         /** The platform's 48dp minimum, in screen pixels, before the zoom is divided out. */
         const val TOUCH_RADIUS = 24f
+
+        /** A 5x5 average: enough to ignore sensor noise, small enough to stay on one feature. */
+        const val SAMPLE_RADIUS = 2
+
+        const val MAX_CHANNEL = 255f
 
         /** A blank square canvas with one shape, so the editor has something to select on launch. */
         fun startingDocument(): Document = Document(

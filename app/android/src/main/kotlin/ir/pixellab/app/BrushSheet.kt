@@ -71,7 +71,43 @@ fun BrushSheetBody(model: EditorViewModel, modifier: Modifier = Modifier) {
             CloneSource(model)
         } else if (!preset.erase) {
             ColorRow(preset.color) { model.paint.preset = preset.copy(color = it) }
+            Eyedropper(model)
         }
+    }
+}
+
+/**
+ * The eyedropper.
+ *
+ * Arms the next canvas tap, for the same reason the clone stamp's source does: a touch screen has
+ * no modifier key, and a long press is already the gesture that reaches a buried layer. It samples
+ * the **selected image layer**, not the composited screen — reading the composite means a round
+ * trip to the GL thread for one pixel, and it would also pick up the chequerboard behind a
+ * transparent area, which is not a colour that exists in the user's document.
+ */
+@Composable
+private fun Eyedropper(model: EditorViewModel) {
+    val onPixels = model.state.primaryLayer is ir.pixellab.core.model.Layer.Image
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            SheetChip(
+                "قطره‌چکان",
+                chosen = model.armingEyedropper,
+                enabled = onPixels,
+            ) {
+                model.armingEyedropper = !model.armingEyedropper
+            }
+        }
+        Text(
+            when {
+                !onPixels -> "یک لایهٔ تصویر انتخاب کنید تا بشود از آن رنگ برداشت"
+                model.armingEyedropper -> "حالا روی بوم، جایی که رنگش را می‌خواهید بزنید"
+                else -> "رنگ را از پیکسل‌های لایهٔ انتخاب‌شده برمی‌دارد، نه از تصویر روی صفحه"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = if (model.armingEyedropper) Ink.Accent else Ink.TextMuted,
+            modifier = Modifier.padding(top = 4.dp),
+        )
     }
 }
 
