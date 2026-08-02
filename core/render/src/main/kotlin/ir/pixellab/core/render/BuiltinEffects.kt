@@ -1,13 +1,36 @@
 package ir.pixellab.core.render
 
 import ir.pixellab.core.model.BevelStyle
+import ir.pixellab.core.model.BevelTechnique
+import ir.pixellab.core.model.Curve
 import ir.pixellab.core.model.Effect
+import ir.pixellab.core.model.Fill
+import ir.pixellab.core.model.GlowSource
 import ir.pixellab.core.model.StrokePosition
 import ir.pixellab.core.model.Vec2
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 /** Blur kernels reach roughly three standard deviations; less than that visibly clips. */
 private const val BLUR_REACH = 3f
+
+/**
+ * Builds a choice from enum constants and their Persian names.
+ *
+ * The constant's name is what is stored; the Persian string is only ever shown. Storing the label
+ * would put interface text into saved documents and break them the moment a wording changes.
+ */
+private fun choice(
+    key: String,
+    label: String,
+    vararg options: Pair<Enum<*>, String>,
+    default: Enum<*> = options.first().first,
+) = ParameterSpec.Choice(
+    key = key,
+    label = label,
+    options = options.map { (value, text) -> ParameterSpec.Choice.Option(value.name, text) },
+    default = default.name,
+)
 
 private fun lightOffset(distance: Float, angle: Float, useGlobal: Boolean, globalAngle: Float): Vec2 {
     val a = if (useGlobal) globalAngle else angle
@@ -23,8 +46,7 @@ object StrokeModule : EffectModule<Effect.Stroke> {
     override val parameters = listOf(
         ParameterSpec.Slider("width", "ضخامت", 0f..200f, 4f, ParameterSpec.Slider.Unit.PIXELS),
         ParameterSpec.FillPicker("fill", "پرکننده"),
-        ParameterSpec.Choice("position", "موقعیت", listOf("داخل", "مرکز", "بیرون"), "بیرون"),
-        ParameterSpec.Slider("opacity", "شفافیت", 0f..1f, 1f, ParameterSpec.Slider.Unit.PERCENT),
+        choice("position", "موقعیت", StrokePosition.INSIDE to "داخل", StrokePosition.CENTER to "مرکز", StrokePosition.OUTSIDE to "بیرون"),
     )
 
     override fun bleed(effect: Effect.Stroke, context: BleedContext) = when (effect.position) {
@@ -38,6 +60,20 @@ object StrokeModule : EffectModule<Effect.Stroke> {
         floats = mapOf("uWidth" to effect.width * context.scale, "uOpacity" to effect.opacity),
         ints = mapOf("uPosition" to effect.position.ordinal),
     )
+
+    override fun read(effect: Effect.Stroke, key: String) = when (key) {
+        "width" -> num(effect.width)
+        "fill" -> paint(effect.fill)
+        "position" -> option(effect.position)
+        else -> null
+    }
+
+    override fun write(effect: Effect.Stroke, key: String, value: ParameterValue) = when (key) {
+        "width" -> effect.copy(width = value.number ?: effect.width)
+        "fill" -> effect.copy(fill = value.paint ?: effect.fill)
+        "position" -> effect.copy(position = value.enumOf<StrokePosition>() ?: effect.position)
+        else -> effect
+    }
 }
 
 object DropShadowModule : EffectModule<Effect.DropShadow> {
@@ -74,6 +110,32 @@ object DropShadowModule : EffectModule<Effect.DropShadow> {
     }
 
     override fun cost(effect: Effect.DropShadow) = if (effect.blur > 0f) 4 else 1
+
+    override fun read(effect: Effect.DropShadow, key: String) = when (key) {
+        "color" -> tint(effect.color)
+        "angle" -> num(effect.angle)
+        "distance" -> num(effect.distance)
+        "spread" -> num(effect.spread)
+        "blur" -> num(effect.blur)
+        "contour" -> shape(effect.contour)
+        "noise" -> num(effect.noise)
+        "knockOut" -> flag(effect.knockOut)
+        "useGlobalLight" -> flag(effect.useGlobalLight)
+        else -> null
+    }
+
+    override fun write(effect: Effect.DropShadow, key: String, value: ParameterValue) = when (key) {
+        "color" -> effect.copy(color = value.tint ?: effect.color)
+        "angle" -> effect.copy(angle = value.number ?: effect.angle)
+        "distance" -> effect.copy(distance = value.number ?: effect.distance)
+        "spread" -> effect.copy(spread = value.number ?: effect.spread)
+        "blur" -> effect.copy(blur = value.number ?: effect.blur)
+        "contour" -> effect.copy(contour = value.shape ?: effect.contour)
+        "noise" -> effect.copy(noise = value.number ?: effect.noise)
+        "knockOut" -> effect.copy(knockOut = value.flag ?: effect.knockOut)
+        "useGlobalLight" -> effect.copy(useGlobalLight = value.flag ?: effect.useGlobalLight)
+        else -> effect
+    }
 }
 
 object InnerShadowModule : EffectModule<Effect.InnerShadow> {
@@ -96,6 +158,30 @@ object InnerShadowModule : EffectModule<Effect.InnerShadow> {
     )
 
     override fun cost(effect: Effect.InnerShadow) = 4
+
+    override fun read(effect: Effect.InnerShadow, key: String) = when (key) {
+        "color" -> tint(effect.color)
+        "angle" -> num(effect.angle)
+        "distance" -> num(effect.distance)
+        "choke" -> num(effect.choke)
+        "blur" -> num(effect.blur)
+        "contour" -> shape(effect.contour)
+        "noise" -> num(effect.noise)
+        "useGlobalLight" -> flag(effect.useGlobalLight)
+        else -> null
+    }
+
+    override fun write(effect: Effect.InnerShadow, key: String, value: ParameterValue) = when (key) {
+        "color" -> effect.copy(color = value.tint ?: effect.color)
+        "angle" -> effect.copy(angle = value.number ?: effect.angle)
+        "distance" -> effect.copy(distance = value.number ?: effect.distance)
+        "choke" -> effect.copy(choke = value.number ?: effect.choke)
+        "blur" -> effect.copy(blur = value.number ?: effect.blur)
+        "contour" -> effect.copy(contour = value.shape ?: effect.contour)
+        "noise" -> effect.copy(noise = value.number ?: effect.noise)
+        "useGlobalLight" -> effect.copy(useGlobalLight = value.flag ?: effect.useGlobalLight)
+        else -> effect
+    }
 }
 
 object OuterGlowModule : EffectModule<Effect.OuterGlow> {
@@ -119,6 +205,24 @@ object OuterGlowModule : EffectModule<Effect.OuterGlow> {
     )
 
     override fun cost(effect: Effect.OuterGlow) = 4
+
+    override fun read(effect: Effect.OuterGlow, key: String) = when (key) {
+        "fill" -> paint(effect.fill)
+        "spread" -> num(effect.spread)
+        "blur" -> num(effect.blur)
+        "contour" -> shape(effect.contour)
+        "noise" -> num(effect.noise)
+        else -> null
+    }
+
+    override fun write(effect: Effect.OuterGlow, key: String, value: ParameterValue) = when (key) {
+        "fill" -> effect.copy(fill = value.paint ?: effect.fill)
+        "spread" -> effect.copy(spread = value.number ?: effect.spread)
+        "blur" -> effect.copy(blur = value.number ?: effect.blur)
+        "contour" -> effect.copy(contour = value.shape ?: effect.contour)
+        "noise" -> effect.copy(noise = value.number ?: effect.noise)
+        else -> effect
+    }
 }
 
 object InnerGlowModule : EffectModule<Effect.InnerGlow> {
@@ -127,7 +231,7 @@ object InnerGlowModule : EffectModule<Effect.InnerGlow> {
     override val slot = PassSlot.INNER_GLOW
     override val parameters = listOf(
         ParameterSpec.FillPicker("fill", "پرکننده"),
-        ParameterSpec.Choice("source", "منبع", listOf("مرکز", "لبه"), "لبه"),
+        choice("source", "منبع", GlowSource.CENTER to "مرکز", GlowSource.EDGE to "لبه", default = GlowSource.EDGE),
         ParameterSpec.Slider("choke", "فشردگی", 0f..100f, 0f, ParameterSpec.Slider.Unit.PIXELS),
         ParameterSpec.Slider("blur", "محو", 0f..300f, 8f, ParameterSpec.Slider.Unit.PIXELS),
     )
@@ -141,6 +245,26 @@ object InnerGlowModule : EffectModule<Effect.InnerGlow> {
     )
 
     override fun cost(effect: Effect.InnerGlow) = 4
+
+    override fun read(effect: Effect.InnerGlow, key: String) = when (key) {
+        "fill" -> paint(effect.fill)
+        "source" -> option(effect.source)
+        "choke" -> num(effect.choke)
+        "blur" -> num(effect.blur)
+        "contour" -> shape(effect.contour)
+        "noise" -> num(effect.noise)
+        else -> null
+    }
+
+    override fun write(effect: Effect.InnerGlow, key: String, value: ParameterValue) = when (key) {
+        "fill" -> effect.copy(fill = value.paint ?: effect.fill)
+        "source" -> effect.copy(source = value.enumOf<GlowSource>() ?: effect.source)
+        "choke" -> effect.copy(choke = value.number ?: effect.choke)
+        "blur" -> effect.copy(blur = value.number ?: effect.blur)
+        "contour" -> effect.copy(contour = value.shape ?: effect.contour)
+        "noise" -> effect.copy(noise = value.number ?: effect.noise)
+        else -> effect
+    }
 }
 
 object BevelModule : EffectModule<Effect.Bevel> {
@@ -148,12 +272,18 @@ object BevelModule : EffectModule<Effect.Bevel> {
     override val label = "پخ و برجستگی"
     override val slot = PassSlot.BEVEL
     override val parameters = listOf(
-        ParameterSpec.Choice(
+        choice(
             "style", "سبک",
-            listOf("پخ بیرونی", "پخ داخلی", "برجسته", "برجستهٔ بالشی", "برجستهٔ خط دور"),
-            "پخ داخلی",
+            BevelStyle.OUTER_BEVEL to "پخ بیرونی", BevelStyle.INNER_BEVEL to "پخ داخلی",
+            BevelStyle.EMBOSS to "برجسته", BevelStyle.PILLOW_EMBOSS to "برجستهٔ بالشی",
+            BevelStyle.STROKE_EMBOSS to "برجستهٔ خط دور",
+            default = BevelStyle.INNER_BEVEL,
         ),
-        ParameterSpec.Choice("technique", "روش", listOf("نرم", "اسکنهٔ سخت", "اسکنهٔ نرم"), "نرم"),
+        choice(
+            "technique", "روش",
+            BevelTechnique.SMOOTH to "نرم", BevelTechnique.CHISEL_HARD to "اسکنهٔ سخت",
+            BevelTechnique.CHISEL_SOFT to "اسکنهٔ نرم",
+        ),
         // The reference PSDs run depth to 317%, so the range must reach well past 100.
         ParameterSpec.Slider("depth", "عمق", 0f..1000f, 100f, ParameterSpec.Slider.Unit.PERCENT, skew = 2f),
         ParameterSpec.Slider("size", "اندازه", 0f..250f, 8f, ParameterSpec.Slider.Unit.PIXELS),
@@ -183,6 +313,40 @@ object BevelModule : EffectModule<Effect.Bevel> {
     )
 
     override fun cost(effect: Effect.Bevel) = 3
+
+    override fun read(effect: Effect.Bevel, key: String) = when (key) {
+        "style" -> option(effect.style)
+        "technique" -> option(effect.technique)
+        "depth" -> num(effect.depth)
+        "size" -> num(effect.size)
+        "soften" -> num(effect.soften)
+        "angle" -> num(effect.angle)
+        "altitude" -> num(effect.altitude)
+        "useGlobalLight" -> flag(effect.useGlobalLight)
+        "profile" -> shape(effect.profile)
+        "glossContour" -> shape(effect.glossContour)
+        "highlightColor" -> tint(effect.highlightColor)
+        "shadowColor" -> tint(effect.shadowColor)
+        "textureDepth" -> num(effect.textureDepth)
+        else -> null
+    }
+
+    override fun write(effect: Effect.Bevel, key: String, value: ParameterValue) = when (key) {
+        "style" -> effect.copy(style = value.enumOf<BevelStyle>() ?: effect.style)
+        "technique" -> effect.copy(technique = value.enumOf<BevelTechnique>() ?: effect.technique)
+        "depth" -> effect.copy(depth = value.number ?: effect.depth)
+        "size" -> effect.copy(size = value.number ?: effect.size)
+        "soften" -> effect.copy(soften = value.number ?: effect.soften)
+        "angle" -> effect.copy(angle = value.number ?: effect.angle)
+        "altitude" -> effect.copy(altitude = value.number ?: effect.altitude)
+        "useGlobalLight" -> effect.copy(useGlobalLight = value.flag ?: effect.useGlobalLight)
+        "profile" -> effect.copy(profile = value.shape ?: effect.profile)
+        "glossContour" -> effect.copy(glossContour = value.shape ?: effect.glossContour)
+        "highlightColor" -> effect.copy(highlightColor = value.tint ?: effect.highlightColor)
+        "shadowColor" -> effect.copy(shadowColor = value.tint ?: effect.shadowColor)
+        "textureDepth" -> effect.copy(textureDepth = value.number ?: effect.textureDepth)
+        else -> effect
+    }
 }
 
 object SatinModule : EffectModule<Effect.Satin> {
@@ -206,6 +370,26 @@ object SatinModule : EffectModule<Effect.Satin> {
     )
 
     override fun cost(effect: Effect.Satin) = 3
+
+    override fun read(effect: Effect.Satin, key: String) = when (key) {
+        "color" -> tint(effect.color)
+        "angle" -> num(effect.angle)
+        "distance" -> num(effect.distance)
+        "blur" -> num(effect.blur)
+        "contour" -> shape(effect.contour)
+        "invert" -> flag(effect.invert)
+        else -> null
+    }
+
+    override fun write(effect: Effect.Satin, key: String, value: ParameterValue) = when (key) {
+        "color" -> effect.copy(color = value.tint ?: effect.color)
+        "angle" -> effect.copy(angle = value.number ?: effect.angle)
+        "distance" -> effect.copy(distance = value.number ?: effect.distance)
+        "blur" -> effect.copy(blur = value.number ?: effect.blur)
+        "contour" -> effect.copy(contour = value.shape ?: effect.contour)
+        "invert" -> effect.copy(invert = value.flag ?: effect.invert)
+        else -> effect
+    }
 }
 
 object OverlayModule : EffectModule<Effect.Overlay> {
@@ -218,6 +402,16 @@ object OverlayModule : EffectModule<Effect.Overlay> {
 
     override fun describe(effect: Effect.Overlay, context: RenderContext) =
         PassDescriptor(shaderId = "overlay", floats = mapOf("uOpacity" to effect.opacity))
+
+    override fun read(effect: Effect.Overlay, key: String) = when (key) {
+        "fill" -> paint(effect.fill)
+        else -> null
+    }
+
+    override fun write(effect: Effect.Overlay, key: String, value: ParameterValue) = when (key) {
+        "fill" -> effect.copy(fill = value.paint ?: effect.fill)
+        else -> effect
+    }
 }
 
 object ExtrudeModule : EffectModule<Effect.Extrude> {
@@ -258,6 +452,30 @@ object ExtrudeModule : EffectModule<Effect.Extrude> {
     )
 
     override fun cost(effect: Effect.Extrude) = effect.steps
+
+    override fun read(effect: Effect.Extrude, key: String) = when (key) {
+        "steps" -> num(effect.steps)
+        "offsetX" -> num(effect.stepOffset.x)
+        "offsetY" -> num(effect.stepOffset.y)
+        "nearFill" -> paint(effect.nearFill)
+        "farFill" -> paint(effect.farFill)
+        "falloff" -> shape(effect.falloff)
+        "farOpacity" -> num(effect.farOpacity)
+        else -> null
+    }
+
+    override fun write(effect: Effect.Extrude, key: String, value: ParameterValue) = when (key) {
+        // The model rejects a step count outside 1..512, and a slider dragged to its end would
+        // otherwise throw out of a gesture rather than stopping at the limit.
+        "steps" -> effect.copy(steps = value.number?.roundToInt()?.coerceIn(1, 512) ?: effect.steps)
+        "offsetX" -> effect.copy(stepOffset = Vec2(value.number ?: effect.stepOffset.x, effect.stepOffset.y))
+        "offsetY" -> effect.copy(stepOffset = Vec2(effect.stepOffset.x, value.number ?: effect.stepOffset.y))
+        "nearFill" -> effect.copy(nearFill = value.paint ?: effect.nearFill)
+        "farFill" -> effect.copy(farFill = value.paint ?: effect.farFill)
+        "falloff" -> effect.copy(falloff = value.shape ?: effect.falloff)
+        "farOpacity" -> effect.copy(farOpacity = value.number ?: effect.farOpacity)
+        else -> effect
+    }
 }
 
 object ReflectionModule : EffectModule<Effect.Reflection> {
@@ -286,6 +504,24 @@ object ReflectionModule : EffectModule<Effect.Reflection> {
     )
 
     override fun cost(effect: Effect.Reflection) = 2
+
+    override fun read(effect: Effect.Reflection, key: String) = when (key) {
+        "gap" -> num(effect.gap)
+        "height" -> num(effect.height)
+        "startOpacity" -> num(effect.startOpacity)
+        "endOpacity" -> num(effect.endOpacity)
+        "blur" -> num(effect.blur)
+        else -> null
+    }
+
+    override fun write(effect: Effect.Reflection, key: String, value: ParameterValue) = when (key) {
+        "gap" -> effect.copy(gap = value.number ?: effect.gap)
+        "height" -> effect.copy(height = value.number ?: effect.height)
+        "startOpacity" -> effect.copy(startOpacity = value.number ?: effect.startOpacity)
+        "endOpacity" -> effect.copy(endOpacity = value.number ?: effect.endOpacity)
+        "blur" -> effect.copy(blur = value.number ?: effect.blur)
+        else -> effect
+    }
 }
 
 object ChromaticOffsetModule : EffectModule<Effect.ChromaticOffset> {
@@ -312,6 +548,22 @@ object ChromaticOffsetModule : EffectModule<Effect.ChromaticOffset> {
             "uBlue" to floatArrayOf(effect.blueOffset.x * context.scale, effect.blueOffset.y * context.scale),
         ),
     )
+
+    override fun read(effect: Effect.ChromaticOffset, key: String) = when (key) {
+        "redX" -> num(effect.redOffset.x)
+        "redY" -> num(effect.redOffset.y)
+        "blueX" -> num(effect.blueOffset.x)
+        "blueY" -> num(effect.blueOffset.y)
+        else -> null
+    }
+
+    override fun write(effect: Effect.ChromaticOffset, key: String, value: ParameterValue) = when (key) {
+        "redX" -> effect.copy(redOffset = Vec2(value.number ?: effect.redOffset.x, effect.redOffset.y))
+        "redY" -> effect.copy(redOffset = Vec2(effect.redOffset.x, value.number ?: effect.redOffset.y))
+        "blueX" -> effect.copy(blueOffset = Vec2(value.number ?: effect.blueOffset.x, effect.blueOffset.y))
+        "blueY" -> effect.copy(blueOffset = Vec2(effect.blueOffset.x, value.number ?: effect.blueOffset.y))
+        else -> effect
+    }
 }
 
 object BackdropBlurModule : EffectModule<Effect.BackdropBlur> {
@@ -339,6 +591,24 @@ object BackdropBlurModule : EffectModule<Effect.BackdropBlur> {
     )
 
     override fun cost(effect: Effect.BackdropBlur) = 6
+
+    override fun read(effect: Effect.BackdropBlur, key: String) = when (key) {
+        "radius" -> num(effect.radius)
+        "saturation" -> num(effect.saturation)
+        "brightness" -> num(effect.brightness)
+        "tint" -> tint(effect.tint)
+        "grain" -> num(effect.grain)
+        else -> null
+    }
+
+    override fun write(effect: Effect.BackdropBlur, key: String, value: ParameterValue) = when (key) {
+        "radius" -> effect.copy(radius = value.number ?: effect.radius)
+        "saturation" -> effect.copy(saturation = value.number ?: effect.saturation)
+        "brightness" -> effect.copy(brightness = value.number ?: effect.brightness)
+        "tint" -> effect.copy(tint = value.tint ?: effect.tint)
+        "grain" -> effect.copy(grain = value.number ?: effect.grain)
+        else -> effect
+    }
 }
 
 object NoiseModule : EffectModule<Effect.Noise> {
@@ -358,6 +628,20 @@ object NoiseModule : EffectModule<Effect.Noise> {
         floats = mapOf("uAmount" to effect.amount, "uScale" to effect.scale),
         ints = mapOf("uMono" to if (effect.monochrome) 1 else 0),
     )
+
+    override fun read(effect: Effect.Noise, key: String) = when (key) {
+        "amount" -> num(effect.amount)
+        "scale" -> num(effect.scale)
+        "monochrome" -> flag(effect.monochrome)
+        else -> null
+    }
+
+    override fun write(effect: Effect.Noise, key: String, value: ParameterValue) = when (key) {
+        "amount" -> effect.copy(amount = value.number ?: effect.amount)
+        "scale" -> effect.copy(scale = value.number ?: effect.scale)
+        "monochrome" -> effect.copy(monochrome = value.flag ?: effect.monochrome)
+        else -> effect
+    }
 }
 
 object EdgeRoughenModule : EffectModule<Effect.EdgeRoughen> {
@@ -382,6 +666,20 @@ object EdgeRoughenModule : EffectModule<Effect.EdgeRoughen> {
     )
 
     override fun cost(effect: Effect.EdgeRoughen) = 2
+
+    override fun read(effect: Effect.EdgeRoughen, key: String) = when (key) {
+        "amount" -> num(effect.amount)
+        "detail" -> num(effect.detail)
+        "seed" -> num(effect.seed)
+        else -> null
+    }
+
+    override fun write(effect: Effect.EdgeRoughen, key: String, value: ParameterValue) = when (key) {
+        "amount" -> effect.copy(amount = value.number ?: effect.amount)
+        "detail" -> effect.copy(detail = value.number ?: effect.detail)
+        "seed" -> effect.copy(seed = value.number?.roundToInt() ?: effect.seed)
+        else -> effect
+    }
 }
 
 /** The stock effect set. Adding an effect means adding a module and one line here. */

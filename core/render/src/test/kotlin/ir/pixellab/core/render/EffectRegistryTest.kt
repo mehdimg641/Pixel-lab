@@ -93,6 +93,10 @@ class EffectRegistryTest {
             override fun describe(effect: Effect.Noise, context: RenderContext) =
                 PassDescriptor("halftone", floats = mapOf("uDots" to effect.scale))
             override fun cost(effect: Effect.Noise) = 2
+            override fun read(effect: Effect.Noise, key: String) =
+                if (key == "dots") num(effect.scale) else null
+            override fun write(effect: Effect.Noise, key: String, value: ParameterValue) =
+                if (key == "dots") effect.copy(scale = value.number ?: effect.scale) else effect
         }
         val extended = EffectRegistry.builder()
             .register(StrokeModule)

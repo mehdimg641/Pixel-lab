@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      A plain dark shell. The real colours are set in Compose; this only stops the system from
+      flashing a light background before the first frame, which is jarring in a dark editor.
+    -->
+    <style name="Theme.PixelLab" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF121212</item>
+        <item name="android:statusBarColor">#FF121212</item>
+        <item name="android:navigationBarColor">#FF121212</item>
+    </style>
+</resources>

@@ -118,4 +118,41 @@ enum class BlendMode {
     /** True for the four modes that operate on HSL components rather than per channel. */
     val isNonSeparable: Boolean
         get() = this == HUE || this == SATURATION || this == COLOR || this == LUMINOSITY
+
+    /**
+     * Name shown in the picker.
+     *
+     * Photoshop's Persian localisation is what the user already reads these as, so the wording
+     * follows it rather than being translated afresh.
+     */
+    val persianLabel: String
+        get() = when (this) {
+            NORMAL -> "عادی"
+            DISSOLVE -> "انحلال"
+            DARKEN -> "تیره‌کردن"
+            MULTIPLY -> "ضرب"
+            COLOR_BURN -> "سوزاندن رنگی"
+            LINEAR_BURN -> "سوزاندن خطی"
+            DARKER_COLOR -> "رنگ تیره‌تر"
+            LIGHTEN -> "روشن‌کردن"
+            SCREEN -> "پرده"
+            COLOR_DODGE -> "روشنایی رنگی"
+            LINEAR_DODGE -> "روشنایی خطی"
+            LIGHTER_COLOR -> "رنگ روشن‌تر"
+            OVERLAY -> "پوشش"
+            SOFT_LIGHT -> "نور ملایم"
+            HARD_LIGHT -> "نور سخت"
+            VIVID_LIGHT -> "نور شفاف"
+            LINEAR_LIGHT -> "نور خطی"
+            PIN_LIGHT -> "نور نقطه‌ای"
+            HARD_MIX -> "ترکیب سخت"
+            DIFFERENCE -> "تفاوت"
+            EXCLUSION -> "استثنا"
+            SUBTRACT -> "تفریق"
+            DIVIDE -> "تقسیم"
+            HUE -> "فام"
+            SATURATION -> "اشباع"
+            COLOR -> "رنگ"
+            LUMINOSITY -> "درخشندگی"
+        }
 }

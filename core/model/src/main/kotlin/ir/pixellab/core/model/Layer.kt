@@ -303,3 +303,79 @@ sealed interface Layer {
         override val clipped: Boolean = false,
     ) : Layer
 }
+
+/**
+ * Copies a layer's shared properties without knowing which kind it is.
+ *
+ * The properties on [Layer] are declared `val`, so every edit that touches one — moving a layer,
+ * locking it, restyling it — would otherwise need its own six-branch `when` at the call site. There
+ * is one here instead, and adding a layer kind breaks this build until it is handled.
+ *
+ * A `null` mask is a real value, so passing one clears the mask; leaving the argument out keeps it.
+ */
+fun Layer.with(
+    name: String = this.name,
+    transform: Transform = this.transform,
+    opacity: Float = this.opacity,
+    blendMode: BlendMode = this.blendMode,
+    visible: Boolean = this.visible,
+    locked: Boolean = this.locked,
+    style: Style = this.style,
+    mask: LayerMask? = this.mask,
+    vectorMask: VectorMask? = this.vectorMask,
+    clipped: Boolean = this.clipped,
+): Layer = when (this) {
+    is Layer.Text -> copy(
+        name = name, transform = transform, opacity = opacity, blendMode = blendMode,
+        visible = visible, locked = locked, style = style, mask = mask,
+        vectorMask = vectorMask, clipped = clipped,
+    )
+    is Layer.Image -> copy(
+        name = name, transform = transform, opacity = opacity, blendMode = blendMode,
+        visible = visible, locked = locked, style = style, mask = mask,
+        vectorMask = vectorMask, clipped = clipped,
+    )
+    is Layer.Shape -> copy(
+        name = name, transform = transform, opacity = opacity, blendMode = blendMode,
+        visible = visible, locked = locked, style = style, mask = mask,
+        vectorMask = vectorMask, clipped = clipped,
+    )
+    is Layer.Group -> copy(
+        name = name, transform = transform, opacity = opacity, blendMode = blendMode,
+        visible = visible, locked = locked, style = style, mask = mask,
+        vectorMask = vectorMask, clipped = clipped,
+    )
+    is Layer.AdjustmentLayer -> copy(
+        name = name, transform = transform, opacity = opacity, blendMode = blendMode,
+        visible = visible, locked = locked, style = style, mask = mask,
+        vectorMask = vectorMask, clipped = clipped,
+    )
+    is Layer.Instance -> copy(
+        name = name, transform = transform, opacity = opacity, blendMode = blendMode,
+        visible = visible, locked = locked, style = style, mask = mask,
+        vectorMask = vectorMask, clipped = clipped,
+    )
+}
+
+fun Layer.withTransform(transform: Transform): Layer = with(transform = transform)
+
+fun Layer.withStyle(style: Style): Layer = with(style = style)
+
+/**
+ * Re-identifies a layer and, for a group, everything inside it.
+ *
+ * Duplication needs this: leaving a copy sharing its source's ids makes every later lookup ambiguous
+ * and edits land on whichever one the walk reaches first.
+ */
+fun Layer.withId(id: LayerId, freshId: (LayerId) -> LayerId = { LayerId(it.value + "'") }): Layer =
+    when (this) {
+        is Layer.Text -> copy(id = id)
+        is Layer.Image -> copy(id = id)
+        is Layer.Shape -> copy(id = id)
+        is Layer.AdjustmentLayer -> copy(id = id)
+        is Layer.Instance -> copy(id = id)
+        is Layer.Group -> copy(
+            id = id,
+            children = children.map { it.withId(freshId(it.id), freshId) },
+        )
+    }
