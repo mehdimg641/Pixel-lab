@@ -34,6 +34,35 @@ class LibraryTest {
     }
 
     @Test
+    fun `every style has a distinct id, and the cover project can find the two it needs`() {
+        // The ids are what code refers to; the names are what people read. Both have to be unique,
+        // and the two the cover project names by hand have to exist — a typo there is a crash on a
+        // library tap, not a compile error.
+        val ids = Library.styles.map { it.id }
+        ids.none { it.isBlank() } shouldBe true
+        ids.distinct().size shouldBe ids.size
+        ids.contains("cover-frame") shouldBe true
+        ids.contains("cover-face") shouldBe true
+    }
+
+    @Test
+    fun `the cover project builds its three layers and links the two that must move together`() {
+        val project = Library.coverProject()
+        project.layers.size shouldBe 3
+        // Ground first, because it is the ground: a background composited over the title would
+        // hide it completely.
+        project.layers.first().id.value shouldBe "cover-ground"
+        // The frame's stroke sits outside the letters and the face's gradient inside them, and one
+        // stroke cannot be on two sides at once — which is why this is a project and not a preset.
+        val text = project.layers.filterIsInstance<ir.pixellab.core.model.Layer.Text>()
+        text.size shouldBe 2
+        text.all { it.transform.skew.x != 0f } shouldBe true
+        project.links.groups.any {
+            it.containsAll(text.map { layer -> layer.id })
+        } shouldBe true
+    }
+
+    @Test
     fun `style names are distinct`() {
         Library.styles.map { it.name }.distinct().size shouldBe Library.styles.size
     }
@@ -55,7 +84,7 @@ class LibraryTest {
 
     @Test
     fun `the hollow style drops its fill and keeps its effects`() {
-        val hollow = Library.styles.first { it.name.contains("توخالی") }
+        val hollow = Library.styles.first { it.id == "hollow" }
         // Fill opacity, not layer opacity: dropping the fill to nothing has to leave every effect
         // at full strength, and that distinction is the whole trick.
         hollow.style.fillOpacity shouldBe 0f
@@ -64,7 +93,11 @@ class LibraryTest {
 
     @Test
     fun `the gold style has a bright band in the middle of its ramp`() {
-        val gold = Library.styles.first { it.name.contains("طلایی") }
+        // By id, not by name. Selecting on a *display* name is what broke here: the cover
+        // frame is called «جلد سه‌بعدی — قاب طلایی» and matched a search for «طلایی» first,
+        // so the test read a solid fill as a gradient. The id exists precisely so that
+        // renaming something visible cannot reach into code that referred to it.
+        val gold = Library.styles.first { it.id == "gold" }
         val gradient = gold.style.fill as Fill.Gradient
         val middle = gradient.stops.minByOrNull { kotlin.math.abs(it.position - 0.5f) }!!
         val ends = listOf(gradient.stops.first(), gradient.stops.last())

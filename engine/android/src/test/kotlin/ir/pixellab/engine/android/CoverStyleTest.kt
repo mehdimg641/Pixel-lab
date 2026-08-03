@@ -9,6 +9,7 @@ import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.FontRef
 import ir.pixellab.core.model.GradientStop
 import ir.pixellab.core.model.Style
+import ir.pixellab.core.model.scaled
 import ir.pixellab.core.model.TextSpec
 import ir.pixellab.core.model.Vec2
 import ir.pixellab.core.imaging.Procedural
@@ -72,7 +73,7 @@ class CoverStyleTest {
      * turns a grey noise field into the reference's streaked green-and-apricot face.
      */
     private fun paintTexture(): Raster {
-        val coverage = Procedural.pattern(Procedural.Pattern.MARBLE, size = 256, repeats = 7, seed = 7)
+        val coverage = Procedural.pattern(Procedural.Pattern.MARBLE, size = 512, repeats = 16, seed = 7)
         val pixels = IntArray(coverage.width * coverage.height)
         for (y in 0 until coverage.height) {
             for (x in 0 until coverage.width) {
@@ -105,7 +106,11 @@ class CoverStyleTest {
                 weight = 900,
                 variations = mapOf(FontRef.AXIS_WEIGHT to 900f),
             ),
-            size = 250f,
+            // Proportional to the canvas rather than fixed, because the effect sizes below are in
+            // pixels: a stroke of twenty and a block of sixty steps describe a *relationship* to
+            // the letter, and enlarging the frame without enlarging the type quietly changes the
+            // recipe into a different one.
+            size = height * TYPE_HEIGHT,
         )
         val bitmap = android.graphics.Bitmap.createBitmap(
             width,
@@ -118,7 +123,15 @@ class CoverStyleTest {
         val paint = rasterizer.paintFor(spec, typeface ?: android.graphics.Typeface.DEFAULT).apply {
             color = android.graphics.Color.WHITE
         }
-        canvas.drawText(text, MARGIN, height * BASELINE, paint)
+        // Leaned rather than rotated, which is what the reference actually does: rotating a title
+        // foreshortens its face in the same movement, and these covers keep their letters frontal
+        // while the block runs off at an angle. `Transform.skew` carries it in the document; here
+        // the canvas applies the same shear so the silhouette the effects see is already leaning.
+        canvas.save()
+        canvas.translate(0f, height * BASELINE)
+        canvas.skew(kotlin.math.tan(Math.toRadians(SKEW.toDouble())).toFloat(), 0f)
+        canvas.drawText(text, MARGIN, 0f, paint)
+        canvas.restore()
 
         val pixels = IntArray(width * height)
         bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
@@ -127,8 +140,8 @@ class CoverStyleTest {
 
     @Test
     fun `the cover style renders from layer effects alone`() {
-        val width = 1200
-        val height = 620
+        val width = 1800
+        val height = 940
         val word = silhouette("TREND", width, height)
         check(word.pixels.any { (it ushr 24) > 0 }) { "the word produced no silhouette" }
 
@@ -143,8 +156,33 @@ class CoverStyleTest {
         write("paint-texture", texture)
         val frame = EffectRaster.apply(word, FRAME)
         val face = EffectRaster.apply(word, FACE) { texture }
-        val rendered = EffectRaster.overComposite(frame, face)
-        write("cover-style", rendered)
+        val onTransparency = EffectRaster.overComposite(frame, face)
+        write("cover-style", onTransparency)
+        // And on the ground the recipe puts it on. Kept as a separate file rather than replacing
+        // the first: the transparent one is what the app hands to an export with no background,
+        // and the composed one is what the finished project looks like.
+        val rendered = EffectRaster.overComposite(ground(width, height), onTransparency)
+        write("cover-project", rendered)
+
+        // And once at the size a real cover is actually made at, with the style scaled by the same
+        // factor — Photoshop's Scale Effects. A style's numbers are in pixels and deliberately do
+        // not follow the canvas, so a preset authored for a preview is a hairline on a three
+        // thousand pixel cover unless something scales it. This is the check that it does, and it
+        // is also the only honest answer to "what does the app actually produce": every gradient,
+        // bevel shoulder and shadow here has three times the pixels to be smooth in.
+        val big = width * FULL_SIZE
+        val tall = height * FULL_SIZE
+        val large = silhouette("TREND", big, tall)
+        val scale = FULL_SIZE.toFloat()
+        val largeFrame = EffectRaster.apply(large, FRAME.scaled(scale))
+        val largeFace = EffectRaster.apply(large, FACE.scaled(scale)) { texture }
+        write(
+            "cover-project-full",
+            EffectRaster.overComposite(
+                ground(big, tall),
+                EffectRaster.overComposite(largeFrame, largeFace),
+            ),
+        )
 
         // The three effects each have to have *done* something, and each is checked by the colour
         // only it can produce — the point of rendering rather than inspecting a plan.
@@ -194,6 +232,23 @@ class CoverStyleTest {
         }
     }
 
+    /**
+     * The grained, vignetted ground — `Library.coverProject`'s own background layer, rendered.
+     *
+     * A radial ramp rather than a darkening filter, because the whole point of the ground is that a
+     * user can drag its centre or change its two greys without redoing anything above it. And the
+     * grain is not decoration: a flat grey at this size bands visibly, since eight bits across a
+     * slow ramp is a step every few pixels, and a little noise breaks the banding up.
+     */
+    private fun ground(width: Int, height: Int): Raster {
+        val opaque = Raster(width, height, IntArray(width * height) { -1 })
+        return EffectRaster.apply(
+            opaque,
+            ir.pixellab.core.editor.Library.coverProject().layers
+                .first { it.id.value == "cover-ground" }.style,
+        )
+    }
+
     private fun write(name: String, raster: Raster) {
         File(output, "$name.png").writeBytes(png(raster.width, raster.height, raster.pixels))
     }
@@ -240,8 +295,17 @@ class CoverStyleTest {
     }
 
     private companion object {
-        const val MARGIN = 60f
+        const val MARGIN = 110f
+
+        /** The word fills most of the frame, as it does on every cover of this kind. */
+        const val TYPE_HEIGHT = 0.42f
+
+        /** Three times the preview, which puts the long edge past five thousand pixels. */
+        const val FULL_SIZE = 3
         const val BASELINE = 0.62f
+
+        /** Degrees of horizontal lean, matching `Library.coverProject`'s own transform. */
+        const val SKEW = -8f
         const val OPAQUE = 128
 
         /** Enough separation that a near-grey does not read as a hue. */
@@ -332,6 +396,18 @@ class CoverStyleTest {
                 ),
                 // The inset face: a soft dark edge just inside the outline, which is what stops
                 // the face reading as a flat sticker laid on top of the block.
+                // The sheen. Satin folds the shape against itself — two offset copies of the
+                // blurred silhouette, subtracted — so what appears is a soft band following every
+                // bend of the letterform rather than a straight highlight laid across it. That is
+                // the difference between a lit surface and a gradient drawn on top of one.
+                Effect.Satin(
+                    color = Color(0.85f, 1f, 0.96f),
+                    angle = 125f,
+                    distance = 26f,
+                    blur = 34f,
+                    blendMode = ir.pixellab.core.model.BlendMode.SCREEN,
+                    opacity = 0.32f,
+                ),
                 Effect.InnerShadow(
                     color = Color(0.06f, 0.16f, 0.18f),
                     angle = 125f,

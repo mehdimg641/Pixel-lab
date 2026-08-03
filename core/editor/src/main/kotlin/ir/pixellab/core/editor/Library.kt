@@ -69,19 +69,20 @@ object Library {
 
     val styles: List<StylePreset> = listOf(
         /**
-         * The cover title this application was built to make.
+         * The cover title this application was built to make — the lower of its two layers.
          *
-         * The one preset here that is a whole treatment rather than a starting point, because this
-         * particular look is not something a user assembles by accident: it is six effects whose
-         * order matters, and the texture on its face is a file that ships inside the application.
+         * This look is two layers and cannot be one. The frame's stroke has to sit *outside* the
+         * letters and the face's gradient *inside* them, and a single stroke cannot be on two sides
+         * at once — which is exactly why every Photoshop recipe for these titles begins by
+         * duplicating the text layer. `Library.coverProject` assembles the pair; these two entries
+         * are here so either half can be applied on its own.
          *
-         * The asset id names a bundled texture. If it is missing the pattern simply does not paint
-         * and the rest of the style still applies — a style that refused to load because one of its
-         * six parts was absent would be worse than one that arrives a shade flatter.
+         * The lower half carries the thick gold border, the block thrown down and right, and the
+         * two shadows under the whole word.
          */
         StylePreset(
-            name = "جلد سه‌بعدی — فیروزه و طلا",
-            id = "cover-teal-gold",
+            name = "جلد سه‌بعدی — قاب طلایی",
+            id = "cover-frame",
             style = Style(
                 fill = Fill.Solid(Color.WHITE),
                 effects = listOf(
@@ -91,10 +92,53 @@ object Library {
                     Effect.DropShadow(color = Color(0.06f, 0.05f, 0.04f), angle = 125f, distance = 35f, blur = 25f, opacity = 0.30f),
                     Effect.Extrude(
                         steps = 60,
-                        stepOffset = ir.pixellab.core.model.Vec2(0.9f, 0.9f),
+                        stepOffset = Vec2(0.9f, 0.9f),
                         nearFill = Fill.Solid(Color(0.98f, 0.62f, 0.13f)),
                         farFill = Fill.Solid(Color(0.38f, 0.14f, 0.03f)),
                     ),
+                    // The border, ramped orange to gold, and a chiselled edge on it. Without the
+                    // bevel the frame is a flat band of colour; with it the border reads as a bent
+                    // strip of metal, which is what the reference actually shows.
+                    Effect.Bevel(
+                        technique = ir.pixellab.core.model.BevelTechnique.CHISEL_HARD,
+                        depth = 220f,
+                        size = 6f,
+                        angle = 125f,
+                        altitude = 38f,
+                        highlightColor = Color(1f, 0.96f, 0.78f),
+                        highlightOpacity = 0.8f,
+                        shadowColor = Color(0.35f, 0.16f, 0.02f),
+                        shadowOpacity = 0.6f,
+                    ),
+                    Effect.Stroke(
+                        width = 20f,
+                        position = ir.pixellab.core.model.StrokePosition.OUTSIDE,
+                        fill = Fill.Gradient(
+                            stops = listOf(
+                                GradientStop(0f, Color(0.902f, 0.494f, 0.133f)),
+                                GradientStop(1f, Color(0.945f, 0.769f, 0.059f)),
+                            ),
+                            angle = 90f,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+
+        /**
+         * The upper half: the painted teal face, its inset edge and the fine gold line round it.
+         *
+         * The asset id names a texture that ships inside the application. If it is missing the
+         * pattern simply does not paint and the rest of the style still applies — a style that
+         * refused to load because one of its six parts was absent would be worse than one that
+         * arrives a shade flatter.
+         */
+        StylePreset(
+            name = "جلد سه‌بعدی — چهرهٔ فیروزه‌ای",
+            id = "cover-face",
+            style = Style(
+                fill = Fill.Solid(Color.WHITE),
+                effects = listOf(
                     Effect.Overlay(
                         fill = Fill.Gradient(
                             type = GradientType.LINEAR,
@@ -106,6 +150,10 @@ object Library {
                             angle = 45f,
                         ),
                     ),
+                    // Over the ramp and blended rather than replacing it: Overlay at a little over
+                    // half keeps the gradient's light and dark and lets the pattern only disturb
+                    // them, which is what makes it read as pigment on a surface rather than as a
+                    // photograph pasted into the letters.
                     Effect.Overlay(
                         fill = Fill.Pattern(asset = ir.pixellab.core.model.AssetId("bundled:paint-teal")),
                         blendMode = ir.pixellab.core.model.BlendMode.OVERLAY,
@@ -122,7 +170,7 @@ object Library {
                         shadowColor = Color(0.10f, 0.20f, 0.22f),
                         shadowOpacity = 0.5f,
                     ),
-                    Effect.Stroke(width = 5f, fill = Fill.Solid(Color(1f, 0.82f, 0.24f)), position = ir.pixellab.core.model.StrokePosition.OUTSIDE),
+                    Effect.Stroke(width = 5f, fill = Fill.Solid(Color(1f, 0.82f, 0.24f))),
                 ),
             ),
         ),
@@ -538,9 +586,104 @@ object Library {
                 transform = Transform(
                     translation = Vec2(template.width * 0.1f, template.height * 0.4f),
                 ),
-                style = styles.first().style,
+                style = styleNamed("headline-outline"),
                 blendMode = BlendMode.NORMAL,
             ),
         ),
     )
+
+    /**
+     * The cover treatment as a finished project, not as a style to apply.
+     *
+     * A style is one layer's effect stack, and this look is not one layer. The frame's stroke has to
+     * sit *outside* the letters and the face's gradient *inside* them, and one stroke cannot be on
+     * two sides at once — which is exactly why the Photoshop recipes for these titles all begin by
+     * duplicating the text layer. A preset cannot express that; a project can.
+     *
+     * Three layers, bottom to top: the ground, the frame, the face. The two text layers are linked,
+     * so moving or editing one moves the other and the pair cannot drift apart.
+     *
+     * @param text the headline. Persian or Latin — the styles carry no assumption either way.
+     */
+    fun coverProject(
+        template: TemplatePreset = templates.first { it.name == "کاور پادکست" },
+        text: String = "طرح",
+        id: String = "cover",
+    ): Document {
+        val size = Vec2(template.width.toFloat(), template.height.toFloat())
+        val title = TextSpec(
+            text = text,
+            font = FontRef(family = "", weight = 900),
+            size = template.height / 5f,
+            paragraph = ParagraphStyle(align = TextAlign.CENTER),
+        )
+        // Leaned rather than rotated, and the difference is the whole look: rotating a title
+        // foreshortens its face in the same movement, and these covers keep their letters frontal
+        // while the block runs off at an angle. That is a shear.
+        val lean = Transform(
+            translation = Vec2(size.x * 0.08f, size.y * 0.42f),
+            skew = Vec2(-8f, 0f),
+        )
+
+        return Document(
+            id = DocumentId(id),
+            canvas = CanvasSpec(template.width, template.height, background = Fill.Solid(Color.WHITE)),
+            name = "جلد سه‌بعدی",
+            layers = listOf(
+                groundLayer(size),
+                Layer.Text(
+                    id = LayerId("cover-frame"),
+                    spec = title,
+                    name = "قاب",
+                    transform = lean,
+                    style = styleNamed("cover-frame"),
+                ),
+                Layer.Text(
+                    id = LayerId("cover-face"),
+                    spec = title,
+                    name = "چهره",
+                    transform = lean,
+                    style = styleNamed("cover-face"),
+                ),
+            ),
+            links = ir.pixellab.core.model.LinkGroups(
+                groups = listOf(setOf(LayerId("cover-frame"), LayerId("cover-face"))),
+            ),
+        )
+    }
+
+    /**
+     * The grained, vignetted ground the recipe puts these titles on.
+     *
+     * The vignette is a **radial gradient fill**, not a darkening filter. A filter would bake the
+     * shading into pixels, and the whole point of the ground is that a user drags its centre or
+     * changes its two greys without redoing anything above it. A radial ramp from a light middle to
+     * a darker edge is what a vignette *is*; there is no reason for it to be destructive.
+     *
+     * The grain is not decoration either. A flat grey at this size bands visibly on a phone screen —
+     * eight bits across a slow ramp is a step every few pixels — and a little noise breaks the
+     * banding up. Photoshop's own recipes add it for the same reason.
+     */
+    private fun groundLayer(size: Vec2) = Layer.Shape(
+        id = LayerId("cover-ground"),
+        geometry = ir.pixellab.core.model.ShapeGeometry.Rectangle(size),
+        name = "زمینه",
+        style = Style(
+            fill = Fill.Gradient(
+                type = GradientType.RADIAL,
+                stops = listOf(
+                    GradientStop(0f, Color(0.898f, 0.898f, 0.906f)),
+                    GradientStop(0.62f, Color(0.827f, 0.827f, 0.839f)),
+                    GradientStop(1f, Color(0.639f, 0.639f, 0.659f)),
+                ),
+                // Past the corners, so the darkest stop is reached at the frame's edge rather than
+                // short of it — a vignette that finishes early reads as a circle drawn on the page.
+                scale = 1.45f,
+            ),
+            effects = listOf(Effect.Noise(amount = 0.022f, scale = 1f, monochrome = true)),
+        ),
+    )
+
+    private fun styleNamed(id: String) =
+        styles.first { it.id == id }.style
 }

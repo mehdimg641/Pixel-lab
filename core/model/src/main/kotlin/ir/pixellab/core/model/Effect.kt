@@ -288,3 +288,57 @@ data class Style(
         val PLAIN_BLACK = Style()
     }
 }
+
+/**
+ * Every distance in an effect, multiplied — Photoshop's Layer Style ▸ Scale Effects.
+ *
+ * A style's numbers are in pixels, and that is not a flaw to be designed away: a twenty-pixel stroke
+ * is twenty pixels whatever the canvas is, exactly as it is in Photoshop, because a border that
+ * silently changed width when the document was resized would be impossible to art-direct.
+ *
+ * The consequence is that a preset authored for a phone-sized canvas is a hairline on a
+ * three-thousand-pixel cover. Photoshop's answer is a command that scales the whole stack at once,
+ * and this is it. Everything measured in pixels is multiplied; everything measured in degrees,
+ * percent or colour is not — scaling an angle would turn the light round, and scaling an opacity
+ * would fade the effect out.
+ */
+fun Effect.scaled(factor: Float): Effect = when (this) {
+    is Effect.Stroke -> copy(width = width * factor, dash = dash.map { it * factor }, dashOffset = dashOffset * factor)
+    is Effect.DropShadow -> copy(distance = distance * factor, spread = spread * factor, blur = blur * factor)
+    is Effect.InnerShadow -> copy(distance = distance * factor, choke = choke * factor, blur = blur * factor)
+    is Effect.OuterGlow -> copy(spread = spread * factor, blur = blur * factor)
+    is Effect.InnerGlow -> copy(choke = choke * factor, blur = blur * factor)
+    // Depth is a percentage and stays; size and soften are the two that are in pixels.
+    is Effect.Bevel -> copy(size = size * factor, soften = soften * factor)
+    is Effect.Satin -> copy(distance = distance * factor, blur = blur * factor)
+    is Effect.Extrude -> copy(stepOffset = stepOffset * factor)
+    is Effect.Reflection -> copy(gap = gap * factor, blur = blur * factor)
+    is Effect.ChromaticOffset -> copy(
+        redOffset = redOffset * factor,
+        greenOffset = greenOffset * factor,
+        blueOffset = blueOffset * factor,
+    )
+    is Effect.BackdropBlur -> copy(radius = radius * factor)
+    // The grain's *scale* is the size of one speck, so it grows; its amount is a strength and does
+    // not. Enlarging a picture without enlarging its grain gives finer and finer noise until it
+    // disappears, which is exactly the banding the grain was there to hide.
+    is Effect.Noise -> copy(scale = scale * factor)
+    is Effect.EdgeRoughen -> copy(amount = amount * factor)
+    // A fill is painted across whatever it is given, so an overlay has no length to scale.
+    is Effect.Overlay -> this
+}
+
+/**
+ * The whole stack scaled at once, and the layer's own paint with it.
+ *
+ * A pattern fill carries its own scale, so a textured face keeps the same grain relative to the
+ * letter rather than turning into a single enormous swirl on a poster.
+ */
+fun Style.scaled(factor: Float): Style = copy(
+    fill = (fill as? Fill.Pattern)?.let { it.copy(scale = it.scale * factor) } ?: fill,
+    effects = effects.map { effect ->
+        val moved = effect.scaled(factor)
+        if (moved !is Effect.Overlay) moved
+        else (moved.fill as? Fill.Pattern)?.let { moved.copy(fill = it.copy(scale = it.scale * factor)) } ?: moved
+    },
+)
