@@ -11,6 +11,7 @@ import ir.pixellab.core.model.GradientStop
 import ir.pixellab.core.model.Style
 import ir.pixellab.core.model.TextSpec
 import ir.pixellab.core.model.Vec2
+import ir.pixellab.core.imaging.Procedural
 import ir.pixellab.core.render.EffectRaster
 import ir.pixellab.core.render.Raster
 import org.junit.Test
@@ -63,6 +64,38 @@ class CoverStyleTest {
         )
     }
 
+    /**
+     * A tile of flowing paint, tinted into the face's own family.
+     *
+     * The generator returns coverage rather than colour, deliberately, so the caller decides what to
+     * paint with it. Here the coverage picks between a deep teal and a warm peach, which is what
+     * turns a grey noise field into the reference's streaked green-and-apricot face.
+     */
+    private fun paintTexture(): Raster {
+        val coverage = Procedural.pattern(Procedural.Pattern.MARBLE, size = 256, repeats = 7, seed = 7)
+        val pixels = IntArray(coverage.width * coverage.height)
+        for (y in 0 until coverage.height) {
+            for (x in 0 until coverage.width) {
+                // Stretched away from the middle before it is used. Fractal noise clusters hard
+                // around a half — that is what it is — so mapped straight onto two colours it gives
+                // a wash of the average and neither end ever shows. The reference's face is streaks
+                // of green *and* apricot, not a blend of them.
+                val raw = coverage[x, y, 0].coerceIn(0f, 1f)
+                val t = ((raw - 0.5f) * CONTRAST + 0.5f).coerceIn(0f, 1f)
+                val r = lerp(0.03f, 0.98f, t)
+                val g = lerp(0.42f, 0.80f, t)
+                val b = lerp(0.40f, 0.62f, t)
+                pixels[y * coverage.width + x] = (0xFF shl 24) or
+                    (byteOf(r) shl 16) or (byteOf(g) shl 8) or byteOf(b)
+            }
+        }
+        return Raster(coverage.width, coverage.height, pixels)
+    }
+
+    private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+
+    private fun byteOf(v: Float) = (v.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+
     /** The word as flat white pixels — the silhouette every effect is measured against. */
     private fun silhouette(text: String, width: Int, height: Int): Raster {
         val spec = TextSpec(
@@ -103,8 +136,13 @@ class CoverStyleTest {
         // its chiselled bevel and the extruded block, and the face layer over it. One layer cannot
         // do both — the frame's stroke has to sit *outside* the letter and the face's gradient
         // *inside* it, and a single stroke cannot be on two sides at once.
+        // The painterly texture, generated rather than shipped — this app carries no asset pack, so
+        // a texture that is not in the APK has to be computed. Domain-warped noise is what makes it
+        // read as dragged pigment rather than as fog.
+        val texture = paintTexture()
+        write("paint-texture", texture)
         val frame = EffectRaster.apply(word, FRAME)
-        val face = EffectRaster.apply(word, FACE)
+        val face = EffectRaster.apply(word, FACE) { texture }
         val rendered = EffectRaster.overComposite(frame, face)
         write("cover-style", rendered)
 
@@ -133,6 +171,27 @@ class CoverStyleTest {
         check(orange > gold) { "the extrusion is thinner than its own outline: $orange vs $gold" }
         check(teal > 0) { "the gradient overlay did not reach the face" }
         check(shadow > 0) { "the drop shadow did not draw" }
+
+        // The texture reached the face. Measured as *local* variation rather than as spread: a
+        // smooth gradient covers the same range of colours and would satisfy any test of spread,
+        // so the question is whether neighbouring pixels differ — which is what a texture is and
+        // what a ramp, by construction, is not.
+        var restless = 0
+        for (y in 1 until height - 1) {
+            for (x in 1 until width - 1) {
+                val i = y * width + x
+                if ((rendered.pixels[i] ushr 24) < OPAQUE) continue
+                val here = (rendered.pixels[i] shr 8) and 0xFF
+                val right = (rendered.pixels[i + 1] shr 8) and 0xFF
+                val below = (rendered.pixels[i + width] shr 8) and 0xFF
+                if (kotlin.math.abs(here - right) > GRAIN || kotlin.math.abs(here - below) > GRAIN) {
+                    restless++
+                }
+            }
+        }
+        check(restless > teal / 20) {
+            "the pattern overlay left the face smooth: $restless restless of $teal face pixels"
+        }
     }
 
     private fun write(name: String, raster: Raster) {
@@ -187,6 +246,12 @@ class CoverStyleTest {
 
         /** Enough separation that a near-grey does not read as a hue. */
         const val CHANNEL_MARGIN = 40
+
+        /** Pushes fractal noise off its mean so both ends of the ramp actually appear. */
+        const val CONTRAST = 2.6f
+
+        /** A step between neighbours larger than a ramp of this size could produce on its own. */
+        const val GRAIN = 3
 
         /**
          * The reference's recipe, effect for effect.
@@ -256,6 +321,14 @@ class CoverStyleTest {
                         ),
                         angle = 45f,
                     ),
+                ),
+                // The texture, over the ramp and blended rather than replacing it — the recipe asks
+                // for Overlay at a third to a half, which keeps the gradient's light and dark and
+                // lets the pattern only disturb them.
+                Effect.Overlay(
+                    fill = Fill.Pattern(asset = ir.pixellab.core.model.AssetId("paint")),
+                    blendMode = ir.pixellab.core.model.BlendMode.OVERLAY,
+                    opacity = 0.6f,
                 ),
                 // The inset face: a soft dark edge just inside the outline, which is what stops
                 // the face reading as a flat sticker laid on top of the block.

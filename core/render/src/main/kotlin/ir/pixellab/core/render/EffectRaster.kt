@@ -46,7 +46,18 @@ class Raster(val width: Int, val height: Int, val pixels: IntArray) {
  */
 object EffectRaster {
 
-    fun apply(source: Raster, style: Style): Raster {
+    /**
+     * @param patterns supplies the pixels for a [Fill.Pattern]. Patterns are referenced by asset id
+     *   rather than carried inline — a texture is shared between layers and would otherwise be
+     *   copied into every one of them — so the compositor cannot resolve one on its own. Leaving it
+     *   out means a pattern fill draws nothing, which is the honest outcome for a texture that is
+     *   not there and better than substituting a colour the document never asked for.
+     */
+    fun apply(
+        source: Raster,
+        style: Style,
+        patterns: (ir.pixellab.core.model.AssetId) -> Raster? = { null },
+    ): Raster {
         val effects = style.activeEffects
         if (effects.isEmpty()) return source.copy()
 
@@ -56,7 +67,7 @@ object EffectRaster {
         // a surface nobody sees.
         var layer = source.copy()
         for (effect in effects.filterIsInstance<Effect.Overlay>()) {
-            layer = overlay(layer, effect)
+            layer = overlay(layer, effect, patterns)
         }
         for (effect in effects.filterIsInstance<Effect.InnerShadow>()) {
             layer = innerShadow(layer, source, effect)
@@ -209,10 +220,15 @@ object EffectRaster {
     }
 
     /** A fill painted across the layer, kept inside the layer's own alpha. */
-    private fun overlay(layer: Raster, effect: Effect.Overlay): Raster {
+    private fun overlay(
+        layer: Raster,
+        effect: Effect.Overlay,
+        patterns: (ir.pixellab.core.model.AssetId) -> Raster?,
+    ): Raster {
         val out = layer.copy()
         val gradient = effect.fill as? Fill.Gradient
-        val flat = if (gradient == null) fillColour(effect.fill) else null
+        val pattern = (effect.fill as? Fill.Pattern)?.let { fill -> patterns(fill.asset)?.let { fill to it } }
+        val flat = if (gradient == null && pattern == null) fillColour(effect.fill) else null
         val stops = gradient?.stops?.sortedBy { it.position }
 
         for (y in 0 until layer.height) {
@@ -220,8 +236,8 @@ object EffectRaster {
                 val i = y * layer.width + x
                 val a = (layer.pixels[i] ushr 24) and 0xFF
                 if (a == 0) continue
-                val paint = if (gradient != null && stops != null) {
-                    Ramp.colorAt(
+                val paint = when {
+                    gradient != null && stops != null -> Ramp.colorAt(
                         stops,
                         Ramp.parameterAt(
                             gradient,
@@ -229,8 +245,8 @@ object EffectRaster {
                             y.toFloat() / layer.height,
                         ),
                     )
-                } else {
-                    flat!!
+                    pattern != null -> tileAt(pattern.second, pattern.first, x, y)
+                    else -> flat!!
                 }
                 val blended = Blending.rgb(
                     effect.blendMode,
@@ -390,6 +406,29 @@ object EffectRaster {
             }
         }
         return out
+    }
+
+    /**
+     * Samples a pattern tile at a canvas position, repeating it.
+     *
+     * The modulo is taken twice because Kotlin's remainder keeps the sign of its left operand, so a
+     * negative offset lands outside the tile and throws. Scale divides rather than multiplies: a
+     * scale of two means the tile is drawn twice as large, which is half as many repeats across the
+     * same span, and getting that backwards makes every pattern shrink when the user enlarges it.
+     */
+    private fun tileAt(tile: Raster, fill: Fill.Pattern, x: Int, y: Int): Color {
+        val sx = if (fill.scale.x == 0f) 1f else fill.scale.x
+        val sy = if (fill.scale.y == 0f) 1f else fill.scale.y
+        val u = ((x - fill.offset.x) / sx).toInt()
+        val v = ((y - fill.offset.y) / sy).toInt()
+        val tx = ((u % tile.width) + tile.width) % tile.width
+        val ty = ((v % tile.height) + tile.height) % tile.height
+        val pixel = tile.pixels[ty * tile.width + tx]
+        return Color(
+            ((pixel shr 16) and 0xFF) / 255f,
+            ((pixel shr 8) and 0xFF) / 255f,
+            (pixel and 0xFF) / 255f,
+        )
     }
 
     /** Blends one colour onto one pixel, keeping the pixel's own alpha. */

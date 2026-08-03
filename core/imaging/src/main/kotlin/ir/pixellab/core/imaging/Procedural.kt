@@ -143,7 +143,7 @@ object Procedural {
 
     /** Tileable fills, all of them periodic in the tile by construction. */
     enum class Pattern {
-        STRIPES, CHECKS, DOTS, GRID, CROSSHATCH, NOISE,
+        STRIPES, CHECKS, DOTS, GRID, CROSSHATCH, NOISE, MARBLE, SHATTER,
         ;
 
         val persianLabel: String
@@ -154,6 +154,8 @@ object Procedural {
                 GRID -> "شبکه"
                 CROSSHATCH -> "هاشور"
                 NOISE -> "نویز"
+                MARBLE -> "رنگ روان"
+                SHATTER -> "شیشهٔ شکسته"
             }
     }
 
@@ -184,10 +186,69 @@ object Procedural {
                     Pattern.GRID -> max(line(u), line(v))
                     Pattern.CROSSHATCH -> max(band(u + v), band(u - v))
                     Pattern.NOISE -> tileableNoise(x, y, size, periods, seed)
+                    Pattern.MARBLE -> marble(x, y, size, periods, seed)
+                    Pattern.SHATTER -> shatter(u, v, periods, seed)
                 }
             }
         }
         return out
+    }
+
+    /**
+     * Flowing paint: noise used to *displace* the lookup of more noise.
+     *
+     * Plain fractal noise is cloud, not paint — it has no direction, so it reads as fog wherever it
+     * is laid. Warping the domain first is what turns it into strokes: each sample is pulled aside
+     * by an amount that itself varies smoothly, so bands of similar value stretch and curl into one
+     * another the way pigment does when it is dragged. It is one extra noise lookup per axis and it
+     * is the whole difference between a texture that looks painted and one that looks dirty.
+     */
+    private fun marble(x: Int, y: Int, size: Int, periods: Int, seed: Int): Float {
+        val warpX = tileableNoise(x, y, size, periods, seed + WARP_SEED) - HALF
+        val warpY = tileableNoise(x, y, size, periods, seed + WARP_SEED * 2) - HALF
+        val u = x + warpX * size * MARBLE_WARP
+        val v = y + warpY * size * MARBLE_WARP
+        // Wrapped back into the tile so the warp cannot walk a sample off the edge and break the
+        // seam the tiling depends on.
+        val wrappedX = ((u % size) + size) % size
+        val wrappedY = ((v % size) + size) % size
+        return tileableNoise(wrappedX.toInt(), wrappedY.toInt(), size, periods, seed)
+    }
+
+    /**
+     * Cracked glass: distance to the nearest of a scattered set of points, minus the next nearest.
+     *
+     * The difference of the two distances rather than the first alone, which is what puts the value
+     * at zero exactly on the boundary between two cells and rising away from it — so the pattern is
+     * the *edges* of the cells, a web of cracks, rather than a field of blobs. Taking only the
+     * nearest gives the blobs, which is the usual mistake and looks like bubble wrap.
+     */
+    private fun shatter(u: Float, v: Float, periods: Int, seed: Int): Float {
+        var nearest = Float.MAX_VALUE
+        var second = Float.MAX_VALUE
+        val cellX = floorInt(u)
+        val cellY = floorInt(v)
+        for (dy in -1..1) {
+            for (dx in -1..1) {
+                val gx = cellX + dx
+                val gy = cellY + dy
+                // Wrapped, so a cell at the tile's edge sees the same neighbour its opposite does.
+                val wx = ((gx % periods) + periods) % periods
+                val wy = ((gy % periods) + periods) % periods
+                val hx = hash(wx * PRIME_X + wy * PRIME_Y, seed)
+                val hy = hash(wx * PRIME_X + wy * PRIME_Y, seed + 1)
+                val px = gx + hx
+                val py = gy + hy
+                val d = kotlin.math.hypot(px - u, py - v)
+                if (d < nearest) {
+                    second = nearest
+                    nearest = d
+                } else if (d < second) {
+                    second = d
+                }
+            }
+        }
+        return ((second - nearest) * SHATTER_CONTRAST).coerceIn(0f, 1f)
     }
 
     /** Half on, half off, with a soft shoulder so it does not alias into moiré when scaled down. */
@@ -286,6 +347,14 @@ object Procedural {
     private fun max(a: Float, b: Float) = if (a > b) a else b
 
     private const val MIN_TIP = 8
+    /** How far the domain warp drags a sample, as a fraction of the tile. */
+    private const val MARBLE_WARP = 0.18f
+
+    private const val WARP_SEED = 101
+
+    /** Steepens the cell-boundary falloff so the cracks read as lines rather than as soft valleys. */
+    private const val SHATTER_CONTRAST = 3.5f
+
     private const val MIN_TILE = 8
     private const val HALF = 0.5f
     private const val EPSILON = 1e-4f
