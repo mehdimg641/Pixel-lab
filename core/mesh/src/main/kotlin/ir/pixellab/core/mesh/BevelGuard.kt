@@ -317,11 +317,16 @@ object BevelGuard {
      * What fraction of half the stroke a bevel may take.
      *
      * At 1.0 the bevels from the two sides meet exactly and the face is a line — allowed by the
-     * arithmetic, and in practice a stroke that reads as a crease instead of a stroke. Seven tenths
-     * leaves the thinnest join a face about a third of its width, which is enough to hold a
-     * highlight and read as a surface.
+     * arithmetic, and in practice a stroke that reads as a crease instead of a stroke.
+     *
+     * A half, so a stroke always keeps half its width as face. This was seven tenths, which is
+     * geometrically safe and visually was not: the outline could not fold, but the face came out a
+     * third of the stroke, and on a real Persian word at a real size that is not a bevelled letter
+     * — it is a folded ribbon with a gold edge where the letter should be. The failure this guard
+     * exists to prevent is a stroke that stops reading as a stroke, and self-intersection is only
+     * the most extreme way for that to happen.
      */
-    private const val SAFETY = 0.7f
+    private const val SAFETY = 0.5f
 
     /**
      * How many measurements are taken across one bevel's width of outline.

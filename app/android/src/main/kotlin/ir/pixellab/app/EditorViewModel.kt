@@ -1573,7 +1573,18 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         const val MAX_DPI = 1200
 
         const val DEPTH_FRACTION = 0.2f
-        const val BEVEL_FRACTION = 0.04f
+
+        /**
+         * The bevel a letter starts with, against the type size.
+         *
+         * One per cent, and the number is small because a Persian stroke is thin against the size
+         * that names it. At 260 point Vazirmatn draws a stem around a tenth of that, so the four
+         * per cent this used to be asked for a bevel a third of the stroke — on each side. The
+         * guard held the geometry together and the word still came out as gold ribbon: legible as
+         * an outline, not as carved type. A per-cent bevel leaves the face the letter and puts the
+         * gold on its edge, which is the cover treatment this was built for.
+         */
+        const val BEVEL_FRACTION = 0.01f
 
         /** A blank square canvas with one shape, so the editor has something to select on launch. */
         fun startingDocument(): Document = Document(
