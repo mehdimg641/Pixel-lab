@@ -84,6 +84,16 @@ object EffectRaster {
         return out
     }
 
+    /**
+     * Stacks one styled layer over another.
+     *
+     * A single layer cannot carry this family of style. The frame's stroke has to sit *outside* the
+     * letter and the face's gradient *inside* it, and one stroke cannot be on two sides at once —
+     * which is exactly why the Photoshop recipes for these titles all begin by duplicating the text
+     * layer. Exposed so a caller can build that stack without reimplementing source-over.
+     */
+    fun overComposite(under: Raster, above: Raster): Raster = over(under, above, BlendMode.NORMAL, 1f)
+
     // ---- the effects ---------------------------------------------------------------------------
 
     /**
@@ -156,21 +166,44 @@ object EffectRaster {
     private fun stroke(source: Raster, effect: Effect.Stroke): Raster {
         val out = Raster.empty(source.width, source.height)
         if (effect.width <= 0f) return out
-        val distance = distanceOutside(source)
-        val colour = fillColour(effect.fill)
 
-        for (i in out.pixels.indices) {
-            val d = distance[i]
-            val inside = (source.pixels[i] ushr 24) / 255f
-            val coverage = when (effect.position) {
-                ir.pixellab.core.model.StrokePosition.OUTSIDE ->
-                    (effect.width - d).coerceIn(0f, 1f) * (1f - inside)
-                ir.pixellab.core.model.StrokePosition.CENTER ->
-                    (effect.width / 2f - d).coerceIn(0f, 1f)
-                ir.pixellab.core.model.StrokePosition.INSIDE -> 0f
+        // Both fields, because a stroke can sit on either side of the outline and each side is a
+        // different measurement. An inside stroke used to draw nothing at all here — the position
+        // was in the model, accepted by the panel, and silently produced an empty layer.
+        val outside = distanceOutside(source)
+        val insideDistance = distanceInside(source)
+        val gradient = effect.fill as? Fill.Gradient
+        val stops = gradient?.stops?.sortedBy { it.position }
+        val flat = if (gradient == null) fillColour(effect.fill) else null
+
+        for (y in 0 until out.height) {
+            for (x in 0 until out.width) {
+                val i = y * out.width + x
+                val alpha = ((source.pixels[i] ushr 24) and 0xFF) / 255f
+                val coverage = when (effect.position) {
+                    ir.pixellab.core.model.StrokePosition.OUTSIDE ->
+                        (effect.width - outside[i]).coerceIn(0f, 1f) * (1f - alpha)
+                    ir.pixellab.core.model.StrokePosition.CENTER ->
+                        (effect.width / 2f - minOf(outside[i], insideDistance[i]))
+                            .coerceIn(0f, 1f)
+                    ir.pixellab.core.model.StrokePosition.INSIDE ->
+                        (effect.width - insideDistance[i]).coerceIn(0f, 1f) * alpha
+                }
+                if (coverage <= 0f) continue
+                val colour = if (gradient != null && stops != null) {
+                    Ramp.colorAt(
+                        stops,
+                        Ramp.parameterAt(
+                            gradient,
+                            x.toFloat() / out.width,
+                            y.toFloat() / out.height,
+                        ),
+                    )
+                } else {
+                    flat!!
+                }
+                out.pixels[i] = pack(colour, coverage)
             }
-            if (coverage <= 0f) continue
-            out.pixels[i] = pack(colour, coverage)
         }
         return out
     }
@@ -247,14 +280,24 @@ object EffectRaster {
         var height = FloatArray(inside.size) {
             effect.profile.evaluate((inside[it] / size).coerceIn(0f, 1f))
         }
-        // Smoothed before the gradient is taken, and not optionally.
+        // Smoothed before the gradient is taken, and the amount is what the technique *is*.
         //
-        // A chamfer distance field advances in steps of 1 and √2, so its surface is faceted at the
-        // scale of a pixel. That is invisible in the field itself and glaring in its derivative: the
-        // normal flips between a handful of orientations across a smooth shoulder and the bevel
-        // comes out mottled, which reads as noise rather than as a surface. One pixel of blur costs
-        // nothing and removes it. Photoshop's own soften rides on top of the same pass.
-        height = blur(height, w, h, (effect.soften + 1f).coerceAtLeast(1f))
+        // One pixel is the floor and is not optional: a chamfer distance field advances in steps of
+        // 1 and √2, so its surface is faceted at the scale of a pixel. That is invisible in the
+        // field itself and glaring in its derivative — the normal flips between a handful of
+        // orientations across a shoulder and the bevel comes out mottled, reading as noise rather
+        // than as a surface.
+        //
+        // Above that floor the smoothing is the difference between the techniques, and it is the
+        // only difference. A chisel keeps the ramp linear so the shoulder stays flat and its corners
+        // stay mitred, which is the faceted, cut look; smoothing the same ramp rounds the shoulder
+        // and rounds the corners with it. Photoshop's soften then rides on top of whichever.
+        val technique = when (effect.technique) {
+            ir.pixellab.core.model.BevelTechnique.CHISEL_HARD -> 0f
+            ir.pixellab.core.model.BevelTechnique.CHISEL_SOFT -> size * CHISEL_SOFTNESS
+            ir.pixellab.core.model.BevelTechnique.SMOOTH -> size * SMOOTH_SOFTNESS
+        }
+        height = blur(height, w, h, (effect.soften + technique + 1f).coerceAtLeast(1f))
 
         // A light on the unit sphere: azimuth round the plane, altitude up out of it.
         val azimuth = effect.angle * DEG_TO_RAD
@@ -592,4 +635,10 @@ object EffectRaster {
      * gradient needs a multiplier above one to match; below this the default reads as a smudge.
      */
     private const val DEPTH_GAIN = 4f
+
+    /** A chisel-soft shoulder is eased just enough to lose its facets without going round. */
+    private const val CHISEL_SOFTNESS = 0.12f
+
+    /** A smooth shoulder is rounded across a third of the bevel, which is where it stops reading as cut. */
+    private const val SMOOTH_SOFTNESS = 0.33f
 }

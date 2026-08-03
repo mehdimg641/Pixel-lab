@@ -99,7 +99,13 @@ class CoverStyleTest {
         val word = silhouette("TREND", width, height)
         check(word.pixels.any { (it ushr 24) > 0 }) { "the word produced no silhouette" }
 
-        val rendered = EffectRaster.apply(word, COVER)
+        // Two layers, as the recipe describes: a copy underneath carrying the thick gold frame,
+        // its chiselled bevel and the extruded block, and the face layer over it. One layer cannot
+        // do both — the frame's stroke has to sit *outside* the letter and the face's gradient
+        // *inside* it, and a single stroke cannot be on two sides at once.
+        val frame = EffectRaster.apply(word, FRAME)
+        val face = EffectRaster.apply(word, FACE)
+        val rendered = EffectRaster.overComposite(frame, face)
         write("cover-style", rendered)
 
         // The three effects each have to have *done* something, and each is checked by the colour
@@ -189,15 +195,31 @@ class CoverStyleTest {
          * bright gold line round the outside, a deep block thrown down and right, and a soft shadow
          * under the whole word.
          */
-        val COVER = Style(
+        /**
+         * The lower layer: the gold frame, its chiselled edge, the extruded block and the shadows.
+         *
+         * Its stroke is *outside* and thick, which is what puts a band of gold round every letter
+         * wider than the letter itself — the frame the face then sits inside.
+         */
+        val FRAME = Style(
             fill = Fill.Solid(Color.WHITE),
             effects = listOf(
+                // Two shadows, as the recipe specifies: one tight and dark to seat the word, one
+                // wide and faint for the depth of the room. A single shadow can be one or the
+                // other and reads as a sticker either way.
                 Effect.DropShadow(
-                    color = Color(0.10f, 0.06f, 0.03f, 0.55f),
+                    color = Color(0.04f, 0.03f, 0.02f),
                     angle = 125f,
-                    distance = 26f,
-                    blur = 34f,
-                    spread = 2f,
+                    distance = 10f,
+                    blur = 5f,
+                    opacity = 0.60f,
+                ),
+                Effect.DropShadow(
+                    color = Color(0.06f, 0.05f, 0.04f),
+                    angle = 125f,
+                    distance = 35f,
+                    blur = 25f,
+                    opacity = 0.30f,
                 ),
                 Effect.Extrude(
                     steps = 60,
@@ -206,16 +228,33 @@ class CoverStyleTest {
                     farFill = Fill.Solid(Color(0.38f, 0.14f, 0.03f)),
                     falloff = Curve.LINEAR,
                 ),
+                // The frame itself: a wide outside stroke ramped orange to gold.
+                Effect.Stroke(
+                    width = 20f,
+                    position = ir.pixellab.core.model.StrokePosition.OUTSIDE,
+                    fill = Fill.Gradient(
+                        stops = listOf(
+                            GradientStop(0f, Color(0.902f, 0.494f, 0.133f)),
+                            GradientStop(1f, Color(0.945f, 0.769f, 0.059f)),
+                        ),
+                        angle = 90f,
+                    ),
+                ),
+            ),
+        )
+
+        /** The upper layer: the teal face, its texture, its inset edge and its fine gold edge. */
+        val FACE = Style(
+            fill = Fill.Solid(Color.WHITE),
+            effects = listOf(
                 Effect.Overlay(
                     fill = Fill.Gradient(
                         stops = listOf(
-                            GradientStop(0f, Color(0.04f, 0.30f, 0.34f)),
-                            GradientStop(0.30f, Color(0.13f, 0.52f, 0.43f)),
-                            GradientStop(0.52f, Color(0.97f, 0.76f, 0.58f)),
-                            GradientStop(0.72f, Color(0.20f, 0.55f, 0.47f)),
-                            GradientStop(1f, Color(0.04f, 0.28f, 0.36f)),
+                            GradientStop(0f, Color(0.051f, 0.231f, 0.275f)),
+                            GradientStop(0.55f, Color(0f, 0.659f, 0.588f)),
+                            GradientStop(1f, Color(0.878f, 0.624f, 0.404f)),
                         ),
-                        angle = 74f,
+                        angle = 45f,
                     ),
                 ),
                 // The inset face: a soft dark edge just inside the outline, which is what stops
