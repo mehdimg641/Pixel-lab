@@ -248,6 +248,39 @@ data class Geometry3D(
     val markLift: Float = 0f,
     /** Null means the dots take whichever material their surface would have taken anyway. */
     val markMaterial: Material? = null,
+
+    /**
+     * A gradient painted across the letter's face, in place of [faceMaterial]'s flat base colour.
+     *
+     * Only the face, and that is the whole reason it exists here rather than as a layer effect. A
+     * gradient overlay on the finished render would wash over the bevel and the side walls too,
+     * and every reference treatment of this kind — a coloured face inside metal edges — depends on
+     * the two being painted differently. The other surfaces keep their own materials.
+     *
+     * Mapped across the letter's own bounds rather than the canvas, so the ramp reads the same
+     * whether the word sits in a corner or fills the page, and travels with the text if it moves.
+     * Everything else about the material — its roughness, its metalness, its coat — still applies;
+     * this replaces the colour being lit, not the lighting.
+     */
+    val faceFill: Fill.Gradient? = null,
+    /**
+     * How far the back of the extrusion leans sideways, per unit of depth.
+     *
+     * Zero extrudes straight back, which is what the renderer has always done and which hides the
+     * side walls exactly when the face is squarest to the camera. The only way to reveal depth then
+     * is [rotation], and turning a letter foreshortens and skews its face in the same movement.
+     *
+     * The block-letter treatment on almost every poster title is this instead: the letters stand
+     * upright and frontal while their depth runs off at an angle. It is a shear, not a rotation, and
+     * the two are not interchangeable at any angle.
+     *
+     * **Known limit: gaps open in the block past roughly a third.** A straight extrusion never shows
+     * its back, so a seam there was invisible and stayed unnoticed; leaning the block far enough
+     * swings that seam into view and the extrusion breaks into facets. Below about 0.3 it reads as
+     * one solid, which covers the treatments this exists for. The seam itself is the thing to fix.
+     */
+    val extrusionTilt: Vec2 = Vec2.ZERO,
+
     /** Degrees about each axis. */
     val rotation: Vec3 = Vec3.ZERO,
     val lighting: LightRig = LightRig(),

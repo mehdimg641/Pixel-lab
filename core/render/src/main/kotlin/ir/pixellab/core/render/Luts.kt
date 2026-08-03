@@ -4,8 +4,7 @@ import ir.pixellab.core.model.Color
 import ir.pixellab.core.model.Curve
 import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.GradientStop
-import kotlin.math.ln
-import kotlin.math.pow
+import ir.pixellab.core.model.Ramp
 
 /**
  * Sampled tables the shaders read as one-dimensional textures.
@@ -50,53 +49,19 @@ object Luts {
         }
     }
 
-    /** Colour of a stop list at [t], honouring each pair's midpoint. */
-    fun colorAt(stops: List<GradientStop>, t: Float): Color {
-        if (stops.isEmpty()) return Color.TRANSPARENT
-        if (stops.size == 1) return stops.first().color
-        val clamped = t.coerceIn(0f, 1f)
-        if (clamped <= stops.first().position) return stops.first().color
-        if (clamped >= stops.last().position) return stops.last().color
-
-        for (i in 0 until stops.size - 1) {
-            val a = stops[i]
-            val b = stops[i + 1]
-            if (clamped < a.position || clamped > b.position) continue
-            val span = b.position - a.position
-            val local = if (span <= 0f) 1f else (clamped - a.position) / span
-            return lerp(a.color, b.color, biased(local, a.midpoint))
-        }
-        return stops.last().color
-    }
-
     /**
-     * Bends 0..1 so that [midpoint] maps to exactly 0.5.
+     * The stop ramp, delegated to the model.
      *
-     * The exponent that does it is `log(0.5) / log(midpoint)` — at `t = midpoint` the result is
-     * `midpoint^(log 0.5 / log midpoint) = 0.5` by construction. A midpoint of 0.5 leaves the
-     * parameter untouched, so the common case costs nothing.
+     * It moved there because the 3D renderer needs the same arithmetic and lives in a sibling
+     * module. Kept exposed here so the existing callers and their tests do not have to care where
+     * it went — the point of the move was to have one implementation, not to relocate a name.
      */
-    fun biased(t: Float, midpoint: Float): Float {
-        val m = midpoint.coerceIn(MIDPOINT_LIMIT, 1f - MIDPOINT_LIMIT)
-        if (m == 0.5f) return t
-        val exponent = ln(0.5) / ln(m.toDouble())
-        return t.toDouble().pow(exponent).toFloat()
-    }
+    fun colorAt(stops: List<GradientStop>, t: Float): Color = Ramp.colorAt(stops, t)
 
-    fun lerp(a: Color, b: Color, t: Float) = Color(
-        a.r + (b.r - a.r) * t,
-        a.g + (b.g - a.g) * t,
-        a.b + (b.b - a.b) * t,
-        a.a + (b.a - a.a) * t,
-    )
+    fun biased(t: Float, midpoint: Float): Float = Ramp.biased(t, midpoint)
 
-    /**
-     * A midpoint at either extreme makes the exponent infinite.
-     *
-     * Photoshop's own slider stops short of the ends for the same reason; clamping here means a
-     * hand-edited or imported file cannot produce a ramp of NaNs.
-     */
-    private const val MIDPOINT_LIMIT = 0.01f
+    fun lerp(a: Color, b: Color, t: Float): Color = Ramp.lerp(a, b, t)
+
 }
 
 /** Packs to 0xAARRGGBB, the layout Android bitmaps and `glTexImage2D` both expect. */

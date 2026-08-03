@@ -1,5 +1,6 @@
 package ir.pixellab.core.mesh
 
+import ir.pixellab.core.model.Vec2
 import ir.pixellab.core.model.Vec3
 import kotlin.math.abs
 import kotlin.math.cos
@@ -170,6 +171,37 @@ value class Mat4(val m: FloatArray) {
          */
         fun rotation(degrees: Vec3): Mat4 =
             rotationZ(degrees.z) * rotationX(degrees.x) * rotationY(degrees.y)
+
+        /**
+         * Sends the back of an extrusion sideways, leaving its front where it is.
+         *
+         * This is what makes the classic block-letter look, and it cannot be had by turning the
+         * letter. An extruder that only pushes backwards along the view axis hides its side walls
+         * exactly when the face is squarest to the camera, so the only way to *see* the depth is to
+         * rotate — which foreshortens and skews the face in the same movement. The two cannot be
+         * separated, and every poster title that stands upright over a long oblique block is doing
+         * something else: shearing the extrusion rather than rotating the letter.
+         *
+         * A shear, so the front stays exactly where the artist placed it and only the depth leans.
+         * The mesh is untouched; this rides in the model matrix, which means the normals come right
+         * for free — [normalMatrix] is a true inverse-transpose rather than an assumed rotation, so
+         * it handles a non-orthonormal matrix correctly. Shearing the vertices instead would need
+         * every normal recomputed, and a shear does not preserve angles, so they cannot simply be
+         * sheared too.
+         *
+         * @param tilt how far the back travels per unit of depth. (0, 0) extrudes straight back, as
+         *   before. Negative x sends the block left, positive y sends it down.
+         */
+        fun obliqueExtrusion(tilt: Vec2): Mat4 = Mat4(
+            floatArrayOf(
+                1f, 0f, 0f, 0f,
+                0f, 1f, 0f, 0f,
+                // The z column. Extrusion runs towards −z, so the sign is flipped here to make a
+                // positive tilt move the *back* rather than the front.
+                -tilt.x, -tilt.y, 1f, 0f,
+                0f, 0f, 0f, 1f,
+            ),
+        )
 
         /**
          * A camera looking at a point.

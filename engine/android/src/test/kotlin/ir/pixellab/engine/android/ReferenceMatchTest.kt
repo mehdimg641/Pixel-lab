@@ -3,6 +3,7 @@ package ir.pixellab.engine.android
 import ir.pixellab.core.fonts.FontFile
 import ir.pixellab.core.fonts.Script
 import ir.pixellab.core.model.Color
+import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.FontRef
 import ir.pixellab.core.model.Geometry3D
 import ir.pixellab.core.model.Layer
@@ -10,7 +11,9 @@ import ir.pixellab.core.model.LayerId
 import ir.pixellab.core.model.Material
 import ir.pixellab.core.model.Style
 import ir.pixellab.core.model.TextSpec
+import ir.pixellab.core.model.GradientStop
 import ir.pixellab.core.model.Transform
+import ir.pixellab.core.model.Vec2
 import ir.pixellab.core.model.Vec3
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -63,19 +66,25 @@ class ReferenceMatchTest {
         )
     }
 
-    /** Orange metal on every edge, teal on the face — as near the reference as flat colour reaches. */
+    /**
+     * The reference's own recipe, in this engine's terms.
+     *
+     * The letters stand upright and frontal and the depth runs off down-left, which is the whole
+     * character of the style and is a *lean*, not a turn. A small rotation is kept only to catch a
+     * highlight along the top of the bevel.
+     */
     private fun trendLook(size: Float) = Geometry3D(
-        depth = size * 0.45f,
-        bevelSize = size * 0.05f,
-        faceMaterial = Material(
-            baseColor = Color(0.09f, 0.45f, 0.44f),
-            roughness = 0.35f,
-            clearCoat = 1f,
-        ),
+        depth = size * 0.40f,
+        bevelSize = size * 0.035f,
+        faceMaterial = Material(roughness = 0.30f, clearCoat = 1f),
+        faceFill = TEAL_TO_PEACH,
         bevelMaterial = ORANGE,
         sideMaterial = ORANGE,
-        rotation = Vec3(-14f, 26f, 0f),
-        fieldOfView = 34f,
+        // Moderate on purpose. A stronger lean opens gaps in the block — see the note on
+        // `extrusionTilt`; this is well inside where the extrusion still reads as one solid.
+        extrusionTilt = Vec2(-0.28f, 0.28f),
+        rotation = Vec3(-3f, 4f, 0f),
+        fieldOfView = 22f,
     )
 
     @Test
@@ -160,6 +169,23 @@ class ReferenceMatchTest {
             baseColor = Color(0.96f, 0.52f, 0.11f),
             metallic = 1f,
             roughness = 0.32f,
+        )
+
+        /**
+         * The face: deep teal at the edges, warming to peach across the middle.
+         *
+         * Read off the reference rather than invented. Its face is not one colour and not a plain
+         * two-stop ramp either — the warm band runs through the centre with green on both sides,
+         * which is four stops, and the angle carries it up to the right across the whole word.
+         */
+        val TEAL_TO_PEACH = Fill.Gradient(
+            stops = listOf(
+                GradientStop(0f, Color(0.05f, 0.32f, 0.34f)),
+                GradientStop(0.38f, Color(0.16f, 0.55f, 0.44f)),
+                GradientStop(0.58f, Color(0.96f, 0.72f, 0.55f)),
+                GradientStop(1f, Color(0.06f, 0.38f, 0.42f)),
+            ),
+            angle = -62f,
         )
     }
 }

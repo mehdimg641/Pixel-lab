@@ -1,8 +1,11 @@
 package ir.pixellab.core.mesh
 
 import ir.pixellab.core.model.Color
+import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.Geometry3D
+import ir.pixellab.core.model.GradientStop
 import ir.pixellab.core.model.Material
+import ir.pixellab.core.model.Ramp
 import ir.pixellab.core.model.Vec3
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -44,7 +47,9 @@ object Rasteriser {
         val w = width * scale
         val h = height * scale
 
-        val model = Mat4.rotation(geometry.rotation)
+        // Shear first, then turn: the lean belongs to the letter's own space, so a letter that is
+        // also rotated leans with it rather than in screen space.
+        val model = Mat4.rotation(geometry.rotation) * Mat4.obliqueExtrusion(geometry.extrusionTilt)
         val normalMatrix = Mat4.normalMatrix(model)
         val (eye, view) = framing(mesh, model, geometry, width.toFloat() / height)
         val projection = Mat4.perspective(
@@ -73,7 +78,13 @@ object Rasteriser {
         // what makes this an addition rather than a change to every existing document.
         val markMaterial = geometry.markMaterial?.let { linearised(it) }
 
+        // Built once. The stops are sorted and the object-space bounds measured here rather than
+        // per fragment, because both are constant across the whole letter and sorting a stop list
+        // inside the inner loop would cost more than the shading does.
+        val facePaint = geometry.faceFill?.let { FacePaint.of(it, mesh) }
+
         for (t in 0 until mesh.triangleCount) {
+            val surface = mesh.surfaces[t]
             drawTriangle(
                 mesh = mesh,
                 triangle = t,
@@ -84,7 +95,12 @@ object Rasteriser {
                 material = if (markMaterial != null && mesh.marks[t]) {
                     markMaterial
                 } else {
-                    materials.getValue(mesh.surfaces[t])
+                    materials.getValue(surface)
+                },
+                // Only the face, and only where a mark has not claimed its own material — a dot
+                // given chrome asked for chrome, not for the body's gradient.
+                paint = facePaint?.takeIf {
+                    surface == Surface.FACE && !(markMaterial != null && mesh.marks[t])
                 },
                 geometry = geometry,
                 colour = colour,
@@ -105,6 +121,7 @@ object Rasteriser {
         viewProjection: Mat4,
         eye: Vec3,
         material: Material,
+        paint: FacePaint?,
         geometry: Geometry3D,
         colour: IntArray,
         depth: FloatArray,
@@ -115,9 +132,13 @@ object Rasteriser {
         val ib = mesh.indices[triangle * 3 + 1]
         val ic = mesh.indices[triangle * 3 + 2]
 
-        val worldA = model.transform(mesh.position(ia))
-        val worldB = model.transform(mesh.position(ib))
-        val worldC = model.transform(mesh.position(ic))
+        val objectA = mesh.position(ia)
+        val objectB = mesh.position(ib)
+        val objectC = mesh.position(ic)
+
+        val worldA = model.transform(objectA)
+        val worldB = model.transform(objectB)
+        val worldC = model.transform(objectC)
 
         val clipA = viewProjection.project(worldA)
         val clipB = viewProjection.project(worldB)
@@ -190,11 +211,24 @@ object Rasteriser {
                     (l0 * na.z * wa + l1 * nb.z * wb + l2 * nc.z * wc) / invW,
                 )
 
+                // The face's gradient, sampled from the letter's *own* coordinates rather than the
+                // world ones interpolated above. Using world space would slide the ramp across the
+                // letter as it turned, which reads as the paint being on the camera rather than on
+                // the letter. Object space is fixed to the glyph, so the colours stay where the
+                // artist put them under any rotation or lean.
+                val painted = if (paint == null) {
+                    material
+                } else {
+                    val ox = (l0 * objectA.x * wa + l1 * objectB.x * wb + l2 * objectC.x * wc) / invW
+                    val oy = (l0 * objectA.y * wa + l1 * objectB.y * wb + l2 * objectC.y * wc) / invW
+                    material.copy(baseColor = Pbr.decode(paint.at(ox, oy)))
+                }
+
                 val shaded = Pbr.toneMap(
                     Pbr.shade(
                         normal = normal,
                         view = (eye - world).normalised(),
-                        material = material,
+                        material = painted,
                         rig = geometry.lighting,
                     ),
                 )
@@ -322,6 +356,45 @@ object Rasteriser {
     private const val MIN_EXTENT = 1e-3f
     private const val MARGIN = 1.12f
     private const val MAX_SUPERSAMPLE = 4
+}
+
+/**
+ * A gradient ready to be sampled across a letter's face.
+ *
+ * Holds the sorted stops and the letter's own bounds so the inner loop does neither. The bounds are
+ * the mesh's, not the canvas's, which is what makes a ramp describe *the word* — the same gradient
+ * reads identically on a caption and a poster headline, and does not shift when the text moves.
+ */
+internal class FacePaint private constructor(
+    private val gradient: Fill.Gradient,
+    private val stops: List<GradientStop>,
+    private val minX: Float,
+    private val minY: Float,
+    private val spanX: Float,
+    private val spanY: Float,
+) {
+    fun at(x: Float, y: Float): Color = Ramp.colorAt(
+        stops,
+        Ramp.parameterAt(gradient, (x - minX) / spanX, (y - minY) / spanY),
+    )
+
+    companion object {
+        fun of(gradient: Fill.Gradient, mesh: Mesh): FacePaint {
+            val (min, max) = mesh.bounds()
+            // A degenerate span would divide by zero on a single-point mesh; one unit keeps the
+            // ramp sampling at a fixed place rather than producing NaNs across the whole letter.
+            val spanX = (max.x - min.x).takeIf { it > 0f } ?: 1f
+            val spanY = (max.y - min.y).takeIf { it > 0f } ?: 1f
+            return FacePaint(
+                gradient = gradient,
+                stops = gradient.stops.sortedBy { it.position },
+                minX = min.x,
+                minY = min.y,
+                spanX = spanX,
+                spanY = spanY,
+            )
+        }
+    }
 }
 
 /** The rendered image, as straight ARGB — the layout the codecs and the asset store both use. */
