@@ -350,6 +350,14 @@ object EffectRaster {
                 val delta = effect.glossContour.evaluate(abs(lambert - flat).coerceIn(0f, 1f))
                 if (delta <= 0f) continue
 
+                // Deliberately *not* converted to linear light before blending.
+                //
+                // Shading in linear is the physically correct thing and it is the wrong thing here.
+                // Photoshop computes Bevel and Emboss in the document's own space, so a linear
+                // pipeline would produce a defensible result that differs visibly from the
+                // reference at every setting — a brighter lip and a softer shoulder than the file
+                // being matched. Fidelity to the reference and physical correctness point in
+                // opposite directions on this one, and the reference wins.
                 out.pixels[i] = if (lambert > flat) {
                     paintOn(
                         out.pixels[i],
@@ -465,42 +473,19 @@ object EffectRaster {
     // ---- the pieces the effects are built from ---------------------------------------------------
 
     /**
-     * Distance from each transparent pixel to the nearest opaque one, in pixels.
+     * Exact Euclidean distance from each transparent pixel to the nearest opaque one.
      *
-     * Two chamfer passes — one down the image, one back up — which is linear in the pixel count and
-     * accurate to a few per cent of true Euclidean distance. Exact distance needs a great deal more
-     * work for an error nobody can see in a stroke a handful of pixels wide.
+     * Exact, not approximate — see [Signal.distance]. A chamfer transform stood here and was wrong
+     * by up to four per cent on a diagonal, which is enough to make a stroke visibly thicker on the
+     * diagonal of a letter than on its stem, and to give a bevel a shoulder whose width breathes as
+     * the outline turns. Photoshop's does neither.
      */
-    private fun distanceOutside(source: Raster): FloatArray {
-        val w = source.width
-        val h = source.height
-        val d = FloatArray(w * h) { if ((source.pixels[it] ushr 24) > HALF_BYTE) 0f else FAR }
-
-        fun relax(at: Int, from: Int, cost: Float) {
-            val candidate = d[from] + cost
-            if (candidate < d[at]) d[at] = candidate
-        }
-
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                val i = y * w + x
-                if (x > 0) relax(i, i - 1, ORTHOGONAL)
-                if (y > 0) relax(i, i - w, ORTHOGONAL)
-                if (x > 0 && y > 0) relax(i, i - w - 1, DIAGONAL)
-                if (x < w - 1 && y > 0) relax(i, i - w + 1, DIAGONAL)
-            }
-        }
-        for (y in h - 1 downTo 0) {
-            for (x in w - 1 downTo 0) {
-                val i = y * w + x
-                if (x < w - 1) relax(i, i + 1, ORTHOGONAL)
-                if (y < h - 1) relax(i, i + w, ORTHOGONAL)
-                if (x < w - 1 && y < h - 1) relax(i, i + w + 1, DIAGONAL)
-                if (x > 0 && y < h - 1) relax(i, i + w - 1, DIAGONAL)
-            }
-        }
-        return d
-    }
+    private fun distanceOutside(source: Raster): FloatArray =
+        Signal.distance(
+            BooleanArray(source.pixels.size) { (source.pixels[it] ushr 24) > HALF_BYTE },
+            source.width,
+            source.height,
+        )
 
     private fun alphaOf(source: Raster) =
         FloatArray(source.pixels.size) { ((source.pixels[it] ushr 24) and 0xFF) / 255f }
@@ -513,49 +498,14 @@ object EffectRaster {
     }
 
     /**
-     * Three box passes, which is a Gaussian to within a per cent and costs a fraction of one.
+     * A true Gaussian — see [Signal.gaussian].
      *
-     * The radius is split across the passes so the total spread matches the requested blur; running
-     * three passes at the full radius blurs three times as far as asked, and a shadow that reaches
-     * further than its setting says is the kind of thing that gets tuned around rather than fixed.
+     * Photoshop states a blur as a radius and means a Gaussian whose visible reach is about that
+     * far, so the radius is converted to a standard deviation rather than used as one: a sigma of
+     * the stated radius blurs roughly three times too far.
      */
-    private fun blur(mask: FloatArray, width: Int, height: Int, radius: Float): FloatArray {
-        val r = (radius / BOX_PASSES).roundToInt().coerceAtLeast(1)
-        var current = mask
-        repeat(BOX_PASSES) {
-            current = boxPass(current, width, height, r, horizontal = true)
-            current = boxPass(current, width, height, r, horizontal = false)
-        }
-        return current
-    }
-
-    private fun boxPass(
-        source: FloatArray,
-        width: Int,
-        height: Int,
-        radius: Int,
-        horizontal: Boolean,
-    ): FloatArray {
-        val out = FloatArray(source.size)
-        val span = radius * 2 + 1
-        val outer = if (horizontal) height else width
-        val inner = if (horizontal) width else height
-
-        for (o in 0 until outer) {
-            fun index(i: Int) = if (horizontal) o * width + i else i * width + o
-            // A running sum, so the cost is one add and one subtract per pixel rather than one per
-            // tap — the difference between a blur that is usable at export size and one that is not.
-            var sum = 0f
-            for (i in -radius..radius) sum += source[index(i.coerceIn(0, inner - 1))]
-            for (i in 0 until inner) {
-                out[index(i)] = sum / span
-                val leaving = source[index((i - radius).coerceIn(0, inner - 1))]
-                val arriving = source[index((i + radius + 1).coerceIn(0, inner - 1))]
-                sum += arriving - leaving
-            }
-        }
-        return out
-    }
+    private fun blur(mask: FloatArray, width: Int, height: Int, radius: Float): FloatArray =
+        Signal.gaussian(mask, width, height, radius / SIGMA_PER_RADIUS)
 
     /**
      * Draws the source's silhouette in one colour, offset by a *fractional* amount.
@@ -679,14 +629,14 @@ object EffectRaster {
     private const val HALF_BYTE = 127
     private const val STRAIGHT = 180f
     private const val DEG_TO_RAD = 0.017453292f
-    private const val FAR = 1e9f
 
-    /** Chamfer weights: 1 across an edge and √2 across a corner, the classic 3-4 pair normalised. */
-    private const val ORTHOGONAL = 1f
-    private const val DIAGONAL = 1.41421356f
-
-    /** Three box passes approximate a Gaussian; the fourth is not worth its cost. */
-    private const val BOX_PASSES = 3
+    /**
+     * Photoshop's blur radius against a Gaussian's standard deviation.
+     *
+     * Its slider is a reach, not a sigma. Three sigma covers essentially all of a Gaussian, so a
+     * radius divided by three gives a blur whose visible extent matches the number the user typed.
+     */
+    private const val SIGMA_PER_RADIUS = 3f
 
     private const val ALPHA_MASK = -0x1000000
     private const val HUNDRED = 100f
