@@ -284,13 +284,13 @@ private fun Controls(
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             Toggle("دیترینگ", adjustment.dither) { model.setAdjustment(id, adjustment.copy(dither = it)) }
-            ColorPickerBody(
-                color = adjustment.gradient.stops.last().color,
-                onChange = { color ->
-                    val stops = adjustment.gradient.stops.toMutableList()
-                    stops[stops.lastIndex] = stops.last().copy(color = color)
-                    model.setAdjustment(id, adjustment.copy(gradient = adjustment.gradient.copy(stops = stops)))
-                },
+            // The real editor, which existed all along and this panel could not reach. It offered a
+            // colour picker wired to the *last stop only*, so a duotone could be given its highlight
+            // and never its shadow, and a third stop could not be added at all — on the one
+            // adjustment whose entire purpose is the ramp.
+            GradientEditorBody(
+                gradient = adjustment.gradient,
+                onChange = { model.setAdjustment(id, adjustment.copy(gradient = it)) },
             )
         }
 

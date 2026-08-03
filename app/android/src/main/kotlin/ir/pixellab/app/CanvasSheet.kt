@@ -157,6 +157,21 @@ fun CanvasSheetBody(
         // What DPI does and does not do, because it is the number people expect to resize the file.
         SheetHint("DPI اندازهٔ فیزیکی خروجی PDF را می‌سازد — تعداد پیکسل‌ها را عوض نمی‌کند")
 
+        SheetSection("عمق بیت")
+        SheetChips {
+            for (option in ir.pixellab.core.model.Precision.entries) {
+                SheetChip(
+                    "${option.bitsPerChannel} بیت",
+                    chosen = state.document.color.precision == option,
+                ) { model.act { setPrecision(option) } }
+            }
+        }
+        // Why anyone would pay twice the memory for it, said in terms of what they are making.
+        SheetHint(
+            "۱۶ بیت برای استایل‌های چندلایه: هر گذر در ۸ بیت گرد می‌شود و باندینگی که به تصویر " +
+                "نهایی می‌رسد دیگر برنمی‌گردد",
+        )
+
         SheetAction("تصویر را به‌عنوان لایه بیاور", onClick = onPickImage)
         SheetHint("تصویر بزرگ‌تر از بوم کوچک می‌شود تا دستگیره‌هایش روی صفحه بماند")
 

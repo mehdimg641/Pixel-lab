@@ -959,6 +959,26 @@ class Editor(
      * so it goes through its own path rather than [applyCanvas] — which moves layers and refits the
      * viewport, neither of which a change of DPI has any business doing.
      */
+    /**
+     * The document's working precision — Photoshop's Image ▸ Mode ▸ 8/16/32 Bits.
+     *
+     * Expressible since wave 1 and unreachable until now: `ColorSettings.precision` was read only by
+     * the memory budget, so a document could be sixteen bit and no control could say so.
+     *
+     * It matters most on exactly the work this app is for. A style from the reference files runs a
+     * gradient through ten stacked shadows and a bevel; every pass quantises at eight bits, and the
+     * banding that survives to the final image cannot be recovered afterwards.
+     */
+    fun setPrecision(precision: ir.pixellab.core.model.Precision) {
+        if (precision == state.document.color.precision) return
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.copy(color = state.document.color.copy(precision = precision)),
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
+    }
+
     fun setCanvasDpi(dpi: Int) {
         if (dpi == state.document.canvas.dpi) return
         history.record(state.document)
