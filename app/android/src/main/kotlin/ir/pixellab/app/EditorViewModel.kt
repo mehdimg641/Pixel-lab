@@ -258,6 +258,47 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         comparing = false
     }
 
+    // ---- a sheet as a transaction ------------------------------------------------------------------
+
+    /**
+     * Where the history stood when the open sheet appeared.
+     *
+     * Every sheet in this app writes its change the moment a control moves, and the only way back
+     * was undo — so a user who opened a panel, moved four sliders and thought better of it had to
+     * press undo four times and count. Every one of the eight reference apps instead frames a tool
+     * as a transaction: ✕ and ✓ with a live preview between them, and nothing has happened until the
+     * tick. That framing is most of what makes those apps read as easy, and it costs no algorithm.
+     */
+    private var sheetBaseline = 0
+
+    /** Called when a sheet appears, so cancel knows how far back "before this" is. */
+    fun noteSheetOpened() {
+        sheetBaseline = historyPosition
+    }
+
+    /** Whether anything has happened since the sheet opened — the tick is only meaningful if so. */
+    val sheetHasChanges: Boolean get() = historyPosition > sheetBaseline
+
+    /**
+     * ✕ — puts the document back to where the sheet found it, then closes.
+     *
+     * **It walks back over document edits only, and stops at the first painted stroke.** A brush
+     * stroke made while the brush *settings* sheet was open is the user's work, not the sheet's, and
+     * a cancel that ate it would be far worse than no cancel at all. Stopping there costs the rest
+     * of the revert, which is the correct trade: the user can still undo, and nothing is destroyed.
+     */
+    fun cancelSheet() {
+        while (steps.size > sheetBaseline && steps.lastOrNull() == Step.Edit) undo()
+        act { closeSheet() }
+        sheetBaseline = historyPosition
+    }
+
+    /** ✓ — keeps everything and closes. The changes are already in the document and on the stack. */
+    fun confirmSheet() {
+        act { closeSheet() }
+        sheetBaseline = historyPosition
+    }
+
     val current: Editor get() = editor
 
     fun act(body: Editor.() -> Unit) = edit(body)

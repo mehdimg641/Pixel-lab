@@ -33,6 +33,8 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Category
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Compare
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Crop
@@ -788,28 +790,33 @@ internal fun SelectionCard(state: EditorState, model: EditorViewModel, onEditTex
 }
 
 /**
- * The sheet's head: a grip that grows it, and a close.
+ * The sheet's head: cancel, what this sheet is, and confirm — with a grip between them.
+ *
+ * **A tool is a transaction.** Every sheet here writes its change the moment a control moves, and
+ * until now the only way back was undo — so a user who opened a panel, moved four sliders and
+ * thought better of it had to press undo four times and count. Every one of the eight reference apps
+ * frames a tool as ✕ and ✓ with a live preview between them, and that framing is most of what makes
+ * them read as easy. It costs no algorithm at all.
+ *
+ * The title is not decoration either. A sheet that says what it is can be opened from anywhere —
+ * ribbon, quick action, another sheet — and still be read without working out how you got there.
  *
  * No divider under it. On a card already a step lighter than the ground, a line immediately below
  * the grip is a third horizontal edge within twenty points of two others.
  */
 @Composable
 private fun SheetHeader(state: EditorState, model: EditorViewModel) {
+    // A new sheet is a new transaction. Keyed on the content so re-opening the same panel for a
+    // different layer starts again rather than reverting to some earlier layer's baseline.
+    LaunchedEffect(state.sheet.content) { model.noteSheetOpened() }
+
     Row(
         Modifier.fillMaxWidth().padding(horizontal = Space.medium, vertical = Space.small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            "بستن",
-            style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
-            color = Ink.TextMuted,
-            modifier = Modifier
-                .clip(Corners.chip)
-                .clickable { model.act { closeSheet() } }
-                .padding(horizontal = Space.medium, vertical = Space.small)
-                .semantics { role = Role.Button },
-        )
-        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+        BarIcon(Icons.Outlined.Close, "انصراف", tint = Ink.TextMuted) { model.cancelSheet() }
+
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
             SheetGrip(
                 Modifier.clickable {
                     // Tapping the grip walks the detents, so the sheet can be grown without a drag.
@@ -824,11 +831,47 @@ private fun SheetHeader(state: EditorState, model: EditorViewModel) {
                     }
                 },
             )
+            state.sheet.content?.let { content ->
+                Text(
+                    sheetTitle(content),
+                    style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                    color = Ink.Text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
-        // Balances the close on the other side so the grip sits in the middle of the sheet rather
-        // than in the middle of what is left over after the close.
-        Box(Modifier.width(CLOSE_BALANCE))
+
+        // Amber once there is something to keep, muted before that — so the tick reads as the
+        // outcome of the work rather than as a second, differently-shaped close button.
+        BarIcon(
+            Icons.Outlined.Check,
+            "تأیید",
+            tint = if (model.sheetHasChanges) Ink.Accent else Ink.TextMuted,
+        ) { model.confirmSheet() }
     }
+}
+
+/** What each sheet calls itself. Read straight off the header, so it has to match the ribbon. */
+private fun sheetTitle(content: SheetContent): String = when (content) {
+    is SheetContent.EffectParameters -> "افکت"
+    is SheetContent.LayerParameters -> "لایه"
+    SheetContent.LayerList -> "لایه‌ها"
+    SheetContent.StyleLibrary -> "سبک"
+    SheetContent.FontPicker -> "فونت"
+    SheetContent.BrushSettings -> "قلم‌مو"
+    SheetContent.PixelSelection -> "انتخاب"
+    SheetContent.Adjustments -> "تنظیم"
+    SheetContent.Retouch -> "ترمیم"
+    SheetContent.Vector -> "قلم و مسیر"
+    SheetContent.LibraryPanel -> "لوک"
+    SheetContent.CanvasTools -> "بوم"
+    SheetContent.ShapeTools -> "شکل"
+    SheetContent.Arrange -> "چیدمان"
+    SheetContent.Guides -> "شبکه و راهنما"
+    SheetContent.Typography -> "تایپوگرافی"
+    SheetContent.Settings -> "تنظیمات"
+    SheetContent.Dimensional -> "صحنهٔ سه‌بعدی"
 }
 
 /** How much of the chrome colour the top bar carries. The canvas stays faintly visible behind it. */
@@ -842,9 +885,6 @@ private val DOCK_PILL_HEIGHT = 28.dp
 /** History marks. Small: there can be two hundred of them and they are a strip, not a control. */
 private val MARK = 6.dp
 private val MARK_WIDE = 18.dp
-
-/** The close label's width, mirrored on the other side so the grip is centred on the sheet. */
-private val CLOSE_BALANCE = 56.dp
 
 /** What the picker accepts. Every still image; video is deliberately not part of this app. */
 private const val IMAGE_MIME = "image/*"
