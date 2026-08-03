@@ -1,5 +1,6 @@
 package ir.pixellab.core.render
 
+import ir.pixellab.core.model.Affine
 import ir.pixellab.core.model.BlendSpace
 import ir.pixellab.core.model.ColorSettings
 import ir.pixellab.core.model.Effect

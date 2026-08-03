@@ -178,6 +178,16 @@ private fun Placement(state: EditorState, model: EditorViewModel, modifier: Modi
     var skewY by remember(layer.transform.skew.y) {
         mutableStateOf(layer.transform.skew.y.toInt().toString())
     }
+    // Recovered from the corners rather than stored twice: the model's four points are the truth,
+    // and a second copy of "how much perspective" would be one more thing that can disagree.
+    var perspectiveAmount by remember(layer.transform.perspective) {
+        mutableStateOf(
+            layer.transform.perspective?.let { warp ->
+                val span = (warp.bottomRight.x - warp.bottomLeft.x).takeIf { it != 0f } ?: 1f
+                (warp.topLeft.x - warp.bottomLeft.x) * 2f / span
+            } ?: 0f,
+        )
+    }
 
     Column(modifier) {
         SheetSection("مختصات دقیق")
@@ -198,6 +208,17 @@ private fun Placement(state: EditorState, model: EditorViewModel, modifier: Modi
             SheetNumberField("اریب افقی", skewX, modifier = Modifier.weight(1f)) { skewX = signedDigits(it) }
             SheetNumberField("اریب عمودی", skewY, modifier = Modifier.weight(1f)) { skewY = signedDigits(it) }
         }
+        // Perspective is a corner drag in Photoshop and one degree of freedom in practice: moving a
+        // corner moves its pair symmetrically, which is exactly what makes it perspective rather
+        // than distort. So it is one slider here, applied on release rather than on every step,
+        // because each change rebuilds the layer's four corners.
+        SheetSlider(
+            label = "پرسپکتیو",
+            value = perspectiveAmount,
+            range = -0.9f..0.9f,
+            onChange = { value, _ -> perspectiveAmount = value },
+            onCommit = { model.setPerspective(id, perspectiveAmount) },
+        )
         SheetHint("اندازه: ${box.width.toInt()}×${box.height.toInt()} — اریب بر حسب درجه، تا ۸۵")
         SheetAction("اعمال") {
             model.setPlacement(

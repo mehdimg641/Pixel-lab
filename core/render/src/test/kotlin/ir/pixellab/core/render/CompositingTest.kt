@@ -1,5 +1,6 @@
 package ir.pixellab.core.render
 
+import ir.pixellab.core.model.Affine
 import io.kotest.matchers.floats.plusOrMinus
 import io.kotest.matchers.shouldBe
 import ir.pixellab.core.model.Rect
@@ -198,6 +199,82 @@ class CompositingTest {
             map.map(probe) shouldBeNear
                 ir.pixellab.core.canvas.Handles.localToCanvas(probe, bounds, transform)
         }
+    }
+
+    @Test
+    fun `a four-corner warp takes the layer's corners exactly where they were dragged`() {
+        // Perspective was in the model — a whole `Perspective` class with four corners — and read
+        // by no renderer. A document could be authored with a warp and it would silently vanish.
+        val bounds = Rect(0f, 0f, 200f, 100f)
+        val warp = ir.pixellab.core.model.Perspective(
+            topLeft = Vec2(40f, 10f),
+            topRight = Vec2(260f, 30f),
+            bottomRight = Vec2(230f, 120f),
+            bottomLeft = Vec2(10f, 90f),
+        )
+        val map = Compositing.layerToCanvas(bounds, Transform(perspective = warp))
+        map.map(Vec2(0f, 0f)) shouldBeNear warp.topLeft
+        map.map(Vec2(200f, 0f)) shouldBeNear warp.topRight
+        map.map(Vec2(200f, 100f)) shouldBeNear warp.bottomRight
+        map.map(Vec2(0f, 100f)) shouldBeNear warp.bottomLeft
+    }
+
+    @Test
+    fun `a warp is projective, so its midpoint is not the average of its corners`() {
+        // The property that separates a real perspective transform from a bilinear fudge. Under a
+        // genuine homography the centre of the source lands where the *diagonals* cross, which on a
+        // trapezium is nearer the short edge — that shift is what the eye reads as depth. A bilinear
+        // warp puts it at the average of the four corners and looks like a bent sheet of rubber.
+        val bounds = Rect(0f, 0f, 100f, 100f)
+        val trapezium = ir.pixellab.core.model.Perspective(
+            topLeft = Vec2(30f, 0f),
+            topRight = Vec2(70f, 0f),
+            bottomRight = Vec2(100f, 100f),
+            bottomLeft = Vec2(0f, 100f),
+        )
+        val map = Compositing.layerToCanvas(bounds, Transform(perspective = trapezium))
+        val centre = map.map(Vec2(50f, 50f))
+        val average = Vec2(50f, 50f)
+        centre.x shouldBe (average.x plusOrMinus 0.001f)
+        // Nearer the short top edge than halfway, because that edge is the far one.
+        (centre.y < average.y - 1f) shouldBe true
+    }
+
+    @Test
+    fun `a warp inverts, so a warped layer can be picked up where it is drawn`() {
+        val bounds = Rect(0f, 0f, 200f, 100f)
+        val transform = Transform(
+            translation = Vec2(25f, 40f),
+            rotation = 15f,
+            perspective = ir.pixellab.core.model.Perspective(
+                topLeft = Vec2(20f, 5f),
+                topRight = Vec2(240f, 25f),
+                bottomRight = Vec2(210f, 115f),
+                bottomLeft = Vec2(0f, 95f),
+            ),
+        )
+        val map = Compositing.layerToCanvas(bounds, transform)
+        for (probe in listOf(Vec2(0f, 0f), Vec2(200f, 0f), Vec2(130f, 60f))) {
+            map.inverse().map(map.map(probe)) shouldBeNear probe
+            // And the handles agree with the compositor, which is the only reason a drag lands on
+            // the pixel it looks like it landed on.
+            map.map(probe) shouldBeNear
+                ir.pixellab.core.canvas.Handles.localToCanvas(probe, bounds, transform)
+            ir.pixellab.core.canvas.Handles.canvasToLocal(
+                map.map(probe), bounds, transform,
+            ) shouldBeNear probe
+        }
+    }
+
+    @Test
+    fun `an affine matrix still has a bottom row of zero, zero, one`() {
+        // The divide by w is free only if every ordinary transform leaves w at one. If a builder
+        // ever wrote something else there, every layer in the document would be scaled by it.
+        val ordinary = Affine.translate(3f, 4f) * Affine.rotate(31f) *
+            Affine.shear(12f, -5f) * Affine.scale(2f, 0.5f)
+        ordinary.values[2] shouldBe 0f
+        ordinary.values[5] shouldBe 0f
+        ordinary.values[8] shouldBe 1f
     }
 
     @Test

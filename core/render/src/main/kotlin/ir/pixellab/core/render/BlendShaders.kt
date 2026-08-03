@@ -182,7 +182,11 @@ object BlendShaders {
         void main() {
             vec4 backdrop = texture(uBackdrop, vUv);
 
-            vec2 uv = (uMap * vec3(vUv, 1.0)).xy;
+            // Divided through by w, which is what makes the map projective. For every transform
+            // built from a translation, rotation, scale or skew that w is exactly one and this is
+            // the same arithmetic as before; a four-corner warp is the case where it is not.
+            vec3 mapped = uMap * vec3(vUv, 1.0);
+            vec2 uv = mapped.xy / (abs(mapped.z) < 0.000001 ? 1.0 : mapped.z);
             // A layer covers part of the canvas; everywhere else the backdrop passes through
             // untouched. Clamping instead would smear the layer's edge across the whole document.
             if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { fragColor = backdrop; return; }

@@ -573,7 +573,8 @@ object Shaders {
             uniform vec4 uSurround;
 
             void main() {
-                vec2 uv = (uMap * vec3(vUv, 1.0)).xy;
+                vec3 mapped = uMap * vec3(vUv, 1.0);
+                vec2 uv = mapped.xy / (abs(mapped.z) < 0.000001 ? 1.0 : mapped.z);
                 // Outside the artboard is the neutral surround, not black and not the edge pixel
                 // smeared outwards by clamping.
                 if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {

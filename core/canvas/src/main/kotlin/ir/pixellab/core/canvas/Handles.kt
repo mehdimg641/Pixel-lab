@@ -132,12 +132,22 @@ object Handles {
      * sit on the artwork they belong to.
      */
     fun localToCanvas(local: Vec2, bounds: Rect, transform: Transform): Vec2 {
+        // A four-corner warp is projective and cannot be written as a sequence of vector
+        // operations, so the moment one is present this defers to the matrix the compositor
+        // builds. That is not a fallback — it is the same map, and using it here is what
+        // guarantees the handles land on the pixels.
+        if (transform.perspective != null) {
+            return ir.pixellab.core.model.Affine.warpAware(bounds, transform).map(local)
+        }
         val anchor = anchorOf(bounds, transform)
         val scaled = (local - anchor) * transform.scale
         return sheared(scaled, transform.skew).rotated(transform.rotation) + anchor + transform.translation
     }
 
     fun canvasToLocal(canvas: Vec2, bounds: Rect, transform: Transform): Vec2 {
+        if (transform.perspective != null) {
+            return ir.pixellab.core.model.Affine.warpAware(bounds, transform).inverse().map(canvas)
+        }
         val anchor = anchorOf(bounds, transform)
         val unrotated = (canvas - transform.translation - anchor).rotated(-transform.rotation)
         val unsheared = unsheared(unrotated, transform.skew)

@@ -892,6 +892,40 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Photoshop's Edit ▸ Transform ▸ Perspective, as one number.
+     *
+     * The full command is a corner drag, and dragging one corner moves its pair symmetrically —
+     * that symmetry is what makes it *perspective* rather than *distort*, and it is why the whole
+     * gesture has one degree of freedom. So it is one slider: positive narrows the top edge and
+     * widens the bottom, which is the plane tilting away from the viewer.
+     *
+     * Stated in canvas coordinates because that is what the model's four corners are, and measured
+     * against the layer's own box so the same value means the same tilt on a caption and on a
+     * headline.
+     */
+    fun setPerspective(id: LayerId, amount: Float) = edit {
+        val layer = state.document.findLayer(id) ?: return@edit
+        val box = bounds.of(layer)
+        replaceLayer(id) {
+            if (amount == 0f) {
+                it.withTransform(it.transform.copy(perspective = null))
+            } else {
+                val inset = box.width * 0.5f * amount.coerceIn(-0.9f, 0.9f)
+                it.withTransform(
+                    it.transform.copy(
+                        perspective = ir.pixellab.core.model.Perspective(
+                            topLeft = Vec2(box.left + inset, box.top),
+                            topRight = Vec2(box.right - inset, box.top),
+                            bottomRight = Vec2(box.right, box.bottom),
+                            bottomLeft = Vec2(box.left, box.bottom),
+                        ),
+                    ),
+                )
+            }
+        }
+    }
+
     /** The box the placement fields show, in canvas units. */
     fun placementOf(id: LayerId): ir.pixellab.core.model.Rect? {
         val layer = state.document.findLayer(id) ?: return null
