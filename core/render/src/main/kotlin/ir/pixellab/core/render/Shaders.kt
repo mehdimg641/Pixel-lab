@@ -1,5 +1,7 @@
 package ir.pixellab.core.render
 
+import ir.pixellab.core.model.Tone
+
 /**
  * A compiled-shader identity: the program source plus the uniforms it expects.
  *
@@ -629,7 +631,7 @@ object Shaders {
 
 
     /**
-     * The sixteen colour corrections, as one program.
+     * The twenty-two colour corrections, as one program.
      *
      * An adjustment layer does not add pixels, it re-reads what is beneath it — so this samples the
      * composited backdrop and writes a corrected copy, which the compositor then blends back with
@@ -654,7 +656,45 @@ object Shaders {
             uniform sampler2D uRamp;
             uniform sampler2D uLut;
 
+            // The base layer the two neighbourhood corrections read: a blurred copy of the same
+            // backdrop, at each one's own radius. Shadows/Highlights uses both; HDR Toning's local
+            // adaptation uses the first, holding an edge-following base in log luminance.
+            uniform sampler2D uLocal;
+            uniform sampler2D uLocal2;
+
+            // Interpolated from the model rather than written twice, because the CPU path computes
+            // the same corrections and the two have to agree to the last digit.
+            const float SHADOW_HEADROOM = ${Tone.SHADOW_HEADROOM};
+            const float HIGHLIGHT_DEPTH = ${Tone.HIGHLIGHT_DEPTH};
+            const float LOG_KNEE = ${Tone.LOG_KNEE};
+            const float LOG_FLOOR_VALUE = ${Tone.LOG_FLOOR_VALUE};
+            const float LOG_SPAN = ${Tone.LOG_SPAN};
+
             float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+            /** Straight colour from a premultiplied sample; the base layers arrive premultiplied. */
+            vec3 straight(vec4 c) { return c.a > 0.0 ? c.rgb / c.a : c.rgb; }
+
+            /**
+             * How strongly a tone belongs to the range being corrected.
+             *
+             * The parameter is a *width*, read the way the panel's slider reads: at half, a shadow
+             * correction reaches the tones below half and stops. Smoothstep rather than a straight
+             * ramp because a linear ramp is continuous but its slope is not, and that kink shows as
+             * a faint edge across a clear sky.
+             */
+            float toneFalloff(float distanceIntoRange, float tone) {
+                float width = max(tone, 0.05);
+                float t = clamp((clamp(distanceIntoRange, 0.0, 1.0) - (1.0 - width)) / width, 0.0, 1.0);
+                return t * t * (3.0 - 2.0 * t);
+            }
+
+            /** Vibrance protects what is already saturated; saturation does not, and rides on top. */
+            vec3 vibrance(vec3 c, float vib, float sat) {
+                float spread = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+                float amount = max(1.0 + vib * (1.0 - spread) + sat, 0.0);
+                return mix(vec3(luma(c)), c, amount);
+            }
 
             vec3 rgbToHsl(vec3 c) {
                 float mx = max(c.r, max(c.g, c.b));
@@ -806,15 +846,7 @@ object Shaders {
                 } else if (uMode == 4) {
                     c = pow(max(c * pow(2.0, uP0.x) + uP0.y, vec3(0.0)), vec3(1.0 / max(uP0.z, 0.0001)));
                 } else if (uMode == 5) {
-                    float mx = max(c.r, max(c.g, c.b));
-                    float mn = min(c.r, min(c.g, c.b));
-                    float sat = mx - mn;
-                    // Vibrance protects what is already saturated, which is what keeps skin from
-                    // going orange when a landscape is pushed.
-                    float boost = uP0.x * (1.0 - sat);
-                    float amount = 1.0 + boost + uP0.y;
-                    float l = luma(c);
-                    c = mix(vec3(l), c, max(amount, 0.0));
+                    c = vibrance(c, uP0.x, uP0.y);
                 } else if (uMode == 6) {
                     vec3 balanced = balance(c, uP0.rgb, uP1.rgb, uP2.rgb);
                     if (uP0.w > 0.5) {
@@ -898,6 +930,125 @@ object Shaders {
                         dot(c, uP1.rgb) + uP1.w,
                         dot(c, uP2.rgb) + uP2.w
                     );
+                } else if (uMode == 16) {
+                    // Shadows/Highlights. The gain is driven by the *blurred* luminance, not the
+                    // pixel's own, and that single substitution is the whole difference between
+                    // this and a curve: it asks "is this region dark?" rather than "is this pixel
+                    // dark?", and only the first question has a useful answer. Two base layers
+                    // because the panel has two radii, and they want different values.
+                    float darkness = 1.0 - clamp(luma(straight(texture(uLocal, vUv))), 0.0, 1.0);
+                    float brightness = clamp(luma(straight(texture(uLocal2, vUv))), 0.0, 1.0);
+
+                    float gain = 1.0;
+                    if (uP0.x > 0.0) gain *= 1.0 + uP0.x * SHADOW_HEADROOM * toneFalloff(darkness, uP0.y);
+                    if (uP0.z > 0.0) gain *= 1.0 - uP0.z * HIGHLIGHT_DEPTH * toneFalloff(brightness, uP0.w);
+
+                    vec3 lifted = c * gain;
+                    if (uP1.y != 0.0) lifted = clamp((lifted - 0.5) * (1.0 + uP1.y) + 0.5, 0.0, 1.0);
+                    if (uP1.x != 0.0 && gain != 1.0) {
+                        // Lifting a shadow desaturates it, because the colours were compressed down
+                        // there. Put back only what the lift took out, in proportion to how far the
+                        // pixel actually moved, so an untouched midtone keeps what it was given.
+                        float l = luma(lifted);
+                        float strength = 1.0 + uP1.x * min(abs(gain - 1.0), 1.0);
+                        lifted = vec3(l) + (lifted - vec3(l)) * strength;
+                    }
+                    // The clip last, between the two points the editor measured. At Photoshop's own
+                    // default of a hundredth of a per cent this is the identity.
+                    c = (lifted - uP1.z) / max(uP1.w - uP1.z, 0.00001);
+                } else if (uMode == 17) {
+                    int method = int(uP0.x + 0.5);
+                    vec3 t = max(c * exp2(uP0.w), vec3(0.0));
+
+                    if (method == 1) {
+                        // Highlight compression: fit the top of the range onto the screen and leave
+                        // the bottom alone, which is why it never needs a radius.
+                        float l = max(luma(t), 0.00001);
+                        t *= (l / (1.0 + l)) / l;
+                    } else if (method == 2) {
+                        float l = max(luma(t), 0.00001);
+                        t *= (log(1.0 + l * LOG_KNEE) / log(1.0 + LOG_KNEE)) / l;
+                    } else if (method == 3) {
+                        // Local adaptation. The log luminance splits into a slowly-varying base and
+                        // the detail riding on it; only the base is compressed, and the detail goes
+                        // back untouched. That is why it can flatten a twelve-stop scene without
+                        // flattening a face.
+                        float l = max(luma(t), LOG_FLOOR_VALUE);
+                        float logL = log(l);
+                        // uLocal holds the guided filter's per-window coefficients, so the base is
+                        // one multiply-add away rather than another full pass.
+                        float x = clamp(1.0 + logL / LOG_SPAN, 0.0, 1.0);
+                        vec4 coefficients = texture(uLocal, vUv);
+                        float logBase = (coefficients.r * x + coefficients.g) * LOG_SPAN - LOG_SPAN;
+                        float detail = logL - logBase;
+                        t *= exp(logBase / max(uP0.y, 0.00001) + detail * (1.0 + uP1.x)) / l;
+                    }
+
+                    // Shadow and Highlight ride on whichever method ran, exactly as the panel has
+                    // them: two more sliders below the dropdown, acting on the already-mapped tone.
+                    if (uP1.y != 0.0 || uP1.z != 0.0) {
+                        float l = clamp(luma(t), 0.0, 1.0);
+                        t *= 1.0 + uP1.y * (1.0 - l) * (1.0 - l) + uP1.z * l * l;
+                    }
+                    if (uP0.z != 1.0) t = pow(max(t, vec3(0.0)), vec3(1.0 / max(uP0.z, 0.00001)));
+                    t = vibrance(t, uP1.w, uP2.x);
+                    if (uP2.y > 0.5) {
+                        t = clamp(t, 0.0, 1.0);
+                        t = vec3(
+                            texture(uCurves, vec2(t.r, 0.5)).r,
+                            texture(uCurves, vec2(t.g, 0.5)).r,
+                            texture(uCurves, vec2(t.b, 0.5)).r
+                        );
+                    }
+                    c = t;
+                } else if (uMode == 18) {
+                    // Photoshop's Desaturate is Hue/Saturation at -100, so its grey is HSL
+                    // lightness — the midpoint of the brightest and darkest channel — and *not* a
+                    // weighted luma. Reaching for luma() here is the obvious mistake, and it is
+                    // invisible until the same file is opened in both applications.
+                    c = vec3((max(c.r, max(c.g, c.b)) + min(c.r, min(c.g, c.b))) * 0.5);
+                } else if (uMode == 19) {
+                    // Match Color. Reinhard's transfer: move the mean, then rescale the spread.
+                    // uP2.z says whether a source was ever measured; without one this is a no-op
+                    // rather than a picture collapsed onto a flat grey.
+                    if (uP2.z > 0.5) {
+                        float l = luma(c);
+                        float target = luma(uP0.rgb);
+                        float moved = l + (target - l) * uP0.w;
+
+                        vec3 deviation = max(uP1.rgb, vec3(0.00001));
+                        float average = max((deviation.r + deviation.g + deviation.b) / 3.0, 0.00001);
+                        // Neutralize pulls every channel onto one spread, which is what removes a
+                        // cast: a cast *is* one channel sitting apart from the others.
+                        vec3 scale = uP2.y > 0.5 ? vec3(average) : deviation;
+                        vec3 matched = vec3(moved) + (c - vec3(l)) * (vec3(1.0) + (scale / average - 1.0) * uP1.w);
+                        c = mix(matched, c, clamp(uP2.x, 0.0, 1.0));
+                    }
+                } else if (uMode == 20) {
+                    // Replace Color. The selection is a distance from a picked colour rather than a
+                    // slice of the hue wheel, which is what lets it take one blue out of a sky and
+                    // leave the rest. Feathered, because a hard mask outlines everything it touches.
+                    float distance = length(c - uP0.rgb) / 1.7320508;
+                    float mask = clamp(1.0 - distance / max(uP0.w, 0.00001), 0.0, 1.0);
+                    if (uP1.x > 0.5) mask *= mask;
+                    if (mask > 0.0) {
+                        vec3 hsl = rgbToHsl(clamp(c, 0.0, 1.0));
+                        hsl.x = fract(hsl.x + uP1.y);
+                        hsl.y = clamp(hsl.y * (1.0 + uP1.z), 0.0, 1.0);
+                        hsl.z = clamp(hsl.z + uP1.w * (uP1.w > 0.0 ? (1.0 - hsl.z) : hsl.z), 0.0, 1.0);
+                        c = mix(c, hslToRgb(hsl), mask);
+                    }
+                } else if (uMode == 21) {
+                    // Equalize. The mapping *is* this picture's own cumulative histogram, measured
+                    // once and frozen into the curve table — a per-pixel shader cannot count one.
+                    if (uP0.x > 0.5) {
+                        float l = clamp(luma(c), 0.0, 1.0);
+                        float mapped = texture(uCurves, vec2(l, 0.5)).r;
+                        // Scaled rather than replaced, so the hue survives the redistribution. A
+                        // per-channel equalisation is the textbook version and it puts a cast on
+                        // every neutral in the frame.
+                        c *= mapped / max(l, 0.00001);
+                    }
                 }
 
                 fragColor = vec4(clamp(c, 0.0, 1.0) * src.a, src.a);
@@ -905,14 +1056,63 @@ object Shaders {
         """,
         floats = emptySet(),
         ints = setOf("uMode"),
-        samplers = setOf("uSource", "uCurves", "uRamp", "uLut"),
+        samplers = setOf("uSource", "uCurves", "uRamp", "uLut", "uLocal", "uLocal2"),
+    )
+
+    /**
+     * The first half of a guided filter: the guide and its square, ready to be blurred.
+     *
+     * HDR Toning's local adaptation needs a base layer that follows edges. A Gaussian one does not,
+     * and compressing a Gaussian base leaves a bright halo along every edge in the picture — which
+     * is the single thing that makes tone-mapped work look tone-mapped.
+     *
+     * The guided filter gets there in box blurs rather than in a bilateral's quadratic tap count,
+     * and it factors into exactly two extra programs: this one writes the guide and its square, the
+     * blur averages them, and [HDR_BASE_COEFF] turns those averages into a line per window. The
+     * final multiply-add is folded into the adjustment branch itself, so there is no third pass.
+     *
+     * The guide is **normalised** log luminance. The regularisation is compared against the local
+     * variance, so what counts as an edge is set by the guide's units; raw natural-log luminance
+     * spans five and a half, which puts every ordinary gradient far above any sensible epsilon and
+     * leaves the filter passing the picture through unchanged.
+     */
+    val HDR_BASE_SEED = program(
+        id = "hdr_base_seed",
+        body = """
+            void main() {
+                vec4 src = texture(uSource, vUv);
+                vec3 c = src.a > 0.0 ? src.rgb / src.a : src.rgb;
+                float l = max(dot(c, vec3(0.2126, 0.7152, 0.0722)), ${Tone.LOG_FLOOR_VALUE});
+                float x = clamp(1.0 + log(l) / ${Tone.LOG_SPAN}, 0.0, 1.0);
+                fragColor = vec4(x, x * x, 0.0, 1.0);
+            }
+        """,
+    )
+
+    /**
+     * The second half: each window's line, from the means the blur produced.
+     *
+     * `a` is how much of the guide the base keeps and `b` is what is left of the mean once it has.
+     * Blurring the pair and evaluating `a * guide + b` is what makes the result follow edges instead
+     * of crossing them.
+     */
+    val HDR_BASE_COEFF = program(
+        id = "hdr_base_coeff",
+        body = """
+            void main() {
+                vec2 means = texture(uSource, vUv).rg;
+                float variance = max(means.y - means.x * means.x, 0.0);
+                float a = variance / (variance + ${Tone.GUIDE_EPSILON});
+                fragColor = vec4(a, means.x - a * means.x, 0.0, 1.0);
+            }
+        """,
     )
 
     /** Every program, keyed by the id an effect module puts in its descriptor. */
     val ALL: Map<String, ShaderProgram> = listOf(
         SDF_SEED, SDF_FLOOD, SDF_RESOLVE, STROKE, SHADOW, GLOW, INNER_SHADOW, BEVEL, SATIN, OVERLAY,
         EXTRUDE_STEP, REFLECTION, CHROMATIC_OFFSET, BACKDROP_BLUR, NOISE, EDGE_ROUGHEN, BLUR, FILL,
-        COMPOSITE, PRESENT, COPY, ADJUST,
+        COMPOSITE, PRESENT, COPY, ADJUST, HDR_BASE_SEED, HDR_BASE_COEFF,
     ).associateBy { it.id }
 
     operator fun get(id: String): ShaderProgram? = ALL[id]

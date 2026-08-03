@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,11 +33,12 @@ import ir.pixellab.core.model.GradientStop
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.Vec3
 import ir.pixellab.core.render.ParameterSpec
+import kotlinx.coroutines.launch
 
 /**
  * The adjustment sheet.
  *
- * Two states in one place: with no adjustment layer selected it offers the fourteen to add, and with
+ * Two states in one place: with no adjustment layer selected it offers all twenty-two to add, and with
  * one selected it edits it. Splitting those into separate screens is the arrangement that makes a
  * user add a Curves layer, lose it behind a panel, and add a second one.
  *
@@ -48,6 +50,14 @@ fun AdjustmentSheetBody(
     state: EditorState,
     model: EditorViewModel,
     onImportPreset: () -> Unit = {},
+    /**
+     * Draws a document and hands back its pixels.
+     *
+     * Three of the twenty-two need a measurement of the picture rather than only of the pixel under
+     * them, and this is how they get one. Defaulted to nothing so a preview or a test can build the
+     * sheet without a GL context; the measure buttons simply do nothing then.
+     */
+    render: suspend (ir.pixellab.core.model.Document) -> ir.pixellab.core.codec.RasterImage? = { null },
     modifier: Modifier = Modifier,
 ) {
     val selected = state.primaryLayer as? Layer.AdjustmentLayer
@@ -79,7 +89,7 @@ fun AdjustmentSheetBody(
                 color = Ink.TextMuted,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
             )
-            Controls(selected, model, onImportPreset)
+            Controls(state, selected, model, onImportPreset, render)
         } else {
             Text(
                 "یک لایهٔ تنظیم اضافه کنید یا یکی را انتخاب کنید",
@@ -116,8 +126,15 @@ private fun AddRow(model: EditorViewModel) {
 }
 
 @Composable
-private fun Controls(layer: Layer.AdjustmentLayer, model: EditorViewModel, onImportPreset: () -> Unit) {
+private fun Controls(
+    state: EditorState,
+    layer: Layer.AdjustmentLayer,
+    model: EditorViewModel,
+    onImportPreset: () -> Unit,
+    render: suspend (ir.pixellab.core.model.Document) -> ir.pixellab.core.codec.RasterImage?,
+) {
     val id = layer.id
+    val scope = rememberCoroutineScope()
     when (val adjustment = layer.adjustment) {
         is Adjustment.BrightnessContrast -> {
             Slider("روشنایی", adjustment.brightness, -1f..1f) {
@@ -306,6 +323,170 @@ private fun Controls(layer: Layer.AdjustmentLayer, model: EditorViewModel, onImp
             model.setAdjustment(id, adjustment.copy(amount = it))
         }
 
+        is Adjustment.ShadowsHighlights -> {
+            SheetHint("سایه‌ها و روشنایی‌ها را بر اساس تاریکی *ناحیهٔ* اطراف هر پیکسل باز می‌کند")
+            SectionLabel("سایه‌ها")
+            Slider("مقدار", adjustment.shadowAmount, 0f..1f) {
+                model.setAdjustment(id, adjustment.copy(shadowAmount = it))
+            }
+            Slider("گسترهٔ تن", adjustment.shadowTone, 0f..1f) {
+                model.setAdjustment(id, adjustment.copy(shadowTone = it))
+            }
+            Slider("شعاع", adjustment.shadowRadius, 0f..250f) {
+                model.setAdjustment(id, adjustment.copy(shadowRadius = it))
+            }
+            SectionLabel("روشنایی‌ها")
+            Slider("مقدار", adjustment.highlightAmount, 0f..1f) {
+                model.setAdjustment(id, adjustment.copy(highlightAmount = it))
+            }
+            Slider("گسترهٔ تن", adjustment.highlightTone, 0f..1f) {
+                model.setAdjustment(id, adjustment.copy(highlightTone = it))
+            }
+            Slider("شعاع", adjustment.highlightRadius, 0f..250f) {
+                model.setAdjustment(id, adjustment.copy(highlightRadius = it))
+            }
+            SectionLabel("تنظیم‌ها")
+            Slider("رنگ", adjustment.color, -1f..1f) {
+                model.setAdjustment(id, adjustment.copy(color = it))
+            }
+            Slider("کنتراست میان‌تن", adjustment.midtoneContrast, -1f..1f) {
+                model.setAdjustment(id, adjustment.copy(midtoneContrast = it))
+            }
+            // The two clips are percentiles, so changing one has to re-measure the picture; the
+            // slider writes the fraction and the editor writes back where it landed.
+            Slider("برش سیاه", adjustment.blackClip, 0f..0.5f) {
+                model.setAdjustment(id, adjustment.copy(blackClip = it))
+            }
+            Slider("برش سفید", adjustment.whiteClip, 0f..0.5f) {
+                model.setAdjustment(id, adjustment.copy(whiteClip = it))
+            }
+            // A clip is a percentile, so the two sliders above say *how much* to cut and this says
+            // where that lands in this particular picture. Measured on demand rather than on every
+            // drag, because it costs a full render of everything beneath the layer.
+            SheetAction("اندازه‌گیری نقاط برش") { scope.launch { model.measureAdjustment(id, render) } }
+            SheetHint(
+                "نقاط اندازه‌گیری‌شده: " +
+                    "%.3f".format(adjustment.blackPoint) + " تا " + "%.3f".format(adjustment.whitePoint),
+            )
+        }
+
+        is Adjustment.HdrToning -> {
+            SheetChips {
+                for (option in ir.pixellab.core.model.HdrMethod.entries) {
+                    SheetChip(option.persianLabel, chosen = adjustment.method == option) {
+                        model.setAdjustment(id, adjustment.copy(method = option))
+                    }
+                }
+            }
+            Slider("نوردهی", adjustment.exposure, -5f..5f) {
+                model.setAdjustment(id, adjustment.copy(exposure = it))
+            }
+            Slider("گاما", adjustment.gamma, 0.1f..2f) {
+                model.setAdjustment(id, adjustment.copy(gamma = it))
+            }
+            // Only local adaptation has a base layer, so only it has a radius, a strength and a
+            // detail. Showing the other three anyway is how a panel teaches the wrong model.
+            if (adjustment.method == ir.pixellab.core.model.HdrMethod.LOCAL_ADAPTATION) {
+                SheetHint("شعاع تعیین می‌کند «ناحیه» چقدر بزرگ است — کوچک، هالهٔ لبه می‌سازد")
+                Slider("شعاع", adjustment.radius, 1f..250f) {
+                    model.setAdjustment(id, adjustment.copy(radius = it))
+                }
+                Slider("شدت", adjustment.strength, 0.1f..4f) {
+                    model.setAdjustment(id, adjustment.copy(strength = it))
+                }
+                Slider("جزئیات", adjustment.detail, -3f..3f) {
+                    model.setAdjustment(id, adjustment.copy(detail = it))
+                }
+            }
+            Slider("سایه", adjustment.shadow, -1f..1f) {
+                model.setAdjustment(id, adjustment.copy(shadow = it))
+            }
+            Slider("روشنایی", adjustment.highlight, -1f..1f) {
+                model.setAdjustment(id, adjustment.copy(highlight = it))
+            }
+            Slider("سرزندگی", adjustment.vibrance, -1f..1f) {
+                model.setAdjustment(id, adjustment.copy(vibrance = it))
+            }
+            Slider("اشباع", adjustment.saturation, -1f..1f) {
+                model.setAdjustment(id, adjustment.copy(saturation = it))
+            }
+        }
+
+        Adjustment.Desaturate -> SheetHint(
+            "خاکستری از میانهٔ روشن‌ترین و تاریک‌ترین کانال — همان کاری که فتوشاپ می‌کند، نه لومای وزنی",
+        )
+
+        is Adjustment.MatchColor -> {
+            SheetHint(
+                if (adjustment.statistics.measured) {
+                    "آمار منبع اندازه‌گیری شده و در لایه ذخیره است"
+                } else {
+                    "یک تصویر منبع انتخاب کنید و اندازه‌گیری بزنید — تا آن زمان لایه بی‌اثر است"
+                },
+            )
+            SectionLabel("منبع")
+            // Photoshop's Source dropdown, as chips: every image the document carries. Named by
+            // layer, keyed by asset, because a layer can be renamed or merged away and the pixels
+            // the statistics were taken from cannot.
+            SheetChips {
+                for (image in state.document.walk().filterIsInstance<Layer.Image>()) {
+                    SheetChip(image.name, chosen = adjustment.source == image.asset) {
+                        model.setAdjustment(id, adjustment.copy(source = image.asset))
+                    }
+                }
+            }
+            SheetAction("اندازه‌گیری منبع", enabled = adjustment.source != null) {
+                scope.launch { model.measureAdjustment(id, render) }
+            }
+            Slider("روشنایی", adjustment.luminance, 0f..2f) {
+                model.setAdjustment(id, adjustment.copy(luminance = it))
+            }
+            Slider("شدت رنگ", adjustment.colorIntensity, 0f..2f) {
+                model.setAdjustment(id, adjustment.copy(colorIntensity = it))
+            }
+            Slider("محو", adjustment.fade, 0f..1f) {
+                model.setAdjustment(id, adjustment.copy(fade = it))
+            }
+            Toggle("خنثی‌سازی", adjustment.neutralize) {
+                model.setAdjustment(id, adjustment.copy(neutralize = it))
+            }
+        }
+
+        is Adjustment.ReplaceColor -> {
+            Slider("گستردگی", adjustment.fuzziness, 0f..1f) {
+                model.setAdjustment(id, adjustment.copy(fuzziness = it))
+            }
+            Toggle("خوشه‌های رنگی موضعی", adjustment.localized) {
+                model.setAdjustment(id, adjustment.copy(localized = it))
+            }
+            SectionLabel("نتیجه")
+            Slider("رنگ‌مایه", adjustment.hue, -0.5f..0.5f) {
+                model.setAdjustment(id, adjustment.copy(hue = it))
+            }
+            Slider("اشباع", adjustment.saturation, -1f..1f) {
+                model.setAdjustment(id, adjustment.copy(saturation = it))
+            }
+            Slider("روشنی", adjustment.lightness, -1f..1f) {
+                model.setAdjustment(id, adjustment.copy(lightness = it))
+            }
+            SectionLabel("رنگ هدف")
+            ColorPickerBody(
+                color = adjustment.target,
+                onChange = { model.setAdjustment(id, adjustment.copy(target = it)) },
+            )
+        }
+
+        is Adjustment.Equalize -> {
+            SheetHint(
+                if (adjustment.table.isEmpty()) {
+                    "هنوز اندازه‌گیری نشده — تا آن زمان تصویر را تغییر نمی‌دهد"
+                } else {
+                    "نگاشت از هیستوگرام تجمعی همین تصویر ساخته شده و پارامتری ندارد"
+                },
+            )
+            SheetAction("اندازه‌گیری") { scope.launch { model.measureAdjustment(id, render) } }
+        }
+
         is Adjustment.SelectiveColor -> {
             // One family at a time, because nine families of four inks is thirty-six sliders and a
             // panel of thirty-six sliders is one nobody reads. Photoshop shows one too.
@@ -368,6 +549,23 @@ private fun Controls(layer: Layer.AdjustmentLayer, model: EditorViewModel, onImp
             }
         }
     }
+}
+
+/**
+ * A heading inside one adjustment's controls.
+ *
+ * Three of the panels carry two or three groups of sliders that share names — Shadows and
+ * Highlights both have an Amount, a Tone and a Radius — and without the heading the second Amount
+ * looks like a duplicate of the first.
+ */
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = Ink.TextMuted,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 2.dp),
+    )
 }
 
 /** One output channel's recipe: how much of each input, and a constant to lift or drop it. */
@@ -433,7 +631,15 @@ private fun Slider(
     )
 }
 
-/** The fourteen, in the order Photoshop's own menu lists them. */
+/**
+ * All twenty-two, in the order Photoshop's own Adjustments menu lists them.
+ *
+ * The order is not cosmetic. Photoshop groups them by what they act on — tone, then colour, then
+ * the ones that throw information away, then the two that read a neighbourhood, then the four that
+ * take no parameters or need a second picture — and anyone who has used it navigates by position
+ * long before they read the labels. Sorting these alphabetically, or by when they were written,
+ * would make a familiar list unfamiliar for no gain.
+ */
 private val CATALOG: List<Pair<String, () -> Adjustment>> = listOf(
     "روشنایی/کنتراست" to { Adjustment.BrightnessContrast() },
     "سطوح" to { Adjustment.Levels() },
@@ -444,6 +650,7 @@ private val CATALOG: List<Pair<String, () -> Adjustment>> = listOf(
     "تعادل رنگ" to { Adjustment.ColorBalance() },
     "سیاه‌وسفید" to { Adjustment.BlackWhite() },
     "فیلتر عکاسی" to { Adjustment.PhotoFilter(Color(1f, 0.7f, 0.35f)) },
+    "میکسر کانال" to { Adjustment.ChannelMixer() },
     "نقشهٔ گرادینت" to {
         Adjustment.GradientMap(
             Fill.Gradient(
@@ -456,7 +663,12 @@ private val CATALOG: List<Pair<String, () -> Adjustment>> = listOf(
     "آستانه" to { Adjustment.Threshold() },
     "جدول رنگ" to { Adjustment.ColorLookup(ir.pixellab.core.model.AssetId("lut")) },
     "رنگ انتخابی" to { Adjustment.SelectiveColor() },
-    "میکسر کانال" to { Adjustment.ChannelMixer() },
+    "سایه‌ها/روشنایی‌ها" to { Adjustment.ShadowsHighlights() },
+    "تنالیتهٔ HDR" to { Adjustment.HdrToning() },
+    "کاهش اشباع" to { Adjustment.Desaturate },
+    "تطبیق رنگ" to { Adjustment.MatchColor() },
+    "جایگزینی رنگ" to { Adjustment.ReplaceColor() },
+    "یکنواخت‌سازی" to { Adjustment.Equalize() },
 )
 
 /** Photoshop's own 0..255, which is what the histogram counts in and Levels stores as a fraction. */

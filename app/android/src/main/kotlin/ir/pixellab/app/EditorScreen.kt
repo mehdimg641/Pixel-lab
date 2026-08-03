@@ -335,6 +335,7 @@ fun EditorScreen(
                             state = state,
                             model = model,
                             onImportPreset = { pickingPreset.launch(PRESET_MIME) },
+                            render = { document -> renderDocument(handle, document) },
                             modifier = Modifier.fillMaxHeight(),
                         )
                         is SheetContent.Retouch -> RetouchSheetBody(state, model, Modifier.fillMaxHeight())

@@ -542,12 +542,20 @@ class DocumentRenderer(
         surface: Surface,
         clip: TextureHandle?,
     ) {
+        val uniforms = AdjustmentUniforms.of(layer.adjustment)
+
+        // Base layers first, because they run their own programs and would otherwise unbind this
+        // one. Two of the twenty-two corrections read the neighbourhood rather than the pixel, and
+        // these are what they read: Shadows/Highlights wants a plain blur at each of its two radii,
+        // and HDR Toning's local adaptation wants an edge-following one.
+        val bases = baseLayers(uniforms, surface.read)
+
         if (!device.useProgram(Shaders.ADJUST.id)) {
             frame.errors += ExecutionError(Shaders.ADJUST.id, "adjustment program unavailable")
+            bases.release()
             return
         }
         val corrected = obtainTexture(frame.bytesPerPixel)
-        val uniforms = AdjustmentUniforms.of(layer.adjustment)
 
         device.bindTarget(corrected)
         device.setBlend(false)
@@ -558,12 +566,15 @@ class DocumentRenderer(
         device.bindInput("uCurves", if (uniforms.needsCurves) curveTable(layer.adjustment) ?: white else white)
         device.bindInput("uRamp", if (uniforms.needsRamp) rampTable(layer.adjustment) ?: white else white)
         device.bindInput("uLut", if (uniforms.needsLut) lutTable(layer.adjustment) ?: white else white)
+        device.bindInput("uLocal", bases.first ?: white)
+        device.bindInput("uLocal2", bases.second ?: bases.first ?: white)
         device.setInt("uMode", uniforms.mode.ordinal)
         device.setVec4("uP0", uniforms.p0[0], uniforms.p0[1], uniforms.p0[2], uniforms.p0[3])
         device.setVec4("uP1", uniforms.p1[0], uniforms.p1[1], uniforms.p1[2], uniforms.p1[3])
         device.setVec4("uP2", uniforms.p2[0], uniforms.p2[1], uniforms.p2[2], uniforms.p2[3])
         device.setVec2("uTexelSize", 1f / canvasSize.x, 1f / canvasSize.y)
         device.draw(1)
+        bases.release()
 
         compositeTexture(
             frame = frame,
@@ -576,6 +587,117 @@ class DocumentRenderer(
             clip = clip,
             surface = surface,
         )
+    }
+
+    // ---- adjustment base layers --------------------------------------------------------------
+
+    /**
+     * The blurred copies of the backdrop that a neighbourhood correction reads.
+     *
+     * Photoshop refuses to offer either of these two as an adjustment layer, and this is the reason:
+     * the answer at a pixel depends on pixels a radius away, which its per-pixel adjustment pipeline
+     * cannot supply. Ours can, because a blur is a pass, and being non-destructive is worth the pass.
+     *
+     * The textures are created rather than pooled because their format is not the canvas's: the
+     * guided filter subtracts a mean squared from a squared mean, and eight bits per channel would
+     * leave that difference in the noise. They are deleted the moment the draw that reads them is
+     * issued.
+     */
+    private fun baseLayers(uniforms: AdjustmentUniforms, source: TextureHandle): BaseLayers {
+        if (uniforms.localRadius <= 0f) return BaseLayers(null, null, device)
+        val width = canvasSize.x.toInt()
+        val height = canvasSize.y.toInt()
+
+        if (uniforms.mode == ir.pixellab.core.render.AdjustmentMode.HDR_TONING) {
+            return BaseLayers(guidedBase(source, width, height, uniforms.localRadius), null, device)
+        }
+
+        val first = blurredCopy(source, width, height, uniforms.localRadius, BASE_BYTES)
+        // The two radii are usually left equal, and one blur is worth the comparison to find out.
+        val second =
+            if (uniforms.localRadius2 == uniforms.localRadius) null
+            else blurredCopy(source, width, height, uniforms.localRadius2, BASE_BYTES)
+        return BaseLayers(first, second, device)
+    }
+
+    /**
+     * A guided filter's per-window line, ready for the adjustment branch to evaluate.
+     *
+     * Three programs would be the obvious shape — seed, coefficients, resolve — and the third is not
+     * needed: `a * guide + b` is a multiply-add on values the adjustment shader already has, so it
+     * happens inside the branch that wants the answer.
+     *
+     * A Gaussian window rather than the literature's box. It is the same integral to within a
+     * constant and it does not leave the square footprint of a box blur faintly visible in the base,
+     * which a large radius over a smooth sky otherwise does.
+     */
+    private fun guidedBase(source: TextureHandle, width: Int, height: Int, radius: Float): TextureHandle? {
+        if (!device.useProgram(Shaders.HDR_BASE_SEED.id)) return null
+        val seed = device.createTexture(width, height, BASE_BYTES)
+        device.bindTarget(seed)
+        device.setBlend(false)
+        device.bindInput("uSource", source)
+        device.setVec2("uTexelSize", 1f / width, 1f / height)
+        device.draw(1)
+
+        val means = blurredCopy(seed, width, height, radius, BASE_BYTES)
+        device.deleteTexture(seed)
+        if (means == null) return null
+
+        if (!device.useProgram(Shaders.HDR_BASE_COEFF.id)) {
+            device.deleteTexture(means)
+            return null
+        }
+        val coefficients = device.createTexture(width, height, BASE_BYTES)
+        device.bindTarget(coefficients)
+        device.setBlend(false)
+        device.bindInput("uSource", means)
+        device.setVec2("uTexelSize", 1f / width, 1f / height)
+        device.draw(1)
+        device.deleteTexture(means)
+
+        val smoothed = blurredCopy(coefficients, width, height, radius, BASE_BYTES)
+        device.deleteTexture(coefficients)
+        return smoothed
+    }
+
+    private fun blurredCopy(
+        source: TextureHandle,
+        width: Int,
+        height: Int,
+        radius: Float,
+        bytesPerPixel: Int,
+    ): TextureHandle? {
+        if (!device.useProgram(Shaders.BLUR.id)) return null
+        val horizontal = device.createTexture(width, height, bytesPerPixel)
+        val vertical = device.createTexture(width, height, bytesPerPixel)
+        for ((input, output, dx, dy) in listOf(
+            Blur(source, horizontal, 1f, 0f),
+            Blur(horizontal, vertical, 0f, 1f),
+        )) {
+            device.useProgram(Shaders.BLUR.id)
+            device.bindTarget(output)
+            device.setBlend(false)
+            device.bindInput("uSource", input)
+            device.setVec2("uDirection", dx, dy)
+            device.setFloat("uRadius", radius)
+            device.setVec2("uTexelSize", 1f / width, 1f / height)
+            device.draw(1)
+        }
+        device.deleteTexture(horizontal)
+        return vertical
+    }
+
+    /** What a correction borrowed for one draw, and how to give it back. */
+    private class BaseLayers(
+        val first: TextureHandle?,
+        val second: TextureHandle?,
+        private val device: GlDevice,
+    ) {
+        fun release() {
+            first?.let(device::deleteTexture)
+            second?.let(device::deleteTexture)
+        }
     }
 
     // ---- adjustment tables -------------------------------------------------------------------
@@ -601,9 +723,35 @@ class DocumentRenderer(
             return handle
         }
 
+        // Equalize's frozen cumulative histogram is already a 256-sample tone mapping, so it rides
+        // in the same red channel a composite curve does and needs no curve to be fitted to it.
+        if (adjustment is ir.pixellab.core.model.Adjustment.Equalize) {
+            if (adjustment.table.isEmpty()) return null
+            val handle = device.createTexture(TABLE_SIZE, 1, bytesPerPixel = 4)
+            val table = adjustment.table
+            device.uploadArgb(
+                handle, TABLE_SIZE, 1,
+                IntArray(TABLE_SIZE) { i ->
+                    val at = (i.toFloat() / (TABLE_SIZE - 1) * (table.size - 1) + 0.5f).toInt()
+                    val v = (table[at.coerceIn(0, table.size - 1)].coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+                    (0xFF shl 24) or (v shl 16)
+                },
+            )
+            adjustmentTables[key] = handle
+            return handle
+        }
+
         val curves = when (adjustment) {
             is ir.pixellab.core.model.Adjustment.Curves ->
                 listOf(adjustment.rgb, adjustment.red, adjustment.green, adjustment.blue)
+            // HDR Toning's toning curve is a composite curve and nothing else; the three channel
+            // slots stay linear so the same table layout serves both.
+            is ir.pixellab.core.model.Adjustment.HdrToning -> listOf(
+                adjustment.toningCurve,
+                ir.pixellab.core.model.Curve.LINEAR,
+                ir.pixellab.core.model.Curve.LINEAR,
+                ir.pixellab.core.model.Curve.LINEAR,
+            )
             is ir.pixellab.core.model.Adjustment.Levels -> listOf(
                 ir.pixellab.core.model.Curve.LINEAR,
                 levelsCurve(adjustment.perChannel.getOrNull(0)),
@@ -1202,6 +1350,16 @@ class DocumentRenderer(
 
         /** Enough control points that a gamma curve reads as smooth through the table. */
         const val LEVELS_SAMPLES = 16
+
+        /**
+         * Half float for a neighbourhood correction's base layer, whatever the document's precision.
+         *
+         * The guided filter subtracts a mean squared from a squared mean, and at eight bits per
+         * channel that difference is entirely rounding error — the variance comes out as noise, the
+         * base follows it, and the tone mapping it feeds turns to mush. Two extra bytes a pixel on a
+         * texture that lives for one draw is not a cost worth arguing about.
+         */
+        const val BASE_BYTES = 8
 
         const val EPSILON = 0.0001f
 

@@ -206,7 +206,199 @@ sealed interface Adjustment {
         val monochrome: Boolean = false,
         val gray: ChannelRecipe = ChannelRecipe(red = 0.4f, green = 0.4f, blue = 0.2f),
     ) : Adjustment
+
+    /**
+     * Opens the shadows and pulls back the highlights, each by how dark or bright the pixel's
+     * *neighbourhood* is.
+     *
+     * The one correction a curve genuinely cannot do. Lifting shadows with a curve lifts every dark
+     * pixel, including the ones inside a bright subject, so a backlit portrait comes back with a
+     * grey face. This asks "is this *region* dark?", and only that question has a useful answer.
+     *
+     * Photoshop offers it under Image only, never as a layer, because the answer at a pixel depends
+     * on pixels a radius away and its adjustment layers are per-pixel. Ours is a layer anyway: the
+     * neighbourhood is a blur of the backdrop, and a blur is one more pass. Being non-destructive is
+     * strictly better, and there was no reason to inherit the limitation along with the maths.
+     *
+     * Every field is normalised: Photoshop's 0..100 sliders are 0..1 here, its −100..+100 are
+     * −1..+1, and its radii stay in pixels. Defaults are Photoshop's own.
+     */
+    @Serializable @SerialName("shadows_highlights")
+    data class ShadowsHighlights(
+        val shadowAmount: Float = 0.35f,
+        val shadowTone: Float = 0.5f,
+        val shadowRadius: Float = 30f,
+        val highlightAmount: Float = 0f,
+        val highlightTone: Float = 0.5f,
+        val highlightRadius: Float = 30f,
+        /** Saturation put back in proportion to how far a pixel moved; Photoshop's Color slider. */
+        val color: Float = 0.2f,
+        val midtoneContrast: Float = 0f,
+        /** What fraction of the darkest and lightest pixels is allowed to clip outright. */
+        val blackClip: Float = 0.0001f,
+        val whiteClip: Float = 0.0001f,
+        /**
+         * Where those two fractions actually fall, measured once and frozen.
+         *
+         * A clip is a *percentile*, and a percentile needs the histogram of everything beneath the
+         * layer — which is the one thing a per-pixel compositor cannot count. So the editor measures
+         * it when the layer is added or its clips change, and stores the answer here. The defaults
+         * are the whole range, which is the identity, so an unmeasured layer clips nothing rather
+         * than crushing the picture.
+         */
+        val blackPoint: Float = 0f,
+        val whitePoint: Float = 1f,
+    ) : Adjustment
+
+    /**
+     * Tone mapping — the operator that fits a scene with more range than the screen onto the screen.
+     *
+     * [HdrMethod.LOCAL_ADAPTATION] is the one worth having and the one Photoshop opens on: it
+     * divides the picture into a slowly-varying base and the detail riding on it, compresses only
+     * the base, and puts the detail back untouched. That is why it can flatten a twelve-stop scene
+     * without flattening a face — and why the other three methods, which are global curves, cannot.
+     *
+     * The split is done with a guided filter rather than a Gaussian. A Gaussian base blurs across
+     * every edge in the picture, so compressing it leaves a bright halo along each one, and that
+     * halo is the single thing that gives bad HDR away.
+     */
+    @Serializable @SerialName("hdr_toning")
+    data class HdrToning(
+        val method: HdrMethod = HdrMethod.LOCAL_ADAPTATION,
+        val radius: Float = 30f,
+        /** How hard the base is compressed. Photoshop's 0..4; one is neutral. */
+        val strength: Float = 1f,
+        val gamma: Float = 1f,
+        /** Stops, as in the Exposure panel. */
+        val exposure: Float = 0f,
+        /** How much of the detail layer is put back. Photoshop's −300..+300 %, normalised. */
+        val detail: Float = 0.3f,
+        val shadow: Float = 0f,
+        val highlight: Float = 0f,
+        val vibrance: Float = 0.2f,
+        val saturation: Float = 0.2f,
+        /** Photoshop's Toning Curve, applied last, on the composite. */
+        val toningCurve: Curve = Curve.LINEAR,
+    ) : Adjustment
+
+    /**
+     * Photoshop's Desaturate, which is **not** a luminance conversion.
+     *
+     * It is Hue/Saturation with the saturation at −100, so the grey it produces is HSL lightness —
+     * the midpoint of the brightest and darkest channel — not a weighted luma. Pure red becomes mid
+     * grey rather than the dark grey a luma conversion gives. Getting this wrong is invisible until
+     * a file is opened in both applications side by side, at which point every saturated colour is
+     * off, so it is written out here rather than folded into one of the luma paths.
+     */
+    @Serializable @SerialName("desaturate")
+    data object Desaturate : Adjustment
+
+    /**
+     * Transplants the colour and tone statistics of another image onto this one.
+     *
+     * Reinhard's transfer: match the mean and the spread of each channel and two pictures shot under
+     * different light agree. Which is why it is the tool for a set of frames that have to cut
+     * together, and why it works on a whole image rather than a selection.
+     *
+     * [statistics] is measured once, when the source is chosen, and frozen into the layer. That is
+     * what turns a whole-image analysis into a per-pixel correction the compositor can run, and it
+     * is also what makes the result stable — a live measurement would drift every time a layer
+     * beneath it changed.
+     */
+    @Serializable @SerialName("match_color")
+    data class MatchColor(
+        /**
+         * The picture whose look is being transplanted — Photoshop's Source dropdown.
+         *
+         * An asset rather than a layer because that is what survives: a source layer could be
+         * deleted, renamed or merged out from under the adjustment, and the correction would then
+         * quietly stop meaning anything. The asset is also what [statistics] was measured from, so
+         * the two are always talking about the same pixels.
+         */
+        val source: AssetId? = null,
+        val statistics: ColorStatistics = ColorStatistics(),
+        /** Photoshop's Luminance, Color Intensity and Fade, all 0..2, 0..2 and 0..1. */
+        val luminance: Float = 1f,
+        val colorIntensity: Float = 1f,
+        val fade: Float = 0f,
+        /** Removes a colour cast by pulling each channel's mean back to the others'. */
+        val neutralize: Boolean = false,
+    ) : Adjustment
+
+    /**
+     * Selects one colour family by similarity and moves it, in one panel.
+     *
+     * Hue/Saturation's six fixed ranges cannot select a particular blue and leave the rest of the
+     * sky; this can, because the selection is a distance from a colour the user picked rather than a
+     * slice of the hue wheel. [fuzziness] is the width of that distance, feathered rather than
+     * switched so the replaced region does not acquire a hard edge.
+     */
+    @Serializable @SerialName("replace_color")
+    data class ReplaceColor(
+        val target: Color = Color.WHITE,
+        /** Photoshop's 0..200, normalised. Zero selects only exact matches. */
+        val fuzziness: Float = 0.2f,
+        /**
+         * Photoshop's Localized Color Clusters. Off, the mask is one falloff from the target; on,
+         * the falloff is squared, which tightens it around the picked colour and stops a wide
+         * fuzziness from leaking into neighbouring hues.
+         */
+        val localized: Boolean = false,
+        val hue: Float = 0f,
+        val saturation: Float = 0f,
+        val lightness: Float = 0f,
+    ) : Adjustment
+
+    /**
+     * Redistributes tones so the histogram is flat.
+     *
+     * Not a slider — the mapping *is* the picture's own cumulative histogram, so every adjustment of
+     * this kind is a different curve. [table] holds that curve, measured once and frozen, for the
+     * same reason [MatchColor] freezes its statistics: a per-pixel shader cannot count a histogram,
+     * and a live count would change under the layer every time anything beneath it moved.
+     *
+     * An empty table means "not yet measured" and is the identity, so a freshly added layer shows
+     * the picture unchanged rather than black.
+     */
+    @Serializable @SerialName("equalize")
+    data class Equalize(val table: List<Float> = emptyList()) : Adjustment
 }
+
+/** Photoshop's four tone-mapping methods, in the order its own dropdown lists them. */
+@Serializable
+enum class HdrMethod {
+    EXPOSURE_AND_GAMMA, HIGHLIGHT_COMPRESSION, EQUALIZE_HISTOGRAM, LOCAL_ADAPTATION,
+    ;
+
+    val persianLabel: String
+        get() = when (this) {
+            EXPOSURE_AND_GAMMA -> "نوردهی و گاما"
+            HIGHLIGHT_COMPRESSION -> "فشرده‌سازی روشنایی"
+            EQUALIZE_HISTOGRAM -> "یکنواخت‌سازی هیستوگرام"
+            LOCAL_ADAPTATION -> "انطباق موضعی"
+        }
+}
+
+/**
+ * The mean and spread of an image, per channel, plus its mean luminance.
+ *
+ * Everything Match Color needs from a source picture, and small enough to live in the document —
+ * which matters, because the alternative is the document holding a copy of the source image.
+ */
+@Serializable
+data class ColorStatistics(
+    val mean: Vec3 = Vec3(0.5f, 0.5f, 0.5f),
+    val deviation: Vec3 = Vec3(0.25f, 0.25f, 0.25f),
+    /**
+     * Whether a source was ever measured.
+     *
+     * A flag rather than inferring it from the numbers. Zero spread in a channel is a perfectly
+     * ordinary measurement — a photograph of a clear sky has almost none in blue — so treating it
+     * as "nothing was measured" would silently disable the whole adjustment on exactly the pictures
+     * it is most often pointed at.
+     */
+    val measured: Boolean = false,
+)
 
 /** The nine families Selective Color divides the spectrum into, in Photoshop's own menu order. */
 @Serializable

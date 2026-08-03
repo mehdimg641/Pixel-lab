@@ -1436,6 +1436,70 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         replaceLayer(id) { (it as Layer.AdjustmentLayer).copy(adjustment = adjustment) }
     }
 
+    /**
+     * Measures what an adjustment layer needs from the picture beneath it, and freezes the answer.
+     *
+     * Three of the twenty-two are not per-pixel functions at all. Equalize's mapping *is* the
+     * picture's own cumulative histogram; Match Color transplants another image's mean and spread;
+     * Shadows/Highlights ends in a clip, and a clip is a percentile. None of the three can be
+     * evaluated by a compositor that sees one texel at a time, which is exactly why Photoshop
+     * refuses to offer them as adjustment layers and keeps them as destructive commands under Image.
+     *
+     * Taking the measurement once and storing it in the layer buys back the layer. It also makes the
+     * result *stable*, which the live alternative would not be: a histogram recounted whenever
+     * anything underneath moved would have every one of these corrections drift while the user
+     * worked on something else entirely.
+     *
+     * What is measured is the document with this layer and everything above it hidden — that is what
+     * "beneath" means, and including itself would have it measure its own output.
+     *
+     * @return true when a measurement was taken and the layer changed.
+     */
+    suspend fun measureAdjustment(
+        id: LayerId,
+        render: suspend (Document) -> ir.pixellab.core.codec.RasterImage?,
+    ): Boolean {
+        val layer = state.document.findLayer(id) as? Layer.AdjustmentLayer ?: return false
+
+        // Match Color is the one that does not measure what is beneath it — it transplants another
+        // picture's look, so measuring the backdrop would be an elaborate way of changing nothing.
+        (layer.adjustment as? ir.pixellab.core.model.Adjustment.MatchColor)?.let { match ->
+            val asset = match.source ?: return false
+            val image = assetStore.source.load(asset) ?: return false
+            setAdjustment(
+                id,
+                match.copy(statistics = ir.pixellab.core.imaging.Adjust.statistics(image.toRaster())),
+            )
+            return true
+        }
+
+        val document = state.document
+        var reached = false
+        val beneath = document.copy(
+            layers = document.layers.map {
+                if (it.id == id) reached = true
+                if (reached) it.with(visible = false) else it
+            },
+        )
+        val raster = (render(beneath) ?: return false).toRaster()
+
+        val measured = when (val adjustment = layer.adjustment) {
+            is ir.pixellab.core.model.Adjustment.Equalize ->
+                adjustment.copy(table = ir.pixellab.core.imaging.Adjust.equalizeTable(raster).toList())
+
+            is ir.pixellab.core.model.Adjustment.ShadowsHighlights -> {
+                val (black, white) = ir.pixellab.core.imaging.Adjust.clipPoints(
+                    raster, adjustment.blackClip, adjustment.whiteClip,
+                )
+                adjustment.copy(blackPoint = black, whitePoint = white)
+            }
+
+            else -> return false
+        }
+        setAdjustment(id, measured)
+        return true
+    }
+
     /** Replaces the string of a text layer, keeping everything else about it. */
     fun setText(id: LayerId, text: String) = edit {
         val layer = state.document.findLayer(id) as? Layer.Text ?: return@edit

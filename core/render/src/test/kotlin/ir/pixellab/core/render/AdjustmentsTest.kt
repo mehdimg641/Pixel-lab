@@ -38,6 +38,12 @@ class AdjustmentsTest {
             Adjustment.ColorLookup(ir.pixellab.core.model.AssetId("lut")),
             Adjustment.SelectiveColor(),
             Adjustment.ChannelMixer(),
+            Adjustment.ShadowsHighlights(),
+            Adjustment.HdrToning(),
+            Adjustment.Desaturate,
+            Adjustment.MatchColor(),
+            Adjustment.ReplaceColor(),
+            Adjustment.Equalize(),
         )
         // Every one of them, and each to a distinct mode: two adjustments sharing a mode is one of
         // them silently doing the other's job.
@@ -248,7 +254,7 @@ class AdjustmentsTest {
     @Test
     fun `the shader declares every uniform the adjustment pass sets`() {
         val source = Shaders.ADJUST.fragment
-        for (name in listOf("uMode", "uP0", "uP1", "uP2", "uCurves", "uRamp", "uLut")) {
+        for (name in listOf("uMode", "uP0", "uP1", "uP2", "uCurves", "uRamp", "uLut", "uLocal", "uLocal2")) {
             // A misspelled uniform is silent: the effect renders with a zeroed parameter and looks
             // merely wrong rather than broken.
             (name in source) shouldBe true
@@ -263,6 +269,72 @@ class AdjustmentsTest {
             // reads as the layer having no effect rather than as a missing feature.
             ("uMode == ${mode.ordinal}" in source) shouldBe true
         }
+    }
+
+    @Test
+    fun `only the neighbourhood corrections ask for a base layer`() {
+        // The flag is what makes the renderer spend six passes building an edge-following base, so
+        // a correction that does not read one must not claim it does.
+        for (adjustment in listOf<Adjustment>(
+            Adjustment.Curves(), Adjustment.Invert, Adjustment.Equalize(), Adjustment.Desaturate,
+        )) {
+            AdjustmentUniforms.of(adjustment).localRadius shouldBe 0f
+        }
+        AdjustmentUniforms.of(Adjustment.ShadowsHighlights(shadowRadius = 40f)).localRadius shouldBe 40f
+        AdjustmentUniforms.of(Adjustment.HdrToning(radius = 25f)).localRadius shouldBe 25f
+    }
+
+    @Test
+    fun `hdr toning without local adaptation needs no base layer`() {
+        // The other three methods are global curves. Building a base for them would be six passes
+        // producing a texture no branch reads.
+        val global = Adjustment.HdrToning(
+            method = ir.pixellab.core.model.HdrMethod.EXPOSURE_AND_GAMMA, radius = 40f,
+        )
+        AdjustmentUniforms.of(global).localRadius shouldBe 0f
+    }
+
+    @Test
+    fun `shadows and highlights carries both radii separately`() {
+        // They are two controls in the panel because they want different values, so folding them
+        // into one would quietly halve the adjustment.
+        val packed = AdjustmentUniforms.of(
+            Adjustment.ShadowsHighlights(shadowRadius = 60f, highlightRadius = 8f),
+        )
+        packed.localRadius shouldBe 60f
+        packed.localRadius2 shouldBe 8f
+    }
+
+    @Test
+    fun `match color says whether it was ever measured`() {
+        // Without the flag the shader cannot tell an unmeasured layer from one whose source happens
+        // to be flat, and it would collapse the picture onto a grey rather than doing nothing.
+        AdjustmentUniforms.of(Adjustment.MatchColor()).p2[2] shouldBe 0f
+        val measured = Adjustment.MatchColor(
+            statistics = ir.pixellab.core.model.ColorStatistics(measured = true),
+        )
+        AdjustmentUniforms.of(measured).p2[2] shouldBe 1f
+    }
+
+    @Test
+    fun `equalize needs its table only once it has one`() {
+        AdjustmentUniforms.of(Adjustment.Equalize()).needsCurves shouldBe false
+        AdjustmentUniforms.of(Adjustment.Equalize(List(256) { it / 255f })).needsCurves shouldBe true
+    }
+
+    @Test
+    fun `replace color packs its target and its result apart`() {
+        val packed = AdjustmentUniforms.of(
+            Adjustment.ReplaceColor(
+                target = Color(0.2f, 0.4f, 0.6f), fuzziness = 0.3f,
+                localized = true, hue = 0.25f, saturation = -0.5f, lightness = 0.1f,
+            ),
+        )
+        packed.p0[0] shouldBe 0.2f
+        packed.p0[3] shouldBe 0.3f
+        packed.p1[0] shouldBe 1f
+        packed.p1[1] shouldBe 0.25f
+        packed.p1[3] shouldBe 0.1f
     }
 
     private fun gradient() = Fill.Gradient(

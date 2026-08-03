@@ -1,13 +1,20 @@
 package ir.pixellab.core.render
 
 import ir.pixellab.core.model.Adjustment
+import ir.pixellab.core.model.Curve
+import ir.pixellab.core.model.HdrMethod
 
 /**
  * Which correction the adjustment shader is running.
  *
- * One program with a branch rather than fourteen programs: a document routinely stacks half a dozen
- * adjustment layers, and fourteen programs would mean fourteen compiles at startup and a pipeline
- * change between every layer. The branch is uniform across the draw, so the hardware takes one path.
+ * One program with a branch rather than twenty-two programs: a document routinely stacks half a
+ * dozen adjustment layers, and twenty-two programs would mean twenty-two compiles at startup and a
+ * pipeline change between every layer. The branch is uniform across the draw, so the hardware takes
+ * one path.
+ *
+ * **The ordinal is the wire format.** It is what goes into `uMode`, so new modes are appended and
+ * never inserted — reordering this list silently turns every saved document's Curves layer into
+ * something else.
  */
 enum class AdjustmentMode {
     BRIGHTNESS_CONTRAST,
@@ -26,7 +33,22 @@ enum class AdjustmentMode {
     COLOR_LOOKUP,
     SELECTIVE_COLOR,
     CHANNEL_MIXER,
+    SHADOWS_HIGHLIGHTS,
+    HDR_TONING,
+    DESATURATE,
+    MATCH_COLOR,
+    REPLACE_COLOR,
+    EQUALIZE,
     ;
+
+    /**
+     * Whether this mode reads its neighbourhood rather than only the pixel under it.
+     *
+     * The two that do are the two Photoshop refuses to offer as adjustment layers at all, and this
+     * flag is what lets ours be layers anyway: the renderer sees it, builds the base layer the mode
+     * needs, and binds it. Nothing else in the pipeline has to know.
+     */
+    val needsLocal: Boolean get() = this == SHADOWS_HIGHLIGHTS || this == HDR_TONING
 
     companion object {
         fun of(adjustment: Adjustment): AdjustmentMode = when (adjustment) {
@@ -46,6 +68,12 @@ enum class AdjustmentMode {
             is Adjustment.ColorLookup -> COLOR_LOOKUP
             is Adjustment.SelectiveColor -> SELECTIVE_COLOR
             is Adjustment.ChannelMixer -> CHANNEL_MIXER
+            is Adjustment.ShadowsHighlights -> SHADOWS_HIGHLIGHTS
+            is Adjustment.HdrToning -> HDR_TONING
+            Adjustment.Desaturate -> DESATURATE
+            is Adjustment.MatchColor -> MATCH_COLOR
+            is Adjustment.ReplaceColor -> REPLACE_COLOR
+            is Adjustment.Equalize -> EQUALIZE
         }
     }
 }
@@ -74,6 +102,15 @@ data class AdjustmentUniforms(
     val needsRamp: Boolean = false,
     /** True when it needs a colour lookup strip. */
     val needsLut: Boolean = false,
+    /**
+     * How wide a base layer this correction needs, in pixels; zero when it needs none.
+     *
+     * Two radii because Shadows/Highlights has two, and it has two because they want different
+     * values: a wide one on the shadows keeps a lifted face from haloing, and a narrow one on the
+     * highlights is what actually recovers a blown window frame.
+     */
+    val localRadius: Float = 0f,
+    val localRadius2: Float = 0f,
 ) {
     override fun equals(other: Any?) = this === other
     override fun hashCode() = System.identityHashCode(this)
@@ -228,6 +265,84 @@ data class AdjustmentUniforms(
                         p2 = blue.toFloats(),
                     )
                 }
+
+                is Adjustment.ShadowsHighlights -> AdjustmentUniforms(
+                    mode = mode,
+                    p0 = floatArrayOf(
+                        adjustment.shadowAmount, adjustment.shadowTone,
+                        adjustment.highlightAmount, adjustment.highlightTone,
+                    ),
+                    p1 = floatArrayOf(
+                        adjustment.color, adjustment.midtoneContrast,
+                        adjustment.blackPoint, adjustment.whitePoint,
+                    ),
+                    p2 = FloatArray(4),
+                    localRadius = adjustment.shadowRadius,
+                    localRadius2 = adjustment.highlightRadius,
+                )
+
+                is Adjustment.HdrToning -> AdjustmentUniforms(
+                    mode = mode,
+                    p0 = floatArrayOf(
+                        adjustment.method.ordinal.toFloat(), adjustment.strength,
+                        adjustment.gamma, adjustment.exposure,
+                    ),
+                    p1 = floatArrayOf(
+                        adjustment.detail, adjustment.shadow, adjustment.highlight, adjustment.vibrance,
+                    ),
+                    p2 = floatArrayOf(
+                        adjustment.saturation,
+                        if (adjustment.toningCurve == Curve.LINEAR) 0f else 1f,
+                        0f, 0f,
+                    ),
+                    needsCurves = adjustment.toningCurve != Curve.LINEAR,
+                    // Only Local Adaptation reads a base layer; the other three methods are global
+                    // curves, and building a base for them would be several passes for nothing.
+                    localRadius = if (adjustment.method == HdrMethod.LOCAL_ADAPTATION) adjustment.radius else 0f,
+                )
+
+                Adjustment.Desaturate -> pack(mode, FloatArray(4))
+
+                is Adjustment.MatchColor -> AdjustmentUniforms(
+                    mode = mode,
+                    p0 = floatArrayOf(
+                        adjustment.statistics.mean.x, adjustment.statistics.mean.y,
+                        adjustment.statistics.mean.z, adjustment.luminance,
+                    ),
+                    p1 = floatArrayOf(
+                        adjustment.statistics.deviation.x, adjustment.statistics.deviation.y,
+                        adjustment.statistics.deviation.z, adjustment.colorIntensity,
+                    ),
+                    p2 = floatArrayOf(
+                        adjustment.fade,
+                        if (adjustment.neutralize) 1f else 0f,
+                        if (adjustment.statistics.measured) 1f else 0f,
+                        0f,
+                    ),
+                )
+
+                is Adjustment.ReplaceColor -> AdjustmentUniforms(
+                    mode = mode,
+                    p0 = floatArrayOf(
+                        adjustment.target.r, adjustment.target.g, adjustment.target.b,
+                        adjustment.fuzziness,
+                    ),
+                    p1 = floatArrayOf(
+                        if (adjustment.localized) 1f else 0f,
+                        adjustment.hue, adjustment.saturation, adjustment.lightness,
+                    ),
+                    p2 = FloatArray(4),
+                )
+
+                // The frozen cumulative histogram rides in the curve table's red channel: it is a
+                // 256-sample tone mapping, which is exactly what that texture already carries.
+                is Adjustment.Equalize -> AdjustmentUniforms(
+                    mode = mode,
+                    p0 = floatArrayOf(if (adjustment.table.isEmpty()) 0f else 1f, 0f, 0f, 0f),
+                    p1 = FloatArray(4),
+                    p2 = FloatArray(4),
+                    needsCurves = adjustment.table.isNotEmpty(),
+                )
             }
         }
 
