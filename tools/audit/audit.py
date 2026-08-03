@@ -847,6 +847,75 @@ rule((1489, 1496), DONE, "یادگیری: رابط تک‌دستی با شیت�
 rule((1497, 1500), DONE, "پلتفرم: اندروید ۸ به بالا")
 
 # ─────────────────────────────────────────────────────────────────── generate
+# ───────────────────────────────────────────────────────────── refresh, waves 10–38
+#
+# Everything below is a correction to a rule above, applied last so it wins. Kept as its own block
+# rather than edited in place so the *movement* is legible: this is what twenty-eight waves closed,
+# and re-reading it is how the next refresh knows where to look.
+#
+# Every flip here was checked with rg against the current tree, and against `app/android` or a
+# `*Sheet.kt` specifically — a tick means a user can press something.
+
+# Wave 9–12: the filter set, and the three adjustments that were missing.
+rule([66], DONE, "`LensBlur` → `PixelFilters.lens` → «محو لنزی» در شیت فیلتر")
+rule([68], DONE, "`MotionBlur` → `PixelFilters.motion` → «محو حرکتی» در شیت فیلتر")
+rule([71], DONE, "`Blur.bilateral` → `PixelFilters.surface` → «محو سطحی» با شعاع و آستانه")
+rule([72], DONE, "`Stylise.noise` → «افزودن دانه»، تک‌رنگ یا رنگی")
+rule([73, 75], HALF, "موتور میانه‌گیری داخل `Despeckle`/`dustAndScratches` هست؛ کنترل مستقل ندارد")
+rule([74], DONE, "`Denoise.dustAndScratches` → «گرد و غبار و خط»")
+rule([76], DONE, "`Denoise.reduceNoise` → «کاهش نویز» با سه اسلایدر")
+rule([111], DONE, "`Adjustment.ChannelMixer` + «میکسر کانال» در شیت تنظیم‌ها")
+rule([121], DONE, "`Adjustment.SelectiveColor` — نه خانواده، نسبی و مطلق")
+rule([125], DONE, "`Adjustment.Equalize` با هیستوگرام تجمعی منجمدشده و دکمهٔ اندازه‌گیری")
+rule([132], DONE, "`Adjustment.ShadowsHighlights` — دو شعاع، دو گستره، رنگ و برش")
+rule([341, 481], DONE, "`Stylise.pixelate` و `Stylise.vignette` در شیت فیلتر")
+
+# Wave 10: arrange — the audit's own biggest hole, closed end to end.
+rule([139, 140, 313, 402], DONE, "`EditorViewModel.pickColor` با میانگین ۵×۵ روی بوم")
+rule([185, 186, 187, 393], DONE, "`mergeDown`/`mergeVisible`/`rasterize` — ساختار در ادیتور، پیکسل از GL")
+rule([191, 192, 193], DONE, "`Editor.rotateCanvas(quarterTurns)`")
+rule([315, 316, 385, 487], DONE, "`Editor.flipLayer` با مقیاس منفی — «قرینهٔ افقی/عمودی» در شیت چیدمان")
+rule([317, 412, 413], DONE, "`alignLayers` و `distributeLayers` — توزیع فاصله‌ها، نه مرکزها")
+
+# Wave 11: grid, ruler, guides.
+rule([418], DONE, "`GridSpec` روی بوم، با گام وابسته به زوم")
+rule([141], MISSING, "خط‌کشِ *ابزار* (اندازه‌گیری فاصله و زاویه)؛ نوارِ خط‌کش و راهنما هست")
+
+# Wave 13: the panels whose models were finished and whose interfaces were not.
+rule([236], DONE, "`GradientEditorBody` — توقف، میان‌نقطه و پیش‌نمایش از همان جدول رندر")
+rule([242], DONE, "`HistogramView`، هم در شیت فیلتر و هم داخل سطوح و منحنی‌ها")
+rule([244, 245], DONE, "`TypeSheet` — بخش «نویسه» و بخش «بند»، به‌علاوهٔ کشیده و محورها")
+
+# Wave 14 and after: the PBR path.
+rule([363], DONE, "`Pbr.shade` با GGX و محیط تولیدشده → `TextTo3D` → شیت سه‌بعدی")
+rule([366, 367, 368], DONE, "چرخش روی هر سه محور در `Geometry3D.rotation`، از شیت سه‌بعدی")
+rule([443], DONE, "`Material.metallic` — فلز واقعی، نه گرادیانِ شبیه فلز")
+
+# Waves 36–38: the transforms the model promised and nothing drew.
+rule([199], DONE, "`Transform.skew` — در ماتریس ترکیب‌کننده و در دستگیره‌ها، با ورودی عددی")
+rule([201, 373, 488], DONE, "`Transform.perspective` — هوموگرافی واقعی، با تقسیم بر w در هر دو شیدر")
+rule([200], HALF, "مدل چهار گوشهٔ آزاد را می‌پذیرد و رندر می‌کند؛ رابط فعلاً فقط حالت قرینه را می‌دهد")
+
+# Colour lookup, which was renderable and unpointable.
+rule([466], HALF, "`CubeLut` فایل `.cube` را می‌خواند و لایهٔ جدول رنگ به آن وصل است؛ خودِ پریست‌ها نیست")
+
+# Section 9 restates the same capabilities per app, so the same evidence settles these too.
+rule([991, 992, 993, 994, 995, 996, 997, 998], DONE, "`alignLayers` و `distributeLayers` در شیت چیدمان")
+rule([1148], DONE, "`mergeDown` — از شیت چیدمان، بی‌میانبر صفحه‌کلید چون اپ لمسی است")
+rule([1188, 1189, 1190, 1191, 1192, 1193], DONE, "`EditorViewModel.pickColor` با میانگین ۵×۵")
+rule([966], DONE, "`Stylise.vignette` → «اعمال وینیت»")
+rule([1004], DONE, "`ColorSettings.precision` حالا از شیت بوم انتخاب می‌شود — ۸، ۱۶، ۳۲ بیت")
+rule([1039], DONE, "`Transform.perspective` — هوموگرافی واقعی روی هر لایه")
+rule([1070, 1162], DONE, "چرخش سه‌بعدی روی سه محور از شیت سه‌بعدی")
+rule([1102, 1103], DONE, "`TypeSheet` — «نویسه» و «بند»")
+rule([1131], DONE, "`SettingsSheetBody`، از چرخ‌دندهٔ نوار بالا")
+rule([1140, 1141], DONE, "`DimensionalSheetBody` با `MaterialControls` برای چهره، پخ و کناره")
+rule([1271, 1272], DONE, "`SnapEngine` — `Kind.GRID` و `Kind.GUIDE`، با رتبهٔ چفت‌شدن")
+rule([1277, 1278], DONE, "`SnapEngine.Kind.GRID`")
+rule([951], DONE, "`Material.unlit` — سطحی که رنگ خودش را نگه می‌دارد، یعنی حاشیه روی حجم سه‌بعدی")
+rule([965], HALF, "بیست‌ودو تنظیم روی لایه هست و `Adjustment.ColorLookup` جدول می‌خواند؛ لایهٔ تنظیم روی کل سند نه")
+
+
 lines = open(SRC, encoding="utf-8").read().splitlines()
 items = {}
 order = []
@@ -979,17 +1048,37 @@ w("| قالب‌های آماده (رزومه، منو، گواهی) | طرح‌
 w("| متریال سه‌بعدی (فلز، شیشه، چوب) | نقشهٔ محیطی HDR و بافت — یا بگویید تولیدشان کنم |")
 w("| فیلترهای رنگی آماده | فایل‌های LUT (`.cube`) — خواننده‌اش هست، خودِ LUTها نیست |")
 w("")
-w("و این‌ها را بدون هیچ چیزی از بیرون می‌سازم، فقط ترتیبشان را بگویید:")
+w("### فهرست قبلی، که تمام شد")
 w("")
-w("1. **ترازبندی و توزیع** — ۲۰ ردیف در این فهرست، و هیچ‌کدام نیست. بزرگ‌ترین حفرهٔ واقعی.")
-w("2. **قطره‌چکان** — ۸ ردیف، در همهٔ هشت اپ هست و ما نداریم.")
-w("3. **ادغام و تخت‌کردن لایه** — ۷ ردیف.")
-w("4. **خط‌کش، شبکه و خط راهنمای دستی** — حدود ۲۵ ردیف.")
-w("5. **چرخش بوم، قرینه‌سازی و ورودی عددی تبدیل** — حدود ۱۵ ردیف.")
-w("6. **پنل کاراکتر و پاراگراف** — مدلش کامل است، فقط رابط ندارد.")
-w("7. **ویرایشگر گرادیان** — مدلش کامل است، فقط رابط ندارد.")
-w("8. **محو حرکتی خطی، وینیت، پیکسلی‌کردن، نویز** — همان نمونه‌بردار موجود.")
-w("9. **رندرکنندهٔ PBR برای متن سه‌بعدی واقعی** — بزرگ‌ترین کار، و هدف اصلی شماست.")
+w("نُه موردی که این سند در نسخهٔ اولش به‌عنوان اولویت نوشته بود — ترازبندی و توزیع، قطره‌چکان،")
+w("ادغام و تخت‌کردن، خط‌کش و شبکه و راهنما، چرخش بوم و قرینه‌سازی و ورودی عددی، پنل کاراکتر و")
+w("پاراگراف، ویرایشگر گرادیان، محو حرکتی و وینیت و پیکسلی‌کردن، و رندرکنندهٔ PBR — **هر نُه‌تا")
+w("ساخته شدند.** موج‌های ۱۰ تا ۳۸.")
+w("")
+w("### آنچه حالا مانده، به ترتیب")
+w("")
+w("**اول، دستهٔ «هست ولی سیم‌کشی ندارد».** ارزان‌ترین بردها، و همان دسته‌ای که این مخزن بارها")
+w("در آن گیر افتاده: مدل یا الگوریتم تمام است و هیچ کنترلی به آن نمی‌رسد، که از نداشتن بدتر")
+w("است چون از بیرون شبیه داشتن به نظر می‌رسد.")
+w("")
+w("1. **نقشهٔ محیطی HDR** — `LightRig.environment` و شدت و چرخشش در مدل هستند و *هیچ‌جا خوانده")
+w("   نمی‌شوند*؛ `Pbr.environment()` به‌جایش یک استودیوی تولیدشده می‌سازد. یا وصلش کنیم یا")
+w("   فیلدها را برداریم — مدلی که قول می‌دهد و عمل نمی‌کند از نبودن بدتر است.")
+w("2. **اعوجاج آزاد (Distort)** — موتورش همان هوموگرافی پرسپکتیو است و کار می‌کند؛ فقط رابطِ")
+w("   کشیدن چهار گوشه ندارد و اسلایدر فعلی حالت قرینه را می‌دهد.")
+w("3. **رمزگشایی RAW** — به تصمیم شما دربارهٔ پروانهٔ LibRaw نیاز دارد.")
+w("")
+w("**دوم، آنچه واقعاً نیست و کدش را خودم می‌نویسم:**")
+w("")
+w("4. **جفت رنگ پیش‌زمینه/پس‌زمینه** — اصلاً در مدل نیست، و نیمی از رفتار ابزارهای فتوشاپ")
+w("   فرضش را می‌کند.")
+w("5. **قلم‌موهای روشن‌کننده، تیره‌کننده، انگشتی و اسفنجی** — موتور قلم‌مو هست؛ این‌ها حالت")
+w("   ابزارند نه زیرسیستم تازه.")
+w("6. **گالری فیلترهای هنری** — رنگ روغن، آبرنگ، مداد رنگی، بلوری.")
+w("7. **گالری محو** — میدانی، عنبیه‌ای، تیلت‌شیفت، مسیری.")
+w("8. **انتخاب سریع، ماسک سریع، پاک‌کن پس‌زمینه، متن عمداً عمودی.**")
+w("9. **پریست فیلتر و لوک** — ساختارش هست (`.cube` خوانده می‌شود، `StylePreset` هست)؛ خودِ")
+w("   مجموعه نیست.")
 w("")
 
 open(OUT, "w", encoding="utf-8").write("\n".join(out) + "\n")
