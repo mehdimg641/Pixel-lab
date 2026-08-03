@@ -59,7 +59,7 @@ object Tessellator {
      *   input indices still meant something would silently draw the wrong triangles.
      */
     fun triangulate(contours: List<List<Vec2>>): Triangulation {
-        val usable = contours.map { dedupe(it) }.filter { it.size >= 3 }
+        val usable = contours.map { simplify(dedupe(it)) }.filter { it.size >= 3 }
         if (usable.isEmpty()) return Triangulation(emptyList(), IntArray(0))
 
         // Largest first, so an outline is always seen before the holes that sit inside it.
@@ -77,9 +77,24 @@ object Tessellator {
         }
         if (outlines.isEmpty()) return Triangulation(emptyList(), IntArray(0))
 
-        for (hole in pending) {
-            val owner = outlines.firstOrNull { contains(it, hole[0]) } ?: outlines[0]
-            bridge(owner, hole)
+        // Every hole's owner is decided against the *pristine* outlines, before any of them is
+        // bridged. Deciding as we go was wrong in a way that only shows on a word rather than on a
+        // letter: bridging splices the hole's points into its outline and leaves a zero-width slit,
+        // and an even-odd containment test against a polygon that touches itself along a slit
+        // answers unreliably. So the second counter of a word could be judged to live inside the
+        // first letter, get bridged into it, and draw a seam clean across the artwork to reach it.
+        val owners = pending.map { hole -> outlines.indexOfFirst { contains(it, hole[0]) } }
+        for (i in pending.indices) {
+            val owner = owners[i]
+            if (owner < 0) {
+                // Inside nothing. It was taken for a hole because it sat inside some contour when
+                // that contour was still whole, and it is not one — so it is an outline of its own.
+                // Bridging it into an arbitrary outline, which is what used to happen here, cuts a
+                // slit between two unrelated letters.
+                outlines += orient(pending[i], counterClockwise = true).toMutableList()
+                continue
+            }
+            bridge(outlines[owner], pending[i])
         }
 
         val vertices = ArrayList<Vec2>()
@@ -119,18 +134,36 @@ object Tessellator {
     /**
      * Ear clipping over a simple polygon, assumed counter-clockwise.
      *
-     * The loop gives up rather than spinning if no ear is found — which happens on a
-     * self-intersecting outline, and self-intersecting outlines exist in real fonts. Emitting the
-     * triangles found so far leaves a glyph with a nick in it; looping forever hangs the app.
+     * **This must never return a partial triangulation, and for a long time it did.** A scan that
+     * found no ear anywhere abandoned the polygon and emitted whatever it had, which draws as a
+     * letter with holes in its front — on real glyph outlines it was losing between a fifth and two
+     * thirds of every cap. The failure is silent by construction: the mesh is still closed, still
+     * correctly wound, still renders. Only a picture shows it.
+     *
+     * Two things make the scan fail, and both are ordinary rather than exotic. A flattened curve
+     * emits points along a straight stem that are collinear to within float error, so the sign of
+     * their cross product is noise — [simplify] removes those before we get here. And a genuinely
+     * degenerate outline, which real fonts do contain, can leave a state with no valid ear at all.
+     *
+     * So the loop can no longer give up. If a full pass finds no ear it removes the flattest vertex
+     * and carries on: dropping a vertex from a polygon that has no ear costs a sliver of area at a
+     * place already too thin to see, and it guarantees progress, which is what stops the choice
+     * being between a broken letter and a hung app.
+     *
+     * The scan resumes where the last ear was cut rather than restarting from the beginning. Cutting
+     * an ear only changes the ear-status of its two neighbours, so restarting rescans a whole
+     * polygon to re-reject vertices it rejected a moment ago — the difference between quadratic and
+     * cubic, which at two thousand points per letter is the difference between usable and not.
      */
     private fun earClip(polygon: List<Vec2>): List<Int> {
         val remaining = polygon.indices.toMutableList()
         val out = ArrayList<Int>((polygon.size - 2) * 3)
-        var guard = polygon.size * polygon.size
+        var cursor = 0
 
-        while (remaining.size > 3 && guard-- > 0) {
+        while (remaining.size > 3) {
             var clipped = false
-            for (i in remaining.indices) {
+            for (step in remaining.indices) {
+                val i = (cursor + step) % remaining.size
                 val prev = remaining[(i + remaining.size - 1) % remaining.size]
                 val current = remaining[i]
                 val next = remaining[(i + 1) % remaining.size]
@@ -140,10 +173,29 @@ object Tessellator {
                 out += current
                 out += next
                 remaining.removeAt(i)
+                // Back one, so the neighbour whose status just changed is the next thing examined.
+                cursor = if (i == 0) remaining.size - 1 else i - 1
                 clipped = true
                 break
             }
-            if (!clipped) break
+            if (clipped) continue
+
+            // No ear anywhere. Drop the vertex that bends the least, which is the one whose removal
+            // changes the outline least, and try again.
+            var flattest = 0
+            var smallest = Float.MAX_VALUE
+            for (i in remaining.indices) {
+                val a = polygon[remaining[(i + remaining.size - 1) % remaining.size]]
+                val b = polygon[remaining[i]]
+                val c = polygon[remaining[(i + 1) % remaining.size]]
+                val bend = abs(cross(a, b, c))
+                if (bend < smallest) {
+                    smallest = bend
+                    flattest = i
+                }
+            }
+            remaining.removeAt(flattest)
+            cursor = 0
         }
         if (remaining.size == 3) {
             out += remaining[0]
@@ -151,6 +203,57 @@ object Tessellator {
             out += remaining[2]
         }
         return out
+    }
+
+    /**
+     * Drops points that sit on the line between their neighbours.
+     *
+     * A glyph outline arrives flattened, and flattening is generous: a straight stem at headline
+     * size comes through as scores of points strung along it, and a five-letter word as nearly ten
+     * thousand. None of them change the shape, and all of them cost. Two costs, and the second is
+     * the one that mattered.
+     *
+     * The obvious cost is time — ear clipping is quadratic in the point count at best, so ten
+     * thousand points is a hundred million comparisons for a cap that a thousand points describes
+     * exactly as well.
+     *
+     * The real cost is that collinear points *break* the clip. Whether three points strung along a
+     * straight line come out convex, reflex or exactly flat is decided by float error in the last
+     * bits, and a vertex that reads as reflex is never a valid ear. A run of them is a stretch of
+     * outline the clip cannot cut anywhere, and that is what emptied the caps.
+     *
+     * The tolerance is relative to the outline's own size, because this runs on glyphs at any point
+     * size and an absolute one would be invisible on a poster and destructive on a caption.
+     */
+    private fun simplify(polygon: List<Vec2>): List<Vec2> {
+        if (polygon.size < 4) return polygon
+
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        for (point in polygon) {
+            if (point.x < minX) minX = point.x
+            if (point.y < minY) minY = point.y
+            if (point.x > maxX) maxX = point.x
+            if (point.y > maxY) maxY = point.y
+        }
+        val diagonal = kotlin.math.hypot(maxX - minX, maxY - minY)
+        if (diagonal <= 0f) return polygon
+        val tolerance = diagonal * FLATNESS
+
+        val out = ArrayList<Vec2>(polygon.size)
+        for (i in polygon.indices) {
+            // Against the last point *kept* rather than the previous point of the input, so a long
+            // run of gentle steps is collapsed as one arc instead of surviving a step at a time.
+            val a = out.lastOrNull() ?: polygon[polygon.size - 1]
+            val b = polygon[i]
+            val c = polygon[(i + 1) % polygon.size]
+            val span = kotlin.math.hypot(c.x - a.x, c.y - a.y)
+            if (span <= 0f) continue
+            if (abs(cross(a, b, c)) / span > tolerance) out += b
+        }
+        return if (out.size >= 3) out else polygon
     }
 
     private fun isEar(
@@ -218,6 +321,17 @@ object Tessellator {
 
     /** A hundredth of a font unit at a typical size: below any real detail, above float noise. */
     private const val MERGE = 1e-3f
+
+    /**
+     * How far off the line between its neighbours a point must sit to be worth keeping, against the
+     * outline's own diagonal.
+     *
+     * A ten-thousandth, which on a headline-sized word is a fraction of a pixel — below anything the
+     * bevel or the shading can express — and still coarse enough to collapse the flattener's straight
+     * runs, which is the whole point. Loosening it rounds off the corners of a letter; tightening it
+     * lets the collinear runs back in, and with them the empty caps.
+     */
+    private const val FLATNESS = 1e-4f
 }
 
 /** Triangles, and the vertices they index — which are not the caller's, because holes are bridged. */
