@@ -321,6 +321,15 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     id = newId,
                     asset = asset,
                     name = "${layer.name} — سه‌بعدی",
+                    // The text's effects come across; its fill does not.
+                    //
+                    // A shadow, a glow or an outer stroke was set against the *shape of the word*,
+                    // and the baked layer has that same silhouette — so dropping them means a user
+                    // who had built the look they wanted watches it disappear the moment they press
+                    // build, with nothing saying why. The fill is the opposite case: it painted the
+                    // glyphs, and the render has already been painted by its own materials, so
+                    // carrying it over would lay a flat colour across the finished letter.
+                    style = layer.style.copy(fill = Fill.Solid(Color.TRANSPARENT), fillOpacity = 1f),
                 ),
             )
         }
