@@ -893,6 +893,31 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
+     * Adds a Color Lookup layer pointing at a table that was just read from a file.
+     *
+     * The asset goes in first and the layer second, because a layer naming an asset that is not
+     * there yet renders as nothing for a frame — which reads as the import having failed.
+     *
+     * The id is derived from the name so the same table imported twice is the same asset rather
+     * than two copies of half a megabyte each, and prefixed so it can never collide with a mask or
+     * a photograph the project brought with it.
+     */
+    fun addColorLookup(strip: ir.pixellab.core.codec.RasterImage, name: String): LayerId {
+        val asset = ir.pixellab.core.model.AssetId("lut:$name")
+        assetStore.put(asset, strip)
+        return addAdjustment(ir.pixellab.core.model.Adjustment.ColorLookup(asset), name)
+    }
+
+    /** Points an existing Color Lookup layer at a different table. */
+    fun setColorLookup(id: LayerId, strip: ir.pixellab.core.codec.RasterImage, name: String) {
+        val asset = ir.pixellab.core.model.AssetId("lut:$name")
+        assetStore.put(asset, strip)
+        val current = state.document.findLayer(id) as? Layer.AdjustmentLayer ?: return
+        val lookup = current.adjustment as? ir.pixellab.core.model.Adjustment.ColorLookup ?: return
+        setAdjustment(id, lookup.copy(asset = asset))
+    }
+
+    /**
      * Photoshop's Edit ▸ Transform ▸ Perspective, as one number.
      *
      * The full command is a corner drag, and dragging one corner moves its pair symmetrically —

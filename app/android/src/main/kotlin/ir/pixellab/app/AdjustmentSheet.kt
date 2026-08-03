@@ -50,6 +50,8 @@ fun AdjustmentSheetBody(
     state: EditorState,
     model: EditorViewModel,
     onImportPreset: () -> Unit = {},
+    /** Opens a picker for a `.cube` grading table. */
+    onImportLut: () -> Unit = {},
     /**
      * Draws a document and hands back its pixels.
      *
@@ -89,7 +91,7 @@ fun AdjustmentSheetBody(
                 color = Ink.TextMuted,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
             )
-            Controls(state, selected, model, onImportPreset, render)
+            Controls(state, selected, model, onImportPreset, onImportLut, render)
         } else {
             Text(
                 "یک لایهٔ تنظیم اضافه کنید یا یکی را انتخاب کنید",
@@ -131,6 +133,7 @@ private fun Controls(
     layer: Layer.AdjustmentLayer,
     model: EditorViewModel,
     onImportPreset: () -> Unit,
+    onImportLut: () -> Unit,
     render: suspend (ir.pixellab.core.model.Document) -> ir.pixellab.core.codec.RasterImage?,
 ) {
     val id = layer.id
@@ -319,8 +322,21 @@ private fun Controls(
             model.setAdjustment(id, adjustment.copy(level = it))
         }
 
-        is Adjustment.ColorLookup -> Slider("مقدار", adjustment.amount, 0f..1f) {
-            model.setAdjustment(id, adjustment.copy(amount = it))
+        is Adjustment.ColorLookup -> {
+            // The table itself, which had no way in at all: the panel used to create this layer
+            // with a placeholder id nothing ever supplied, so the whole adjustment rendered as
+            // untouched pixels no matter what the amount slider said.
+            SheetHint(
+                if (adjustment.asset.value.startsWith("lut:")) {
+                    "جدول: " + adjustment.asset.value.removePrefix("lut:")
+                } else {
+                    "هنوز جدولی انتخاب نشده — تا آن زمان تصویر را تغییر نمی‌دهد"
+                },
+            )
+            SheetAction("آوردن جدول رنگ (cube.)", onClick = onImportLut)
+            Slider("مقدار", adjustment.amount, 0f..1f) {
+                model.setAdjustment(id, adjustment.copy(amount = it))
+            }
         }
 
         is Adjustment.ShadowsHighlights -> {
@@ -661,7 +677,7 @@ private val CATALOG: List<Pair<String, () -> Adjustment>> = listOf(
     "معکوس" to { Adjustment.Invert },
     "پوستری" to { Adjustment.Posterize() },
     "آستانه" to { Adjustment.Threshold() },
-    "جدول رنگ" to { Adjustment.ColorLookup(ir.pixellab.core.model.AssetId("lut")) },
+    "جدول رنگ" to { Adjustment.ColorLookup(ir.pixellab.core.model.AssetId("")) },
     "رنگ انتخابی" to { Adjustment.SelectiveColor() },
     "سایه‌ها/روشنایی‌ها" to { Adjustment.ShadowsHighlights() },
     "تنالیتهٔ HDR" to { Adjustment.HdrToning() },

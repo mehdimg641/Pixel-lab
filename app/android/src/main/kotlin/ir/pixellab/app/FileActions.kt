@@ -211,6 +211,26 @@ suspend fun loadCurvePreset(
 }
 
 /**
+ * Reads a `.cube` colour lookup table and hands back the strip plus the file's own name.
+ *
+ * The name matters as much as the pixels here, for the same reason it does for a curve preset: a
+ * grading pack's meaning is entirely in its file names, and a layer called "Color Lookup" tells the
+ * user nothing about which of the forty they just applied.
+ */
+suspend fun loadColorLookup(
+    context: Context,
+    uri: android.net.Uri,
+): Result<Pair<ir.pixellab.core.codec.RasterImage, String>> = withContext(Dispatchers.IO) {
+    runCatching {
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: throw java.io.IOException("فایل باز نشد")
+        val strip = ir.pixellab.core.codec.CubeLut.read(bytes)
+            ?: throw java.io.IOException("این فایل یک جدول رنگ معتبر (cube.) نیست")
+        strip to (displayName(context, uri)?.substringBeforeLast('.') ?: "جدول رنگ")
+    }
+}
+
+/**
  * Halves the image until it fits, rather than resampling to an exact size.
  *
  * Whole-pixel steps average a fixed block, which is both fast and free of the ringing a general

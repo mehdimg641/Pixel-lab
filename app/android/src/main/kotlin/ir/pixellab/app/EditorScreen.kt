@@ -168,6 +168,28 @@ fun EditorScreen(
         }
     }
 
+    // A third launcher, for the same reason there is a second: a picker offering a photograph when
+    // the user asked for a grading table is how a feature gets abandoned rather than reported.
+    val pickingLut = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                loadColorLookup(context, uri)
+                    .onSuccess { (strip, name) ->
+                        val selected = state.primaryLayer as? Layer.AdjustmentLayer
+                        // Replace the table on the layer the user is already editing; only start a
+                        // new one when they are not on a Color Lookup, or importing from the
+                        // catalogue would silently leave the layer they were adjusting untouched.
+                        if (selected?.adjustment is ir.pixellab.core.model.Adjustment.ColorLookup) {
+                            model.setColorLookup(selected.id, strip, name)
+                        } else {
+                            model.addColorLookup(strip, name)
+                        }
+                    }
+                    .onFailure { outcome = FileOutcome.Refused(it.message ?: "جدول رنگ خوانده نشد") }
+            }
+        }
+    }
+
     LaunchedEffect(entry) {
         val action = entry ?: return@LaunchedEffect
         dock = action.dock
@@ -335,6 +357,7 @@ fun EditorScreen(
                             state = state,
                             model = model,
                             onImportPreset = { pickingPreset.launch(PRESET_MIME) },
+                            onImportLut = { pickingLut.launch(PRESET_MIME) },
                             render = { document -> renderDocument(handle, document) },
                             modifier = Modifier.fillMaxHeight(),
                         )
