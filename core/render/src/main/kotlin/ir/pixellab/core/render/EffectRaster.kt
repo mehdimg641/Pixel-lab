@@ -61,11 +61,19 @@ object EffectRaster {
         val effects = style.activeEffects
         if (effects.isEmpty()) return source.copy()
 
+        // Everything from here to the final conversion is float. A style is not one operation —
+        // this face passes through an overlay, a pattern, an inner shadow and a bevel, and the
+        // result is composited over an extrusion, over two shadows, under a stroke. Rounding to
+        // eight bits at each of those is not one rounding error: the errors accumulate, and they
+        // accumulate *coherently* across a smooth ramp, which is exactly what bands a gradient and
+        // walks a colour off the swatch that was picked.
+        val base = Surface.of(source)
+
         // The layer itself, with everything that paints *into* it already applied. Order matters
         // among these too: the overlay lays the colour down, the inner shadow darkens its edges,
         // and the bevel lights the result — a bevel computed before the colour exists would shade
         // a surface nobody sees.
-        var layer = source.copy()
+        var layer = base.copy()
         for (effect in effects.filterIsInstance<Effect.Overlay>()) {
             layer = overlay(layer, effect, patterns)
         }
@@ -76,7 +84,7 @@ object EffectRaster {
             layer = bevel(layer, source, effect)
         }
 
-        var out = Raster.empty(source.width, source.height)
+        var out = Surface(source.width, source.height)
 
         // Behind, furthest first: the shadow falls on everything, the extrusion sits on the shadow.
         for (effect in effects.filterIsInstance<Effect.DropShadow>()) {
@@ -92,7 +100,7 @@ object EffectRaster {
         for (effect in effects.filterIsInstance<Effect.Stroke>()) {
             out = over(out, stroke(source, effect), effect.blendMode, effect.opacity)
         }
-        return out
+        return out.toRaster()
     }
 
     /**
@@ -103,7 +111,8 @@ object EffectRaster {
      * which is exactly why the Photoshop recipes for these titles all begin by duplicating the text
      * layer. Exposed so a caller can build that stack without reimplementing source-over.
      */
-    fun overComposite(under: Raster, above: Raster): Raster = over(under, above, BlendMode.NORMAL, 1f)
+    fun overComposite(under: Raster, above: Raster): Raster =
+        over(Surface.of(under), Surface.of(above), BlendMode.NORMAL, 1f).toRaster()
 
     // ---- the effects ---------------------------------------------------------------------------
 
@@ -113,8 +122,8 @@ object EffectRaster {
      * Drawn back to front so the nearest step lands last and covers the ones behind it, which is
      * what makes the stack read as a solid block rather than as a fan of overlapping cut-outs.
      */
-    private fun extrude(source: Raster, effect: Effect.Extrude): Raster {
-        val out = Raster.empty(source.width, source.height)
+    private fun extrude(source: Raster, effect: Effect.Extrude): Surface {
+        val out = Surface(source.width, source.height)
         for (step in effect.steps downTo 1) {
             val t = effect.falloff.evaluate(step.toFloat() / effect.steps)
             val colour = mix(fillColour(effect.nearFill), fillColour(effect.farFill), t)
@@ -137,7 +146,7 @@ object EffectRaster {
      * Spread before blur, because Photoshop's "spread" grows the shape and the blur then softens
      * what growing produced. Blurring first and growing after gives a hard-edged halo instead.
      */
-    private fun dropShadow(source: Raster, effect: Effect.DropShadow): Raster {
+    private fun dropShadow(source: Raster, effect: Effect.DropShadow): Surface {
         var mask = alphaOf(source)
         if (effect.spread > 0f) mask = spread(mask, source.width, source.height, effect.spread)
         if (effect.blur > 0f) mask = blur(mask, source.width, source.height, effect.blur)
@@ -148,7 +157,7 @@ object EffectRaster {
         val dx = (cos(radians) * effect.distance).roundToInt()
         val dy = (-sin(radians) * effect.distance).roundToInt()
 
-        val out = Raster.empty(source.width, source.height)
+        val out = Surface(source.width, source.height)
         for (y in 0 until source.height) {
             for (x in 0 until source.width) {
                 val from = sampleAt(mask, source.width, source.height, x - dx, y - dy)
@@ -160,7 +169,7 @@ object EffectRaster {
                     a *= 1f - alphaAt(source, x, y)
                 }
                 if (a <= 0f) continue
-                out.pixels[y * out.width + x] = pack(effect.color, a)
+                write(out, y * out.width + x, effect.color, a)
             }
         }
         return out
@@ -174,8 +183,8 @@ object EffectRaster {
      * width. The distance also carries the antialiasing for free: a pixel a fraction beyond the
      * edge of the band is a fraction covered.
      */
-    private fun stroke(source: Raster, effect: Effect.Stroke): Raster {
-        val out = Raster.empty(source.width, source.height)
+    private fun stroke(source: Raster, effect: Effect.Stroke): Surface {
+        val out = Surface(source.width, source.height)
         if (effect.width <= 0f) return out
 
         // Both fields, because a stroke can sit on either side of the outline and each side is a
@@ -213,7 +222,7 @@ object EffectRaster {
                 } else {
                     flat!!
                 }
-                out.pixels[i] = pack(colour, coverage)
+                write(out, i, colour, coverage)
             }
         }
         return out
@@ -221,10 +230,10 @@ object EffectRaster {
 
     /** A fill painted across the layer, kept inside the layer's own alpha. */
     private fun overlay(
-        layer: Raster,
+        layer: Surface,
         effect: Effect.Overlay,
         patterns: (ir.pixellab.core.model.AssetId) -> Raster?,
-    ): Raster {
+    ): Surface {
         val out = layer.copy()
         val gradient = effect.fill as? Fill.Gradient
         val pattern = (effect.fill as? Fill.Pattern)?.let { fill -> patterns(fill.asset)?.let { fill to it } }
@@ -234,8 +243,7 @@ object EffectRaster {
         for (y in 0 until layer.height) {
             for (x in 0 until layer.width) {
                 val i = y * layer.width + x
-                val a = (layer.pixels[i] ushr 24) and 0xFF
-                if (a == 0) continue
+                if (layer.alphaAt(i) <= 0f) continue
                 val paint = when {
                     gradient != null && stops != null -> Ramp.colorAt(
                         stops,
@@ -248,20 +256,17 @@ object EffectRaster {
                     pattern != null -> tileAt(pattern.second, pattern.first, x, y)
                     else -> flat!!
                 }
-                val blended = Blending.rgb(
-                    effect.blendMode,
-                    Triple(
-                        ((layer.pixels[i] shr 16) and 0xFF) / 255f,
-                        ((layer.pixels[i] shr 8) and 0xFF) / 255f,
-                        (layer.pixels[i] and 0xFF) / 255f,
-                    ),
-                    Triple(paint.r, paint.g, paint.b),
+                val base = i * Surface.CHANNELS
+                val backdrop = Triple(
+                    layer.data[base],
+                    layer.data[base + 1],
+                    layer.data[base + 2],
                 )
+                val blended = Blending.rgb(effect.blendMode, backdrop, Triple(paint.r, paint.g, paint.b))
                 val k = effect.opacity.coerceIn(0f, 1f)
-                out.pixels[i] = (a shl 24) or
-                    (byte(lerp(((layer.pixels[i] shr 16) and 0xFF) / 255f, blended.first, k)) shl 16) or
-                    (byte(lerp(((layer.pixels[i] shr 8) and 0xFF) / 255f, blended.second, k)) shl 8) or
-                    byte(lerp((layer.pixels[i] and 0xFF) / 255f, blended.third, k))
+                out.data[base] = lerp(backdrop.first, blended.first, k)
+                out.data[base + 1] = lerp(backdrop.second, blended.second, k)
+                out.data[base + 2] = lerp(backdrop.third, blended.third, k)
             }
         }
         return out
@@ -287,7 +292,7 @@ object EffectRaster {
      * still takes a highlight and a white one still takes a shadow. Painting both with normal alpha
      * is the other classic mistake, and it turns every bevel grey.
      */
-    private fun bevel(layer: Raster, source: Raster, effect: Effect.Bevel): Raster {
+    private fun bevel(layer: Surface, source: Raster, effect: Effect.Bevel): Surface {
         val w = layer.width
         val h = layer.height
         val size = effect.size.coerceAtLeast(1f)
@@ -358,20 +363,10 @@ object EffectRaster {
                 // reference at every setting — a brighter lip and a softer shoulder than the file
                 // being matched. Fidelity to the reference and physical correctness point in
                 // opposite directions on this one, and the reference wins.
-                out.pixels[i] = if (lambert > flat) {
-                    paintOn(
-                        out.pixels[i],
-                        effect.highlightColor,
-                        delta * effect.highlightOpacity,
-                        effect.highlightBlend,
-                    )
+                if (lambert > flat) {
+                    paintOn(out, i, effect.highlightColor, delta * effect.highlightOpacity, effect.highlightBlend)
                 } else {
-                    paintOn(
-                        out.pixels[i],
-                        effect.shadowColor,
-                        delta * effect.shadowOpacity,
-                        effect.shadowBlend,
-                    )
+                    paintOn(out, i, effect.shadowColor, delta * effect.shadowOpacity, effect.shadowBlend)
                 }
             }
         }
@@ -385,7 +380,7 @@ object EffectRaster {
      * shape — which is the whole of what makes it read as an inset face rather than as a smudge
      * round the outside.
      */
-    private fun innerShadow(layer: Raster, source: Raster, effect: Effect.InnerShadow): Raster {
+    private fun innerShadow(layer: Surface, source: Raster, effect: Effect.InnerShadow): Surface {
         val w = layer.width
         val h = layer.height
         var hole = FloatArray(source.pixels.size) {
@@ -405,12 +400,7 @@ object EffectRaster {
                 if (alpha <= 0f) continue
                 val darkness = sampleAt(hole, w, h, x - dx, y - dy) * alpha
                 if (darkness <= 0f) continue
-                out.pixels[i] = paintOn(
-                    out.pixels[i],
-                    effect.color,
-                    darkness * effect.opacity,
-                    effect.blendMode,
-                )
+                paintOn(out, i, effect.color, darkness * effect.opacity, effect.blendMode)
             }
         }
         return out
@@ -439,20 +429,25 @@ object EffectRaster {
         )
     }
 
-    /** Blends one colour onto one pixel, keeping the pixel's own alpha. */
-    private fun paintOn(pixel: Int, colour: Color, strength: Float, mode: BlendMode): Int {
+    /** Blends one colour onto one pixel in place, keeping the pixel's own alpha. */
+    private fun paintOn(surface: Surface, index: Int, colour: Color, strength: Float, mode: BlendMode) {
         val k = strength.coerceIn(0f, 1f)
-        if (k <= 0f) return pixel
-        val backdrop = Triple(
-            ((pixel shr 16) and 0xFF) / 255f,
-            ((pixel shr 8) and 0xFF) / 255f,
-            (pixel and 0xFF) / 255f,
-        )
+        if (k <= 0f) return
+        val base = index * Surface.CHANNELS
+        val backdrop = Triple(surface.data[base], surface.data[base + 1], surface.data[base + 2])
         val blended = Blending.rgb(mode, backdrop, Triple(colour.r, colour.g, colour.b))
-        return (pixel and ALPHA_MASK) or
-            (byte(lerp(backdrop.first, blended.first, k)) shl 16) or
-            (byte(lerp(backdrop.second, blended.second, k)) shl 8) or
-            byte(lerp(backdrop.third, blended.third, k))
+        surface.data[base] = lerp(backdrop.first, blended.first, k)
+        surface.data[base + 1] = lerp(backdrop.second, blended.second, k)
+        surface.data[base + 2] = lerp(backdrop.third, blended.third, k)
+    }
+
+    /** Sets one pixel to a colour at a coverage, replacing whatever was there. */
+    private fun write(surface: Surface, index: Int, colour: Color, alpha: Float) {
+        val base = index * Surface.CHANNELS
+        surface.data[base] = colour.r
+        surface.data[base + 1] = colour.g
+        surface.data[base + 2] = colour.b
+        surface.data[base + 3] = alpha.coerceIn(0f, 1f) * colour.a.let { if (it == 0f) 1f else it }
     }
 
     private fun heightAt(height: FloatArray, width: Int, h: Int, x: Int, y: Int): Float =
@@ -490,10 +485,19 @@ object EffectRaster {
     private fun alphaOf(source: Raster) =
         FloatArray(source.pixels.size) { ((source.pixels[it] ushr 24) and 0xFF) / 255f }
 
-    /** Grows the mask by a radius, using the same distance field the stroke measures with. */
+    /**
+     * Grows the mask by a radius, using the same exact distance field the stroke measures with.
+     *
+     * Straight to a boolean mask rather than through a packed image: the distance transform only
+     * ever asked whether a pixel was set, so packing the coverage into bytes to unpack it again was
+     * a rounding step that decided nothing.
+     */
     private fun spread(mask: FloatArray, width: Int, height: Int, radius: Float): FloatArray {
-        val packed = Raster(width, height, IntArray(mask.size) { (byte(mask[it]) shl 24) })
-        val distance = distanceOutside(packed)
+        val distance = Signal.distance(
+            BooleanArray(mask.size) { mask[it] > HALF },
+            width,
+            height,
+        )
         return FloatArray(mask.size) { maxOf(mask[it], (radius - distance[it] + 1f).coerceIn(0f, 1f)) }
     }
 
@@ -519,12 +523,20 @@ object EffectRaster {
      * Bilinear against the source's alpha, so an edge landing between two pixels is shared between
      * them and the block's silhouette stays as smooth as the letter's own.
      */
-    private fun stamp(out: Raster, source: Raster, dx: Float, dy: Float, colour: Color, strength: Float) {
+    private fun stamp(out: Surface, source: Raster, dx: Float, dy: Float, colour: Color, strength: Float) {
         for (y in 0 until out.height) {
             for (x in 0 until out.width) {
                 val a = sampleAlpha(source, x - dx, y - dy) * strength
                 if (a <= 0f) continue
-                out.pixels[y * out.width + x] = overPixel(out.pixels[y * out.width + x], pack(colour, a))
+                val index = y * out.width + x
+                val base = index * Surface.CHANNELS
+                val da = out.data[base + 3]
+                val outA = a + da * (1f - a)
+                if (outA <= 0f) continue
+                out.data[base] = (colour.r * a + out.data[base] * da * (1f - a)) / outA
+                out.data[base + 1] = (colour.g * a + out.data[base + 1] * da * (1f - a)) / outA
+                out.data[base + 2] = (colour.b * a + out.data[base + 2] * da * (1f - a)) / outA
+                out.data[base + 3] = outA
             }
         }
     }
@@ -546,51 +558,50 @@ object EffectRaster {
         return top * (1f - fy) + bottom * fy
     }
 
-    private fun over(under: Raster, above: Raster, mode: BlendMode, opacity: Float): Raster {
+    /**
+     * Source-over in float, with an optional blend mode for the colour.
+     *
+     * The alpha arithmetic is straight rather than premultiplied throughout. Premultiplying is the
+     * faster convention and it loses colour wherever alpha is near zero — a soft shadow's outermost
+     * pixels carry almost no alpha, and their colour is the thing being asked for.
+     */
+    private fun over(under: Surface, above: Surface, mode: BlendMode, opacity: Float): Surface {
         val out = under.copy()
         val k = opacity.coerceIn(0f, 1f)
-        for (i in out.pixels.indices) {
-            val src = above.pixels[i]
-            val a = ((src ushr 24) and 0xFF) / 255f * k
-            if (a <= 0f) continue
-            val dst = out.pixels[i]
-            val blended = if (mode == BlendMode.NORMAL || (dst ushr 24) == 0) {
-                src
-            } else {
-                val rgb = Blending.rgb(
+        for (i in 0 until under.width * under.height) {
+            val base = i * Surface.CHANNELS
+            val sa = above.data[base + 3] * k
+            if (sa <= 0f) continue
+            val da = out.data[base + 3]
+
+            var sr = above.data[base]
+            var sg = above.data[base + 1]
+            var sb = above.data[base + 2]
+            // The blend only applies where there is a backdrop to blend with. Over nothing, every
+            // mode reduces to the source — and running Multiply against a transparent black would
+            // otherwise darken the first thing laid down on an empty canvas.
+            if (mode != BlendMode.NORMAL && da > 0f) {
+                val blended = Blending.rgb(
                     mode,
-                    Triple(
-                        ((dst shr 16) and 0xFF) / 255f,
-                        ((dst shr 8) and 0xFF) / 255f,
-                        (dst and 0xFF) / 255f,
-                    ),
-                    Triple(
-                        ((src shr 16) and 0xFF) / 255f,
-                        ((src shr 8) and 0xFF) / 255f,
-                        (src and 0xFF) / 255f,
-                    ),
+                    Triple(out.data[base], out.data[base + 1], out.data[base + 2]),
+                    Triple(sr, sg, sb),
                 )
-                ((src ushr 24) shl 24) or
-                    (byte(rgb.first) shl 16) or (byte(rgb.second) shl 8) or byte(rgb.third)
+                sr = blended.first
+                sg = blended.second
+                sb = blended.third
             }
-            out.pixels[i] = overPixel(dst, withAlpha(blended, a))
+
+            val outA = sa + da * (1f - sa)
+            if (outA <= 0f) {
+                out.data[base + 3] = 0f
+                continue
+            }
+            out.data[base] = (sr * sa + out.data[base] * da * (1f - sa)) / outA
+            out.data[base + 1] = (sg * sa + out.data[base + 1] * da * (1f - sa)) / outA
+            out.data[base + 2] = (sb * sa + out.data[base + 2] * da * (1f - sa)) / outA
+            out.data[base + 3] = outA
         }
         return out
-    }
-
-    /** Straight-alpha source-over. */
-    private fun overPixel(under: Int, above: Int): Int {
-        val sa = ((above ushr 24) and 0xFF) / 255f
-        if (sa <= 0f) return under
-        val da = ((under ushr 24) and 0xFF) / 255f
-        val outA = sa + da * (1f - sa)
-        if (outA <= 0f) return 0
-        fun channel(shift: Int): Int {
-            val s = ((above shr shift) and 0xFF) / 255f
-            val d = ((under shr shift) and 0xFF) / 255f
-            return byte((s * sa + d * da * (1f - sa)) / outA)
-        }
-        return (byte(outA) shl 24) or (channel(16) shl 16) or (channel(8) shl 8) or channel(0)
     }
 
     private fun sampleAt(mask: FloatArray, width: Int, height: Int, x: Int, y: Int): Float =
@@ -607,13 +618,6 @@ object EffectRaster {
         else -> Color.BLACK
     }
 
-    private fun pack(colour: Color, alpha: Float): Int =
-        (byte(alpha * colour.a.coerceIn(0f, 1f).let { if (it == 0f) 1f else it }) shl 24) or
-            (byte(colour.r) shl 16) or (byte(colour.g) shl 8) or byte(colour.b)
-
-    private fun withAlpha(pixel: Int, alpha: Float) =
-        (byte(alpha) shl 24) or (pixel and 0xFFFFFF)
-
     private fun mix(a: Color, b: Color, t: Float) = Color(
         a.r + (b.r - a.r) * t,
         a.g + (b.g - a.g) * t,
@@ -622,8 +626,6 @@ object EffectRaster {
     )
 
     private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
-
-    private fun byte(v: Float) = (v.coerceIn(0f, 1f) * 255f + HALF).toInt()
 
     private const val HALF = 0.5f
     private const val HALF_BYTE = 127
@@ -638,7 +640,6 @@ object EffectRaster {
      */
     private const val SIGMA_PER_RADIUS = 3f
 
-    private const val ALPHA_MASK = -0x1000000
     private const val HUNDRED = 100f
 
     /**
