@@ -153,13 +153,25 @@ object Rasteriser {
         val sc = toScreen(clipC, width, height)
 
         // Negated because the screen transform flips y, and flipping one axis reverses the sign of
-        // every signed area with it. A front-facing triangle therefore comes out *clockwise* here,
-        // and a cull written for the unflipped convention keeps exactly the wrong half — which
-        // renders the inside of every letter, correctly lit and entirely black.
+        // every signed area with it.
         val area = -edge(sa, sb, sc)
-        // Back faces dropped. The mesh is closed, so every back face is hidden by a front one — and
-        // skipping them halves the work while removing the z-fighting where the two coincide.
-        if (area <= 0f) return
+        // Degenerate only. **Back faces are deliberately not culled**, and that is a correctness
+        // decision rather than a performance one.
+        //
+        // Culling is only sound on a closed surface whose triangles agree about which way is out,
+        // and this mesh is not that. Its caps are tessellated by one path and its walls stitched by
+        // another; each orients itself sensibly and the two do not always agree, which leaves
+        // hundreds of edges where neighbouring triangles are wound the same way. Culling then drops
+        // surfaces that are genuinely facing the viewer, and the letter comes out with wedges
+        // missing — invisible while the extrusion ran straight back, since the disagreements sit on
+        // seams seen edge-on, and unmistakable the moment it leans.
+        //
+        // Making every path agree is the deeper fix and a much larger one. Drawing both sides costs
+        // a second fragment where two surfaces overlap and nothing anywhere else, the depth buffer
+        // settles which is in front exactly as it already did, and the result no longer depends on
+        // a property the mesh does not have. Simplifying the outline first made the mesh some
+        // thirty times smaller, which is where the work for this came from.
+        if (area == 0f) return
 
         val minX = max(0, floor(minOf(sa[0], sb[0], sc[0])).toInt())
         val maxX = min(width - 1, ceil(maxOf(sa[0], sb[0], sc[0])).toInt())
@@ -184,13 +196,13 @@ object Rasteriser {
                 point[0] = x + HALF
                 point[1] = y + HALF
 
-                var l0 = -edge(sb, sc, point)
-                var l1 = -edge(sc, sa, point)
-                var l2 = -edge(sa, sb, point)
+                // Divided by the *signed* area before the inside test, so a triangle wound either
+                // way is handled by the same three comparisons: a back-facing one has all three
+                // edge functions negative and a negative area, and the two signs cancel.
+                val l0 = -edge(sb, sc, point) / area
+                val l1 = -edge(sc, sa, point) / area
+                val l2 = -edge(sa, sb, point) / area
                 if (l0 < 0f || l1 < 0f || l2 < 0f) continue
-                l0 /= area
-                l1 /= area
-                l2 /= area
 
                 val invW = l0 * wa + l1 * wb + l2 * wc
                 if (invW <= 0f) continue
@@ -205,11 +217,23 @@ object Rasteriser {
                     (l0 * worldA.y * wa + l1 * worldB.y * wb + l2 * worldC.y * wc) / invW,
                     (l0 * worldA.z * wa + l1 * worldB.z * wb + l2 * worldC.z * wc) / invW,
                 )
-                val normal = Vec3(
+                val interpolated = Vec3(
                     (l0 * na.x * wa + l1 * nb.x * wb + l2 * nc.x * wc) / invW,
                     (l0 * na.y * wa + l1 * nb.y * wb + l2 * nc.y * wc) / invW,
                     (l0 * na.z * wa + l1 * nb.z * wb + l2 * nc.z * wc) / invW,
                 )
+                val toEye = (eye - world).normalised()
+                // Turned to face the viewer, which is what makes drawing both sides look right
+                // rather than merely fill the gap. A surface whose stored normal points away is
+                // being seen from behind, and shading it with that normal lights it as though the
+                // key light were behind the letter — the wedge stops being a hole and becomes a
+                // black patch instead, which is no better.
+                val facing = interpolated.x * toEye.x + interpolated.y * toEye.y + interpolated.z * toEye.z
+                val normal = if (facing < 0f) {
+                    Vec3(-interpolated.x, -interpolated.y, -interpolated.z)
+                } else {
+                    interpolated
+                }
 
                 // The face's gradient, sampled from the letter's *own* coordinates rather than the
                 // world ones interpolated above. Using world space would slide the ramp across the
@@ -227,7 +251,7 @@ object Rasteriser {
                 val shaded = Pbr.toneMap(
                     Pbr.shade(
                         normal = normal,
-                        view = (eye - world).normalised(),
+                        view = toEye,
                         material = painted,
                         rig = geometry.lighting,
                     ),

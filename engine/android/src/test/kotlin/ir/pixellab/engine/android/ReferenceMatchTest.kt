@@ -73,16 +73,15 @@ class ReferenceMatchTest {
      * character of the style and is a *lean*, not a turn. A small rotation is kept only to catch a
      * highlight along the top of the bevel.
      */
-    private fun trendLook(size: Float) = Geometry3D(
+    private fun trendLook(size: Float, bevelFraction: Float = 0.035f) = Geometry3D(
         depth = size * 0.40f,
-        bevelSize = size * 0.035f,
+        bevelSize = size * bevelFraction,
         faceMaterial = Material(roughness = 0.30f, clearCoat = 1f),
         faceFill = TEAL_TO_PEACH,
         bevelMaterial = ORANGE,
         sideMaterial = ORANGE,
-        // Moderate on purpose. A stronger lean opens gaps in the block — see the note on
-        // `extrusionTilt`; this is well inside where the extrusion still reads as one solid.
-        extrusionTilt = Vec2(-0.28f, 0.28f),
+        // Down and to the right, which is where the reference throws its block.
+        extrusionTilt = Vec2(0.34f, -0.30f),
         rotation = Vec3(-3f, 4f, 0f),
         fieldOfView = 22f,
     )
@@ -107,16 +106,18 @@ class ReferenceMatchTest {
             style = Style.PLAIN_BLACK,
         )
 
-        val rendered = TextTo3D.render(
-            layer = layer,
-            geometry = trendLook(size),
-            fonts = fonts,
-            width = 1200,
-            height = 620,
-            supersample = 4,
-        )
-        checkNotNull(rendered) { "the reference word produced no render" }
-        write("reference-attempt", rendered.width, rendered.height, rendered.pixels)
+        for ((name, bevel) in listOf("nobevel" to 0f, "bevel" to 0.035f)) {
+            val rendered = TextTo3D.render(
+                layer = layer,
+                geometry = trendLook(size, bevel),
+                fonts = fonts,
+                width = 1200,
+                height = 620,
+                supersample = 4,
+            )
+            checkNotNull(rendered) { "the reference word produced no render" }
+            write("diag-$name", rendered.width, rendered.height, rendered.pixels)
+        }
     }
 
     private fun write(name: String, width: Int, height: Int, pixels: IntArray) {
@@ -180,12 +181,17 @@ class ReferenceMatchTest {
          */
         val TEAL_TO_PEACH = Fill.Gradient(
             stops = listOf(
-                GradientStop(0f, Color(0.05f, 0.32f, 0.34f)),
-                GradientStop(0.38f, Color(0.16f, 0.55f, 0.44f)),
-                GradientStop(0.58f, Color(0.96f, 0.72f, 0.55f)),
-                GradientStop(1f, Color(0.06f, 0.38f, 0.42f)),
+                GradientStop(0f, Color(0.04f, 0.28f, 0.33f)),
+                GradientStop(0.22f, Color(0.10f, 0.47f, 0.42f)),
+                GradientStop(0.40f, Color(0.28f, 0.62f, 0.45f)),
+                GradientStop(0.55f, Color(0.97f, 0.76f, 0.58f)),
+                GradientStop(0.70f, Color(0.35f, 0.62f, 0.50f)),
+                GradientStop(1f, Color(0.05f, 0.30f, 0.36f)),
             ),
-            angle = -62f,
+            // Diagonal, not vertical. The reference runs its warm band up across the word rather
+            // than banding it in horizontal stripes, and a near-vertical ramp is what stripes look
+            // like once the letters are wider than they are tall.
+            angle = 28f,
         )
     }
 }

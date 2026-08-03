@@ -58,8 +58,20 @@ object Tessellator {
      *   is not the input: bridging a hole duplicates two points, and a caller that assumed the
      *   input indices still meant something would silently draw the wrong triangles.
      */
+    /**
+     * Drops the points that describe nothing: repeats, and points on the line between neighbours.
+     *
+     * Public because the caller that builds *walls* along an outline has to use exactly the same
+     * points as the caller that caps it. That is not a tidiness argument — it is the difference
+     * between a closed solid and a surface with holes in it. Simplifying inside [triangulate] alone
+     * left the cap a coarse polygon while the wall still followed every flattened point, so the two
+     * shared no vertices and the extrusion had a wedge of nothing between them everywhere the
+     * outline curved. A straight extrusion hides those edge-on; leaning it swings them into view.
+     */
+    fun clean(contour: List<Vec2>): List<Vec2> = simplify(dedupe(contour))
+
     fun triangulate(contours: List<List<Vec2>>): Triangulation {
-        val usable = contours.map { simplify(dedupe(it)) }.filter { it.size >= 3 }
+        val usable = contours.map { clean(it) }.filter { it.size >= 3 }
         if (usable.isEmpty()) return Triangulation(emptyList(), IntArray(0))
 
         // Largest first, so an outline is always seen before the holes that sit inside it.

@@ -44,7 +44,19 @@ object Extruder {
         protectThinStrokes: Boolean = true,
         marks: MarkStyle = MarkStyle.FLUSH,
     ): Mesh {
-        val cleaned = contours.filter { it.size >= 3 }
+        // Cleaned *here*, once, so that everything downstream is built on the same points.
+        //
+        // The caps and the walls have to agree vertex for vertex or the solid is not closed, and
+        // they used to disagree: the tessellator dropped the flattener's redundant points and the
+        // wall builder did not, so a cap was a coarse polygon while its wall followed every point
+        // of the original curve. Nothing shared an edge. The result was a surface with some twenty
+        // thousand boundary edges pretending to be a solid — invisible while the extrusion ran
+        // straight back, since every gap was edge-on, and unmistakable the moment it leaned.
+        //
+        // It is also most of the cost. A five-letter word arrives with near ten thousand points and
+        // describes itself perfectly well with a few hundred; the walls are two quads per point, so
+        // this is the difference between forty thousand triangles and one thousand.
+        val cleaned = contours.map { Tessellator.clean(it) }.filter { it.size >= 3 }
         if (cleaned.isEmpty()) return Mesh.EMPTY
 
         val builder = MeshBuilder()
