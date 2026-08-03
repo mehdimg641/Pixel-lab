@@ -176,7 +176,7 @@
 | 115 | لایه تنظیمی Curves (منحنی‌ها) | ✅ | `Adjustment.Curves` + ویرایشگر منحنی |
 | 116 | لایه تنظیمی Exposure (اکسپوژر) | ✅ | `Adjustment.Exposure` |
 | 117 | لایه تنظیمی Vibrance (سرزندگی رنگ) | ✅ | `Adjustment.Vibrance` |
-| 118 | لایه تنظیمی Hue/Saturation (فام/اشباع) | ✅ | `Adjustment.HueSaturation` |
+| 118 | لایه تنظیمی Hue/Saturation (فام/اشباع) | ✅ | `Adjustment.HueSaturation` با `range` — «همه» و شش خانوادهٔ رنگ، مثل خودِ فتوشاپ |
 | 119 | لایه تنظیمی Color Balance (تعادل رنگ) | ✅ | `Adjustment.ColorBalance` |
 | 120 | لایه تنظیمی Black & White (سیاه و سفید) | ✅ | `Adjustment.BlackWhite` |
 | 121 | لایه تنظیمی Selective Color (رنگ انتخابی) | ✅ | `Adjustment.SelectiveColor` — نه خانواده، نسبی و مطلق |

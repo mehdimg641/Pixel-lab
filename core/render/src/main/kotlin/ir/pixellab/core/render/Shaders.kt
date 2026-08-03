@@ -670,6 +670,9 @@ object Shaders {
             const float LOG_KNEE = ${Tone.LOG_KNEE};
             const float LOG_FLOOR_VALUE = ${Tone.LOG_FLOOR_VALUE};
             const float LOG_SPAN = ${Tone.LOG_SPAN};
+            const float HUE_BAND_CORE = ${Tone.HUE_BAND_CORE};
+            const float HUE_BAND_EDGE = ${Tone.HUE_BAND_EDGE};
+            const float HUE_BAND_MIN_SATURATION = ${Tone.HUE_BAND_MIN_SATURATION};
 
             float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
@@ -709,6 +712,17 @@ object Shaders {
                 else if (mx == c.g) h = (c.b - c.r) / d + 2.0;
                 else                h = (c.r - c.g) / d + 4.0;
                 return vec3(h / 6.0, s, l);
+            }
+
+            // How much a pixel belongs to a hue family — Photoshop's Hue/Saturation range sliders.
+            // Distance the short way round the wheel, so the reds band reaches 350 and 10 degrees
+            // rather than splitting at the seam; and near-greys excluded, because a pixel with no
+            // hue rotates towards whatever direction its noise leaned and a smooth wall comes back
+            // mottled. Kept identical to Adjust.hueBandWeight by sharing the constants above.
+            float hueBand(vec3 hsl, float centre) {
+                float raw = abs(fract(hsl.x - centre + 0.5) - 0.5);
+                float band = 1.0 - smoothstep(HUE_BAND_CORE, HUE_BAND_EDGE, raw);
+                return band * clamp(hsl.y / HUE_BAND_MIN_SATURATION, 0.0, 1.0);
             }
 
             float hueChannel(float p, float q, float t) {
@@ -832,7 +846,8 @@ object Shaders {
                         texture(uCurves, vec2(clamp(c.b, 0.0, 1.0), 0.5)).r
                     );
                 } else if (uMode == 3) {
-                    vec3 hsl = rgbToHsl(clamp(c, 0.0, 1.0));
+                    vec3 before = clamp(c, 0.0, 1.0);
+                    vec3 hsl = rgbToHsl(before);
                     if (uP0.w > 0.5) {
                         // Colorize replaces the hue outright rather than rotating it, which is the
                         // whole point of the checkbox.
@@ -843,7 +858,10 @@ object Shaders {
                         hsl.y = clamp(hsl.y * (1.0 + uP0.y), 0.0, 1.0);
                     }
                     hsl.z = clamp(hsl.z + uP0.z * (uP0.z > 0.0 ? (1.0 - hsl.z) : hsl.z), 0.0, 1.0);
-                    c = hslToRgb(hsl);
+                    // Master (uP1.y == 0) moves everything. A family weights by how close this
+                    // pixel's hue is to the family's centre, which is the whole difference between
+                    // "deepen the sky" and "turn every skin tone cyan".
+                    c = mix(before, hslToRgb(hsl), uP1.y > 0.5 ? hueBand(rgbToHsl(before), uP1.x) : 1.0);
                 } else if (uMode == 4) {
                     c = pow(max(c * pow(2.0, uP0.x) + uP0.y, vec3(0.0)), vec3(1.0 / max(uP0.z, 0.0001)));
                 } else if (uMode == 5) {

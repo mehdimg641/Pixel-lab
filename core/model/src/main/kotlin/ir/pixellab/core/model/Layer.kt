@@ -123,7 +123,34 @@ sealed interface Adjustment {
         val saturation: Float = 0f,
         val lightness: Float = 0f,
         val colorize: Boolean = false,
-    ) : Adjustment
+        /**
+         * Which family of hues this affects. Null is Photoshop's *Master* — everything at once.
+         *
+         * The dropdown at the top of Photoshop's Hue/Saturation panel, Lightroom's HSL panel, and
+         * Hypic's HSL are the same control, and it is the one people reach for constantly: deepen a
+         * sky without turning skin cyan, drop the saturation of a green lawn without touching a red
+         * dress. Master alone cannot do any of that, which is why every serious editor has it and
+         * why a colour tool without it feels blunt however many sliders it has.
+         *
+         * Only the six hue families mean anything here. [ColorFamily.WHITES], [ColorFamily.NEUTRALS]
+         * and [ColorFamily.BLACKS] are lightness bands rather than hues — they belong to selective
+         * colour, where ink is being added rather than a hue rotated — and are treated as Master.
+         */
+        val range: ColorFamily? = null,
+    ) : Adjustment {
+
+        /** Where this family sits on the wheel, in turns. Null for master and the non-hue families. */
+        val rangeCentre: Float?
+            get() = when (range) {
+                ColorFamily.REDS -> 0f
+                ColorFamily.YELLOWS -> 1f / 6f
+                ColorFamily.GREENS -> 2f / 6f
+                ColorFamily.CYANS -> 3f / 6f
+                ColorFamily.BLUES -> 4f / 6f
+                ColorFamily.MAGENTAS -> 5f / 6f
+                else -> null
+            }
+    }
 
     @Serializable @SerialName("exposure")
     data class Exposure(val exposure: Float = 0f, val offset: Float = 0f, val gamma: Float = 1f) : Adjustment

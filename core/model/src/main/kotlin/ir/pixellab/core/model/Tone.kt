@@ -45,4 +45,26 @@ object Tone {
      * edges and the halo comes back.
      */
     const val GUIDE_EPSILON = 0.05f
+
+    /**
+     * Half-width of a hue family's *core*, in turns — the band affected at full strength.
+     *
+     * Photoshop's Hue/Saturation range sliders default to a thirty-degree core with a thirty-degree
+     * falloff on each side, and those numbers are not arbitrary: six families thirty degrees apart
+     * tile the wheel exactly, so adjusting reds and then yellows covers the orange between them
+     * without either a gap or a doubled correction.
+     */
+    const val HUE_BAND_CORE = 15f / 360f
+
+    /** Where the band has fallen to nothing. Between here and the core the weight ramps smoothly. */
+    const val HUE_BAND_EDGE = 45f / 360f
+
+    /**
+     * Below this saturation a pixel has no hue worth calling a hue.
+     *
+     * Without the guard, rotating "the reds" swings every near-grey pixel whose noise happens to
+     * lean warm, and a smooth wall comes back mottled. The ramp from here to full weight is what
+     * keeps a desaturated shadow out of the adjustment.
+     */
+    const val HUE_BAND_MIN_SATURATION = 0.1f
 }

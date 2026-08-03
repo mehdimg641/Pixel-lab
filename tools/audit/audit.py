@@ -925,6 +925,7 @@ rule([965], HALF, "بیست‌ودو تنظیم روی لایه هست و `Adjus
 # Three of its adjustments were things we genuinely lacked, and all three are now built. They land
 # on section 9's technical rows because that is where this list keeps its filter entries.
 rule([484], DONE, "`LocalContrast.Scale.CLARITY` — کنتراست موضعی روی روشنایی، از شیت فیلتر")
+rule([118], DONE, "`Adjustment.HueSaturation` با `range` — «همه» و شش خانوادهٔ رنگ، مثل خودِ فتوشاپ")
 rule([868], DONE, "`LightRays` — پرتوهای پراکنده از یک نقطه، با میرایی در طول پرتو")
 
 # ───────────────────────────────────────────── AirBrush, re-read against thirty screenshots

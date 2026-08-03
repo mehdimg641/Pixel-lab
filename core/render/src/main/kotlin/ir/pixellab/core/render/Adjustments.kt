@@ -159,14 +159,23 @@ data class AdjustmentUniforms(
                     needsCurves = true,
                 )
 
-                is Adjustment.HueSaturation -> pack(
-                    mode,
-                    floatArrayOf(
+                is Adjustment.HueSaturation -> AdjustmentUniforms(
+                    mode = mode,
+                    p0 = floatArrayOf(
                         adjustment.hue,
                         adjustment.saturation,
                         adjustment.lightness,
                         if (adjustment.colorize) 1f else 0f,
                     ),
+                    // The family's centre on the wheel, and a flag for "master" — which cannot be
+                    // encoded as a centre, because zero is a real centre and means reds.
+                    p1 = floatArrayOf(
+                        adjustment.rangeCentre ?: 0f,
+                        if (adjustment.rangeCentre == null) 0f else 1f,
+                        0f,
+                        0f,
+                    ),
+                    p2 = FloatArray(4),
                 )
 
                 is Adjustment.Exposure -> pack(

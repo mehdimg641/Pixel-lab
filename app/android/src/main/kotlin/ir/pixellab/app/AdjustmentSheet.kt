@@ -217,6 +217,26 @@ private fun Controls(
         }
 
         is Adjustment.HueSaturation -> {
+            // The dropdown at the top of Photoshop's panel and the whole of Lightroom's HSL. Without
+            // it the three sliders below move the entire picture at once, which is enough to grade a
+            // photograph and not enough to fix one — deepening a sky would take the skin with it.
+            SheetChips {
+                SheetChip("همه", chosen = adjustment.range == null) {
+                    model.setAdjustment(id, adjustment.copy(range = null))
+                }
+                for (family in HUE_FAMILIES) {
+                    SheetChip(family.persianLabel, chosen = adjustment.range == family) {
+                        model.setAdjustment(id, adjustment.copy(range = family))
+                    }
+                }
+            }
+            SheetHint(
+                if (adjustment.range == null) {
+                    "روی کل تصویر — با انتخاب یک خانوادهٔ رنگ، فقط همان تغییر می‌کند"
+                } else {
+                    "فقط ${adjustment.range?.persianLabel} — لبهٔ باند نرم است، پس مرزِ دیده‌شدنی نمی‌سازد"
+                },
+            )
             Slider("رنگ‌مایه", adjustment.hue, -0.5f..0.5f) {
                 model.setAdjustment(id, adjustment.copy(hue = it))
             }
@@ -656,6 +676,22 @@ private fun Slider(
  * long before they read the labels. Sorting these alphabetically, or by when they were written,
  * would make a familiar list unfamiliar for no gain.
  */
+/**
+ * The six families that are hues.
+ *
+ * Whites, neutrals and blacks are in [ColorFamily] too, because selective colour needs them — there
+ * you are adding ink to a lightness band. Rotating the hue of a band that has no hue is meaningless,
+ * so they are left out here rather than offered and silently ignored.
+ */
+private val HUE_FAMILIES = listOf(
+    ColorFamily.REDS,
+    ColorFamily.YELLOWS,
+    ColorFamily.GREENS,
+    ColorFamily.CYANS,
+    ColorFamily.BLUES,
+    ColorFamily.MAGENTAS,
+)
+
 private val CATALOG: List<Pair<String, () -> Adjustment>> = listOf(
     "روشنایی/کنتراست" to { Adjustment.BrightnessContrast() },
     "سطوح" to { Adjustment.Levels() },

@@ -443,7 +443,10 @@ object Adjust {
                 }
 
                 is Adjustment.HueSaturation -> Prepared { r, g, b ->
-                    val hsl = toHsl(r.coerceIn(0f, 1f), g.coerceIn(0f, 1f), b.coerceIn(0f, 1f))
+                    val red = r.coerceIn(0f, 1f)
+                    val green = g.coerceIn(0f, 1f)
+                    val blue = b.coerceIn(0f, 1f)
+                    val hsl = toHsl(red, green, blue)
                     val hue: Float
                     val saturation: Float
                     if (adjustment.colorize) {
@@ -459,7 +462,22 @@ object Adjust {
                         hsl.z + adjustment.lightness *
                             (if (adjustment.lightness > 0f) 1f - hsl.z else hsl.z)
                         ).coerceIn(0f, 1f)
-                    toRgb(hue, saturation, lightness)
+                    val shifted = toRgb(hue, saturation, lightness)
+
+                    // Master leaves the weight at one, so the whole picture moves. A family weights
+                    // by how close this pixel's hue is to the family's centre, which is the only
+                    // thing separating "deepen the sky" from "turn every skin tone cyan".
+                    val centre = adjustment.rangeCentre
+                    if (centre == null) {
+                        shifted
+                    } else {
+                        val w = hueBandWeight(hsl.x, hsl.y, centre)
+                        Vec3(
+                            red + (shifted.x - red) * w,
+                            green + (shifted.y - green) * w,
+                            blue + (shifted.z - blue) * w,
+                        )
+                    }
                 }
 
                 is Adjustment.Exposure -> {
@@ -631,6 +649,29 @@ object Adjust {
         Vec3(r.coerceIn(0f, 1f), g.coerceIn(0f, 1f), b.coerceIn(0f, 1f))
 
     private fun fract(v: Float) = v - kotlin.math.floor(v)
+
+    /**
+     * How much a pixel belongs to a hue family — Photoshop's Hue/Saturation range sliders.
+     *
+     * Two guards, and the tool is unusable without either. **Distance is measured the short way
+     * round the wheel**, so the reds band reaches both 350° and 10° instead of splitting in two at
+     * the seam. And **a near-grey pixel is excluded**: it has no hue worth calling a hue, and
+     * rotating one swings whatever direction its noise happened to lean, which turns a smooth wall
+     * mottled.
+     */
+    fun hueBandWeight(hue: Float, saturation: Float, centre: Float): Float {
+        val raw = abs(fract(hue - centre + 0.5f) - 0.5f)
+        val band = when {
+            raw <= Tone.HUE_BAND_CORE -> 1f
+            raw >= Tone.HUE_BAND_EDGE -> 0f
+            else -> {
+                val t = (Tone.HUE_BAND_EDGE - raw) / (Tone.HUE_BAND_EDGE - Tone.HUE_BAND_CORE)
+                t * t * (3f - 2f * t)
+            }
+        }
+        val grey = (saturation / Tone.HUE_BAND_MIN_SATURATION).coerceIn(0f, 1f)
+        return band * grey
+    }
 
     private fun table(size: Int, f: (Float) -> Float) = FloatArray(size) { f(it.toFloat() / (size - 1)) }
 

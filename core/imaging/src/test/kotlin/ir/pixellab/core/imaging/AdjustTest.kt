@@ -33,6 +33,11 @@ class AdjustTest {
         return r
     }
 
+    private val HUE_FAMILY_ORDER = listOf(
+        ColorFamily.REDS, ColorFamily.YELLOWS, ColorFamily.GREENS,
+        ColorFamily.CYANS, ColorFamily.BLUES, ColorFamily.MAGENTAS,
+    )
+
     private val red = Vec3(1f, 0f, 0f)
     private val grey = Vec3(0.5f, 0.5f, 0.5f)
 
@@ -103,6 +108,102 @@ class AdjustTest {
             val zeroed = at(probe, Adjustment.HueSaturation(saturation = -1f))
             abs(desaturated.x - zeroed.x) shouldBeLessThan TOLERANCE
         }
+    }
+
+    // ---- HSL: the range, which is the whole reason a colour panel is usable ------------------
+
+    /** Saturated probes on the six family centres, so a band test is not fighting the grey guard. */
+    private val skyBlue = Vec3(0.1f, 0.35f, 0.9f)
+    private val skinRed = Vec3(0.9f, 0.45f, 0.35f)
+    private val leafGreen = Vec3(0.2f, 0.75f, 0.2f)
+
+    @Test
+    fun `a family moves only its own hues`() {
+        // The property the whole control exists for: deepen a sky without turning skin cyan. With
+        // master alone this is impossible at any slider setting, which is why every serious editor
+        // has the range and why one without it feels blunt however many sliders it has.
+        val blues = Adjustment.HueSaturation(saturation = -1f, range = ColorFamily.BLUES)
+        val sky = at(skyBlue, blues)
+        val skin = at(skinRed, blues)
+
+        // The sky is drained…
+        abs(sky.x - sky.z) shouldBeLessThan 0.1f
+        // …and the skin is untouched, to the last digit.
+        abs(skin.x - skinRed.x) shouldBeLessThan TOLERANCE
+        abs(skin.z - skinRed.z) shouldBeLessThan TOLERANCE
+    }
+
+    @Test
+    fun `master still moves everything, so the default did not change`() {
+        val master = Adjustment.HueSaturation(saturation = -1f)
+        for (probe in listOf(skyBlue, skinRed, leafGreen)) {
+            val out = at(probe, master)
+            abs(out.x - out.y) shouldBeLessThan 0.02f
+            abs(out.y - out.z) shouldBeLessThan 0.02f
+        }
+    }
+
+    @Test
+    fun `the band is soft at its edge, so no visible boundary appears in a gradient`() {
+        // A hard band would put a line across every sky that runs from cyan to blue. The weight has
+        // to fall off, and it has to fall off monotonically — the second is what a smooth ramp buys
+        // over a plain threshold.
+        val centre = Adjustment.HueSaturation(range = ColorFamily.BLUES).rangeCentre!!
+        var previous = 1f
+        var sawPartial = false
+        for (step in 0..24) {
+            val hue = centre + step * (0.5f / 24f)
+            val w = Adjust.hueBandWeight(hue, 1f, centre)
+            (w <= previous + TOLERANCE) shouldBe true
+            if (w > 0.01f && w < 0.99f) sawPartial = true
+            previous = w
+        }
+        // There is genuinely a ramp rather than a step.
+        sawPartial shouldBe true
+    }
+
+    @Test
+    fun `the band wraps, so reds are not cut in half at the seam`() {
+        // Zero and one are the same hue. A band measured by plain subtraction reaches 10 degrees and
+        // not 350, and the reds family would cover only its warm half.
+        val warm = Adjust.hueBandWeight(0.02f, 1f, 0f)
+        val cool = Adjust.hueBandWeight(0.98f, 1f, 0f)
+        abs(warm - cool) shouldBeLessThan TOLERANCE
+        warm shouldBeGreaterThan 0.9f
+    }
+
+    @Test
+    fun `a near-grey pixel is left out of a family`() {
+        // Otherwise rotating "the reds" swings every neutral whose noise happened to lean warm, and
+        // a smooth wall comes back mottled.
+        val nearGrey = Vec3(0.52f, 0.5f, 0.5f)
+        val reds = Adjustment.HueSaturation(hue = 0.25f, range = ColorFamily.REDS)
+        val out = at(nearGrey, reds)
+        abs(out.x - nearGrey.x) shouldBeLessThan 0.02f
+        abs(out.y - nearGrey.y) shouldBeLessThan 0.02f
+        abs(out.z - nearGrey.z) shouldBeLessThan 0.02f
+    }
+
+    @Test
+    fun `the six families tile the wheel without a gap`() {
+        // Thirty-degree cores sixty degrees apart with thirty-degree falloffs: every hue belongs to
+        // at least one family at full weight or to two partially. A gap would be a colour no slider
+        // in the panel could reach.
+        val centres = HUE_FAMILY_ORDER.map { Adjustment.HueSaturation(range = it).rangeCentre!! }
+        for (step in 0 until 72) {
+            val hue = step / 72f
+            val best = centres.maxOf { Adjust.hueBandWeight(hue, 1f, it) }
+            best shouldBeGreaterThan 0.4f
+        }
+    }
+
+    @Test
+    fun `the non-hue families fall back to master rather than doing nothing`() {
+        // Whites, neutrals and blacks are lightness bands and belong to selective colour. Treating
+        // them as a hue centre would silently pin the adjustment to red.
+        Adjustment.HueSaturation(range = ColorFamily.NEUTRALS).rangeCentre shouldBe null
+        val out = at(skyBlue, Adjustment.HueSaturation(saturation = -1f, range = ColorFamily.WHITES))
+        abs(out.x - out.z) shouldBeLessThan 0.02f
     }
 
     @Test
