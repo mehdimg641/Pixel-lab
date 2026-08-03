@@ -17,7 +17,7 @@
 | `core:imaging` | `core-raster` | §۷.۷ فیلترها | تاری، شارپ، نویز، سایه/هایلایت، استایلایز، بافت رویه‌ای | Liquify، Face-Aware Liquify، Blur Gallery کامل، Camera Raw |
 | `core:paint` | `core-raster` | §۷.۱ موتور قلم | نوک، فاصله، فشار، نرم‌سازی، پراکندگی، بافت | نقاشی متقارن، ایمپورت ABR، Dual Brush |
 | `core:vector` | `core-vector` | §۸.۱ مسیر و هندسه | بزیه، بولین، آفست، پروفایل عرض، SVG | Pathfinder کامل، Shape Builder، Image Trace |
-| `core:mesh` | `core-3d` | §۶ تایپوگرافی سه‌بعدی | مثلث‌بندی، اکسترود، بِوِل، **محافظ شعاع فارسی (§۶.۲)**، PBR، رستریزه | Filament، IBL، مسیریاب پرتو |
+| `core:mesh` | `core-3d` | §۶ تایپوگرافی سه‌بعدی | مثلث‌بندی، اکسترود، بِوِل، **محافظ شعاع فارسی (§۶.۲)**، **نقطه و اعراب مستقل (§۶.۹.۳)**، PBR، رستریزه | Filament، IBL، مسیریاب پرتو |
 | `core:editor` | `core-document` | §۴.۱، §۱۳ | حالت ویرایشگر، تاریخچه، انتخاب، کتابخانه | تاریخچهٔ درختی/شاخه‌ای |
 | `core:ai` | `core-ai` | §۱۰ لایهٔ انتزاع | `SegmentationModel` → `SubjectCutout` با مسیر کلاسیک | Model Router و Provider Adapter به‌صورت جدا |
 | `engine:android` | `core-render` + پل | §۴.۴ استک اندروید | OpenGL ES، ONNX Runtime، کدک‌های پلتفرم | Vulkan، NDK/C++، JNI |

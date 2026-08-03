@@ -8,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import ir.pixellab.core.editor.EditorState
+import ir.pixellab.core.mesh.MarkStyle
 import ir.pixellab.core.model.Geometry3D
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.Light
@@ -60,6 +61,42 @@ fun DimensionalSheetBody(state: EditorState, model: EditorViewModel, modifier: M
         })
         // The one number people get wrong, and it does not fail loudly — the letter just thickens.
         SheetHint("پخ بزرگ‌تر از باریک‌ترین قلمِ حرف، آن قلم را به یک تیغه بدون سطح تبدیل می‌کند")
+
+        SheetSection("نقطه‌ها و اعراب")
+        // Why this section exists at all, in one line the user can act on.
+        SheetHint("نقطهٔ ب پ ت ث ج خ ز ض ظ غ ف ق ن و اعراب، جدا از تنهٔ حرف کنترل می‌شوند")
+        SheetChips {
+            for (style in MARK_STYLES) {
+                SheetChip(
+                    style.label,
+                    chosen = geometry.markDepth == style.depth && geometry.markLift == style.lift,
+                ) {
+                    put(geometry.copy(markDepth = style.depth, markLift = style.lift))
+                }
+            }
+        }
+        // Both are multiples of the letter's own depth, so moving the depth slider afterwards keeps
+        // whatever look was set here instead of undoing it.
+        SheetSlider("عمق نقطه", geometry.markDepth, 0f..MAX_MARK_DEPTH, onChange = { value, _ ->
+            put(geometry.copy(markDepth = value))
+        })
+        SheetSlider("جلوآمدگی نقطه", geometry.markLift, 0f..MAX_MARK_LIFT, onChange = { value, _ ->
+            put(geometry.copy(markLift = value))
+        })
+        SheetChips {
+            SheetChip("متریال جدا", chosen = geometry.markMaterial != null) {
+                put(
+                    geometry.copy(
+                        // Starting from the face rather than from a default, so the first thing the
+                        // user sees after switching this on is the letter they already had.
+                        markMaterial = if (geometry.markMaterial == null) geometry.faceMaterial else null,
+                    ),
+                )
+            }
+        }
+        geometry.markMaterial?.let { mark ->
+            MaterialControls("نقطه", mark) { put(geometry.copy(markMaterial = it)) }
+        }
 
         SheetSection("چرخش")
         SheetSlider("افقی", geometry.rotation.y, -MAX_TURN..MAX_TURN, onChange = { value, _ ->
@@ -185,6 +222,25 @@ private val MATERIALS = listOf(
     "مات" to Material.MATTE,
 )
 
+/**
+ * The three treatments of a letter's dots, named.
+ *
+ * Not the same list as the material presets: these do not touch colour at all, they only say how far
+ * the dot follows the body. The numbers come from the geometry module rather than being retyped here
+ * — a preset the panel and the extruder disagreed about would show a chip as unselected the instant
+ * after the user picked it.
+ */
+private class MarkStylePreset(val label: String, style: MarkStyle) {
+    val depth = style.depth
+    val lift = style.lift
+}
+
+private val MARK_STYLES = listOf(
+    MarkStylePreset("همسطح", MarkStyle.FLUSH),
+    MarkStylePreset("فرورفته", MarkStyle.INSET),
+    MarkStylePreset("شناور", MarkStyle.FLOATING),
+)
+
 /** A named starting point, applied over whatever depth and rotation the user already set. */
 private class Preset(val label: String, val build: (Geometry3D) -> Geometry3D)
 
@@ -222,6 +278,13 @@ private val PRESETS = listOf(
 private const val MAX_DEPTH = 400f
 private const val MAX_BEVEL = 60f
 private const val MAX_TURN = 60f
+
+/** Twice the body's depth, which is past every sane value and short of a dot that reads as a slab. */
+private const val MAX_MARK_DEPTH = 2f
+
+/** Far enough that the dot clears the body entirely and casts its own shadow. */
+private const val MAX_MARK_LIFT = 2f
+
 private const val MIN_FOV = 10f
 private const val MAX_FOV = 90f
 private const val MAX_INTENSITY = 6f

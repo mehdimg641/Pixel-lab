@@ -32,6 +32,8 @@ object Extruder {
      *   applying one width everywhere. On by default, and it should stay on for Persian: without it
      *   a bevel sized for a bowl passes straight through the join beside it. Turning it off is for
      *   comparing against the unguarded result, which is what the tests do.
+     * @param marks how the letter's dots and vowel marks differ from its body. The default leaves
+     *   them identical, which is what every other tool can do; see [MarkStyle].
      */
     fun extrude(
         contours: List<List<Vec2>>,
@@ -40,6 +42,7 @@ object Extruder {
         bevelProfile: Curve = Curve.LINEAR,
         bevelSegments: Int = 6,
         protectThinStrokes: Boolean = true,
+        marks: MarkStyle = MarkStyle.FLUSH,
     ): Mesh {
         val cleaned = contours.filter { it.size >= 3 }
         if (cleaned.isEmpty()) return Mesh.EMPTY
@@ -48,18 +51,22 @@ object Extruder {
         val bevel = bevelSize.coerceAtLeast(0f)
         val segments = if (bevel <= 0f) 0 else bevelSegments.coerceIn(1, MAX_SEGMENTS)
 
+        // Which contours are dots and which are the letter. Decided once, against the whole set,
+        // because the question "is this inside another contour" cannot be answered by one alone.
+        val ornament = if (marks.separated) Ornaments.classify(cleaned) else BooleanArray(cleaned.size)
+
         // Measured against the whole letter rather than against one contour at a time, because a
         // stroke's thickness is decided by every outline near it: the wall between a counter and the
         // outside is thin on account of where *both* run, and measuring against one alone would
         // report it as solid.
-        val prepared = cleaned.mapNotNull { contour ->
-            val rims = rimsOf(contour) ?: return@mapNotNull null
+        val prepared = cleaned.mapIndexedNotNull { index, contour ->
+            val rims = rimsOf(contour) ?: return@mapIndexedNotNull null
             val limits = when {
                 bevel <= 0f -> FloatArray(rims.size)
                 !protectThinStrokes -> FloatArray(rims.size) { bevel }
                 else -> BevelGuard.limits(rims, cleaned, bevel)
             }
-            Bevelled(rims, limits)
+            Bevelled(rims, limits, ornament[index])
         }
         if (prepared.isEmpty()) return Mesh.EMPTY
 
@@ -69,18 +76,64 @@ object Extruder {
         val faceContours = if (bevel <= 0f) cleaned else prepared.map { inset(it) }
         val faceZ = if (bevel <= 0f) 0f else bevelDepth(bevel)
 
-        addCap(builder, faceContours, z = faceZ, front = true, surface = Surface.FACE)
-        addCap(builder, cleaned, z = -depth, front = false, surface = Surface.BACK)
+        // Body and ornaments are capped separately because they sit at different depths. Tessellating
+        // them together would be cheaper and would put every dot back on the body's plane, which is
+        // the whole thing being avoided.
+        addCaps(builder, faceContours, prepared, ornament, faceZ, depth, marks, front = true)
+        addCaps(builder, cleaned, prepared, ornament, faceZ, depth, marks, front = false)
 
         for (contour in prepared) {
-            val rings = buildRings(contour, segments, bevelProfile, bevelDepth(bevel))
-            stitch(builder, rings, depth)
+            builder.building = contour.mark
+            // A lifted dot's wall runs from its own front face down to its own back, wherever the
+            // lift has put both — the body's depth says nothing about how thick a dot is.
+            val lift = if (contour.mark) depth * marks.lift else 0f
+            val thickness = if (contour.mark) depth * marks.depth else depth
+            val rings = buildRings(contour, segments, bevelProfile, bevelDepth(bevel), lift)
+            stitch(builder, rings, thickness, lift)
         }
+        builder.building = false
         return builder.build()
     }
 
+    /**
+     * Caps the body and the ornaments, each at its own depth.
+     *
+     * Split into two passes over the same list rather than one, because the front cap of a dot and
+     * the front cap of the letter are at different z once the dots are lifted, and a tessellation is
+     * flat by construction.
+     */
+    private fun addCaps(
+        builder: MeshBuilder,
+        contours: List<List<Vec2>>,
+        prepared: List<Bevelled>,
+        ornament: BooleanArray,
+        faceZ: Float,
+        depth: Float,
+        marks: MarkStyle,
+        front: Boolean,
+    ) {
+        for (isMark in booleanArrayOf(false, true)) {
+            val subset = contours.filterIndexed { i, _ -> ornament.getOrElse(i) { false } == isMark }
+            if (subset.isEmpty()) continue
+            builder.building = isMark
+
+            val lift = if (isMark) depth * marks.lift else 0f
+            val thickness = if (isMark) depth * marks.depth else depth
+            val z = if (front) faceZ + lift else lift - thickness
+
+            addCap(
+                builder = builder,
+                contours = subset,
+                z = z,
+                front = front,
+                surface = if (front) Surface.FACE else Surface.BACK,
+            )
+        }
+        builder.building = false
+    }
+
     /** One outline, with how far the bevel may reach at each of its points. */
-    private class Bevelled(val rims: List<Rim>, val limits: FloatArray)
+    private class Bevelled(val rims: List<Rim>, val limits: FloatArray, val mark: Boolean = false)
 
     /**
      * The rings the side of a letter is made of: the bevel's, then the back.
@@ -93,6 +146,7 @@ object Extruder {
         segments: Int,
         profile: Curve,
         depth: Float,
+        lift: Float,
     ): List<List<Pair<Vec3, Vec3>>> {
         val rims = contour.rims
         val rings = ArrayList<List<Pair<Vec3, Vec3>>>(segments + 2)
@@ -107,7 +161,7 @@ object Extruder {
             // wandered in z would shade as a dent — so the depth is what stays fixed. A steep
             // micro-bevel on a thin join still turns its normal through the full sweep below, which
             // is what keeps a highlight on it rather than leaving it black.
-            val forward = depth * profileAt(profile, 1f - t)
+            val forward = lift + depth * profileAt(profile, 1f - t)
             rings += rims.mapIndexed { index, rim ->
                 val inward = contour.limits[index] * (1f - t)
                 val position = Vec3(
@@ -131,12 +185,17 @@ object Extruder {
 
         // The side wall: straight out from the outline, all the way to the back.
         rings += rims.map { rim ->
-            Vec3(rim.point.x, rim.point.y, 0f) to Vec3(rim.outward.x, rim.outward.y, 0f)
+            Vec3(rim.point.x, rim.point.y, lift) to Vec3(rim.outward.x, rim.outward.y, 0f)
         }
         return rings
     }
 
-    private fun stitch(builder: MeshBuilder, rings: List<List<Pair<Vec3, Vec3>>>, depth: Float) {
+    private fun stitch(
+        builder: MeshBuilder,
+        rings: List<List<Pair<Vec3, Vec3>>>,
+        depth: Float,
+        lift: Float,
+    ) {
         if (rings.isEmpty()) return
         val count = rings[0].size
 
@@ -154,7 +213,7 @@ object Extruder {
         // The back of the side wall, dropped to the full depth. A separate ring rather than moving
         // the last one, so the wall's normal stays horizontal along its whole height instead of
         // tilting to meet the back face.
-        val back = rings.last().map { builder.vertex(Vec3(it.first.x, it.first.y, -depth), it.second) }
+        val back = rings.last().map { builder.vertex(Vec3(it.first.x, it.first.y, lift - depth), it.second) }
         for (i in 0 until count) {
             val j = (i + 1) % count
             builder.quad(previous[i], previous[j], back[j], back[i], Surface.SIDE)

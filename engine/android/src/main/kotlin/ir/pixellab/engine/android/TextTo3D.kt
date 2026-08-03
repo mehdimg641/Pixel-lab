@@ -2,6 +2,7 @@ package ir.pixellab.engine.android
 
 import ir.pixellab.core.codec.RasterImage
 import ir.pixellab.core.mesh.Extruder
+import ir.pixellab.core.mesh.MarkStyle
 import ir.pixellab.core.mesh.Mesh
 import ir.pixellab.core.mesh.Rasteriser
 import ir.pixellab.core.model.Geometry3D
@@ -75,6 +76,10 @@ object TextTo3D {
             bevelSize = geometry.bevelSize.coerceAtLeast(0f),
             bevelProfile = geometry.bevelProfile,
             bevelSegments = segmentsFor(geometry.bevelSize),
+            marks = MarkStyle(
+                depth = geometry.markDepth.coerceAtLeast(0f),
+                lift = geometry.markLift,
+            ),
         )
     }
 

@@ -182,6 +182,75 @@ class RenderSampleTest {
         (gold > 0) shouldBe true
     }
 
+    /**
+     * A ب: a wide shallow body with a single dot beneath it, unattached.
+     *
+     * The shape Persian carries meaning off the stroke with. ب پ ت ث are this body with one, two or
+     * three dots, and nothing but the dots tells them apart.
+     */
+    private fun dotted(): List<List<Vec2>> = listOf(
+        listOf(Vec2(10f, 50f), Vec2(120f, 50f), Vec2(120f, 92f), Vec2(10f, 92f)),
+        listOf(Vec2(58f, 12f), Vec2(76f, 12f), Vec2(76f, 30f), Vec2(58f, 30f)),
+    )
+
+    @Test
+    fun `a floating dot renders in front of the letter and in its own material`() {
+        // The style §۶.۹.۳ describes and nothing else offers: the dot lifted clear of the body, with
+        // its own depth and its own material. Two pictures, one variable.
+        val look = goldOnWhite.copy(
+            depth = 20f,
+            bevelSize = 3f,
+            faceMaterial = Material.GLOSSY_WHITE,
+            rotation = Vec3(-14f, 24f, 0f),
+        )
+        fun render(mesh: Mesh, geometry: Geometry3D) = Rasteriser.render(mesh, geometry, 420, 360, 3)
+
+        val flushMesh = Extruder.extrude(dotted(), depth = 20f, bevelSize = 3f, bevelSegments = 6)
+        val floatingMesh = Extruder.extrude(
+            dotted(),
+            depth = 20f,
+            bevelSize = 3f,
+            bevelSegments = 6,
+            marks = MarkStyle.FLOATING,
+        )
+
+        val flush = render(flushMesh, look)
+        val floating = render(floatingMesh, look.copy(markMaterial = Material.CHROME))
+        write("dot-flush", flush)
+        write("dot-floating", floating)
+
+        flush.isEmpty shouldBe false
+        floating.isEmpty shouldBe false
+
+        // The dot's triangles are the only ones that moved, so the two renders differ over a small
+        // part of the frame rather than everywhere — which is what says the body was left alone.
+        var different = 0
+        for (i in flush.pixels.indices) if (flush.pixels[i] != floating.pixels[i]) different++
+        (different > flush.pixels.size / 500) shouldBe true
+        (different < flush.pixels.size / 4) shouldBe true
+
+        // And the mark material is actually reaching the renderer, asked in the one way the two
+        // pictures can answer.
+        //
+        // Counting neutral pixels was the first attempt and it says nothing: the body's face is
+        // glossy white, which is as neutral as chrome is, so the count is dominated by a surface
+        // that is identical in both. Counting golden ones is no better — the floating mesh is deeper
+        // than the flush one, the camera frames itself to the mesh, and so *every* count falls a
+        // little between the two renders whatever the materials did. A raw area cannot separate a
+        // change of material from a change of framing.
+        //
+        // Mid-grey does. The palette here is gold and near-white, and neither produces a neutral
+        // pixel at middling brightness; chrome produces almost nothing else. So this counts a colour
+        // that can only have come from the mark material.
+        fun chrome(r: Rendered) = r.pixels.count { pixel ->
+            (pixel ushr 24) > 128 &&
+                kotlin.math.abs(((pixel shr 16) and 0xFF) - (pixel and 0xFF)) < 12 &&
+                luma(pixel) in 60f..200f
+        }
+        (chrome(flush) < 20) shouldBe true
+        (chrome(floating) > 100) shouldBe true
+    }
+
     @Test
     fun `a counter stays a hole all the way through the extrusion`() {
         // A ه or a ۵: the inner contour has to be a hole in the front cap, in the back cap *and*

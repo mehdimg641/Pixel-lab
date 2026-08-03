@@ -68,6 +68,11 @@ object Rasteriser {
             Surface.BACK to linearised(geometry.sideMaterial),
         )
 
+        // The dots' own material, when one is chosen. Null falls through to the table above, so a
+        // letter whose dots were never given a material renders exactly as it did before — which is
+        // what makes this an addition rather than a change to every existing document.
+        val markMaterial = geometry.markMaterial?.let { linearised(it) }
+
         for (t in 0 until mesh.triangleCount) {
             drawTriangle(
                 mesh = mesh,
@@ -76,7 +81,11 @@ object Rasteriser {
                 normalMatrix = normalMatrix,
                 viewProjection = viewProjection,
                 eye = eye,
-                material = materials.getValue(mesh.surfaces[t]),
+                material = if (markMaterial != null && mesh.marks[t]) {
+                    markMaterial
+                } else {
+                    materials.getValue(mesh.surfaces[t])
+                },
                 geometry = geometry,
                 colour = colour,
                 depth = depth,

@@ -26,13 +26,27 @@ class Mesh(
     /** Surface per *triangle*, not per vertex — a vertex on the bevel's edge belongs to both. */
     val surfaces: Array<Surface>,
     val indices: IntArray,
+    /**
+     * Whether each triangle belongs to a dot or a vowel mark rather than to the letter's body.
+     *
+     * A second flag alongside [surfaces] rather than more values in that enum, because the two
+     * questions are independent: a dot has a face, a bevel and a wall exactly as the body does, and
+     * folding "is it a dot" into the surface would have meant four more enum entries and a renderer
+     * that had to remember to handle each. It also means a caller who does not care — every existing
+     * one — is unaffected.
+     */
+    val marks: BooleanArray = BooleanArray(indices.size / 3),
 ) {
     init {
         require(positions.size == normals.size) { "every position needs a normal" }
         require(positions.size % 3 == 0) { "positions are triples, got ${positions.size}" }
         require(indices.size % 3 == 0) { "indices are triples, got ${indices.size}" }
         require(surfaces.size == indices.size / 3) { "one surface per triangle" }
+        require(marks.size == indices.size / 3) { "one mark flag per triangle" }
     }
+
+    /** True when at least one triangle belongs to a dot, so a caller can skip the whole question. */
+    val hasMarks: Boolean get() = marks.any { it }
 
     val vertexCount: Int get() = positions.size / 3
     val triangleCount: Int get() = indices.size / 3
@@ -65,7 +79,7 @@ class Mesh(
     }
 
     companion object {
-        val EMPTY = Mesh(FloatArray(0), FloatArray(0), emptyArray(), IntArray(0))
+        val EMPTY = Mesh(FloatArray(0), FloatArray(0), emptyArray(), IntArray(0), BooleanArray(0))
     }
 }
 
@@ -75,8 +89,18 @@ class MeshBuilder {
     private val normals = ArrayList<Float>()
     private val surfaces = ArrayList<Surface>()
     private val indices = ArrayList<Int>()
+    private val marks = ArrayList<Boolean>()
 
     val vertexCount: Int get() = positions.size / 3
+
+    /**
+     * Whether what is being added now belongs to a dot or a mark.
+     *
+     * A mode on the builder rather than an argument on every call. The extruder walks a whole
+     * contour at a time and every triangle it emits during that walk has the same answer, so the
+     * alternative was threading one boolean through six functions to say the same thing each time.
+     */
+    var building: Boolean = false
 
     fun vertex(position: Vec3, normal: Vec3): Int {
         positions += position.x
@@ -93,6 +117,7 @@ class MeshBuilder {
         indices += b
         indices += c
         surfaces += surface
+        marks += building
     }
 
     /** Two triangles across a quad, wound consistently so back-face culling can be trusted. */
@@ -106,6 +131,7 @@ class MeshBuilder {
         normals = normals.toFloatArray(),
         surfaces = surfaces.toTypedArray(),
         indices = indices.toIntArray(),
+        marks = marks.toBooleanArray(),
     )
 }
 

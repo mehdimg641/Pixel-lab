@@ -233,6 +233,21 @@ data class Geometry3D(
     val faceMaterial: Material = Material.GLOSSY_WHITE,
     val bevelMaterial: Material = Material.GOLD,
     val sideMaterial: Material = Material.GOLD,
+    /**
+     * The dots and vowel marks, treated separately from the letter's body.
+     *
+     * Persian carries meaning off the stroke — ب پ ت ث are one shape and one, two or three dots —
+     * and the specification (§۶.۹.۳) asks for those to have their own depth, their own material and
+     * the ability to float clear of the body. Every value here is a *multiple* of the body's, so the
+     * treatment survives a change of depth instead of needing to be re-tuned each time.
+     *
+     * Both default to leaving the dots exactly as they were, so an existing document renders
+     * unchanged.
+     */
+    val markDepth: Float = 1f,
+    val markLift: Float = 0f,
+    /** Null means the dots take whichever material their surface would have taken anyway. */
+    val markMaterial: Material? = null,
     /** Degrees about each axis. */
     val rotation: Vec3 = Vec3.ZERO,
     val lighting: LightRig = LightRig(),
