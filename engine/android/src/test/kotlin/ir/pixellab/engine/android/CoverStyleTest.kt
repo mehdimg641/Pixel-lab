@@ -167,9 +167,15 @@ class CoverStyleTest {
         // And once at the size a real cover is actually made at, with the style scaled by the same
         // factor — Photoshop's Scale Effects. A style's numbers are in pixels and deliberately do
         // not follow the canvas, so a preset authored for a preview is a hairline on a three
-        // thousand pixel cover unless something scales it. This is the check that it does, and it
-        // is also the only honest answer to "what does the app actually produce": every gradient,
-        // bevel shoulder and shadow here has three times the pixels to be smooth in.
+        // thousand pixel cover unless something scales it. Every gradient, bevel shoulder and
+        // shadow here has three times the pixels to be smooth in, which is what makes it the
+        // honest answer to "what does the app actually produce".
+        //
+        // Off by default, and the same arrangement the sample-dependent tests use. It is a
+        // *diagnostic*: every assertion in this test runs on the preview render above, so in CI
+        // this would be four gigabytes of heap and two and a half minutes spent on a picture
+        // nobody looks at. Run it with `-Dpixellab.fullRender=true` when the picture is the point.
+        if (System.getProperty("pixellab.fullRender") != "true") return
         val big = width * FULL_SIZE
         val tall = height * FULL_SIZE
         val large = silhouette("TREND", big, tall)

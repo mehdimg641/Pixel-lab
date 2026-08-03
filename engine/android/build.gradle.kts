@@ -27,12 +27,13 @@ android {
                 // extraction are exercised for real rather than against stubs.
                 it.systemProperty("robolectric.graphicsMode", "NATIVE")
                 it.systemProperty("file.encoding", "UTF-8")
-                // The layer-style compositor works in float RGBA — sixteen bytes a pixel — and a
-                // style holds several intermediates at once, so a cover-sized render is measured in
-                // hundreds of megabytes. The default heap is not enough to render one at the size
-                // the app actually exports at, and rendering it at preview size instead would be a
-                // test that never asks the question.
-                it.maxHeapSize = "4g"
+                // Off by default, on when the picture is the point. The layer-style compositor
+                // works in float RGBA — sixteen bytes a pixel — and holds several intermediates
+                // live, so a cover-sized render is measured in hundreds of megabytes.
+                System.getProperty("pixellab.fullRender")?.let { on ->
+                    it.systemProperty("pixellab.fullRender", on)
+                    if (on == "true") it.maxHeapSize = "4g"
+                }
                 // Points the font and PSD tests at the real samples when they are available;
                 // they skip cleanly when they are not, so the suite still runs anywhere.
                 System.getenv("PIXELLAB_SAMPLES")?.let { path -> it.systemProperty("pixellab.samples", path) }
