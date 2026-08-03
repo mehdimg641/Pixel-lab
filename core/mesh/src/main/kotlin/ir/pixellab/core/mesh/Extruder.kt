@@ -71,8 +71,17 @@ object Extruder {
         // stroke's thickness is decided by every outline near it: the wall between a counter and the
         // outside is thin on account of where *both* run, and measuring against one alone would
         // report it as solid.
+        // Which contours are voids. A counter is a contour that lies inside an odd number of others,
+        // which is the even-odd rule the tessellator caps with — so the walls and the caps now agree
+        // about what is solid instead of each deciding for itself.
+        val holes = BooleanArray(cleaned.size) { i ->
+            cleaned.indices.count { j ->
+                j != i && Tessellator.contains(cleaned[j], cleaned[i][0])
+            } % 2 == 1
+        }
+
         val prepared = cleaned.mapIndexedNotNull { index, contour ->
-            val rims = rimsOf(contour) ?: return@mapIndexedNotNull null
+            val rims = rimsOf(contour, holes[index]) ?: return@mapIndexedNotNull null
             val limits = when {
                 bevel <= 0f -> FloatArray(rims.size)
                 !protectThinStrokes -> FloatArray(rims.size) { bevel }
@@ -163,7 +172,11 @@ object Extruder {
         val rims = contour.rims
         val rings = ArrayList<List<Pair<Vec3, Vec3>>>(segments + 2)
 
-        for (step in segments downTo 0) {
+        // With no bevel there are no bevel rings at all. Running the loop once anyway produced a ring
+        // identical to the side ring below, and a pair of coincident rings stitches into a band of
+        // zero-area quads — invisible geometry that still gets rasterised, and two surfaces at the
+        // same depth for the z-buffer to argue over.
+        for (step in segments downTo if (segments == 0) 1 else 0) {
             val t = if (segments == 0) 0f else step.toFloat() / segments
             // t = 1 is the outline itself, t = 0 is where the bevel meets the face.
             //
@@ -217,7 +230,17 @@ object Extruder {
             val current = rings[ring].map { builder.vertex(it.first, it.second) }
             for (i in 0 until count) {
                 val j = (i + 1) % count
-                builder.quad(previous[i], previous[j], current[j], current[i], surface)
+                // Wound j-first, which is the order that puts the triangle's own normal on the same
+                // side as the outward normal stored with its vertices.
+                //
+                // The obvious order — i, j, then back along j — is inside-out, and the arithmetic
+                // says so plainly: on a counter-clockwise outline whose outward is −y, the cross
+                // product of that quad's first two edges comes out +y, into the letter. Every wall
+                // in every extrusion was wound against its own normal and against both caps. It
+                // survived because a straight extrusion looks the same either way: what shows is
+                // the inside of the far wall rather than the outside of the near one, and for a
+                // shape symmetric about the view axis those are the same picture.
+                builder.quad(previous[j], previous[i], current[i], current[j], surface)
             }
             previous = current
         }
@@ -228,7 +251,7 @@ object Extruder {
         val back = rings.last().map { builder.vertex(Vec3(it.first.x, it.first.y, lift - depth), it.second) }
         for (i in 0 until count) {
             val j = (i + 1) % count
-            builder.quad(previous[i], previous[j], back[j], back[i], Surface.SIDE)
+            builder.quad(previous[j], previous[i], back[i], back[j], Surface.SIDE)
         }
     }
 
@@ -264,11 +287,20 @@ object Extruder {
      * offset ring stays parallel to the original — an unscaled bisector pulls corners in too far
      * and rounds off every serif.
      */
-    private fun rimsOf(contour: List<Vec2>): List<Rim>? {
+    private fun rimsOf(contour: List<Vec2>, hole: Boolean): List<Rim>? {
         val n = contour.size
         if (n < 3) return null
+        // Outlines counter-clockwise, holes clockwise — the same convention the tessellator uses for
+        // the caps, and for a long time this forced *everything* counter-clockwise instead.
+        //
+        // Both of the formulas below read "outward is to the right of travel", which is true only
+        // under that convention. Wind a counter the same way as an outline and its outward points
+        // into the letter rather than into the void, and two things go wrong at once: the wall of
+        // the hole faces into solid material, so it is culled exactly when it should be seen; and
+        // the bevel insets the wrong way, shrinking the counter instead of opening it. Every letter
+        // with a bowl was affected — R, D, and in Persian ه و ق ف م ط.
         val counterClockwise = Tessellator.signedArea(contour) > 0f
-        val points = if (counterClockwise) contour else contour.reversed()
+        val points = if (counterClockwise != hole) contour else contour.reversed()
 
         return List(n) { i ->
             val previous = points[(i + n - 1) % n]

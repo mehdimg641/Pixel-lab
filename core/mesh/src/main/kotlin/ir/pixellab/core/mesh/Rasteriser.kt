@@ -155,23 +155,17 @@ object Rasteriser {
         // Negated because the screen transform flips y, and flipping one axis reverses the sign of
         // every signed area with it.
         val area = -edge(sa, sb, sc)
-        // Degenerate only. **Back faces are deliberately not culled**, and that is a correctness
-        // decision rather than a performance one.
+        // Back faces dropped, which is sound again now that the caps and the walls agree about which
+        // way is out — holes are wound against their outlines everywhere rather than only in the
+        // tessellator.
         //
-        // Culling is only sound on a closed surface whose triangles agree about which way is out,
-        // and this mesh is not that. Its caps are tessellated by one path and its walls stitched by
-        // another; each orients itself sensibly and the two do not always agree, which leaves
-        // hundreds of edges where neighbouring triangles are wound the same way. Culling then drops
-        // surfaces that are genuinely facing the viewer, and the letter comes out with wedges
-        // missing — invisible while the extrusion ran straight back, since the disagreements sit on
-        // seams seen edge-on, and unmistakable the moment it leans.
-        //
-        // Making every path agree is the deeper fix and a much larger one. Drawing both sides costs
-        // a second fragment where two surfaces overlap and nothing anywhere else, the depth buffer
-        // settles which is in front exactly as it already did, and the result no longer depends on
-        // a property the mesh does not have. Simplifying the outline first made the mesh some
-        // thirty times smaller, which is where the work for this came from.
-        if (area == 0f) return
+        // Drawing both sides was the stopgap while they disagreed, and it cost more than it looked.
+        // Every back surface reaching the rasteriser is another candidate for the same pixel, and
+        // wherever one lands at nearly the depth of the front surface covering it, the two argue
+        // and the winner changes from pixel to pixel — which draws as a crease across a letter that
+        // no lighting change removes. Culling removes that entire class of artefact rather than
+        // resolving it, because the losing surface never reaches the depth test at all.
+        if (area <= 0f) return
 
         val minX = max(0, floor(minOf(sa[0], sb[0], sc[0])).toInt())
         val maxX = min(width - 1, ceil(maxOf(sa[0], sb[0], sc[0])).toInt())
@@ -217,23 +211,13 @@ object Rasteriser {
                     (l0 * worldA.y * wa + l1 * worldB.y * wb + l2 * worldC.y * wc) / invW,
                     (l0 * worldA.z * wa + l1 * worldB.z * wb + l2 * worldC.z * wc) / invW,
                 )
-                val interpolated = Vec3(
+                val normalRaw = Vec3(
                     (l0 * na.x * wa + l1 * nb.x * wb + l2 * nc.x * wc) / invW,
                     (l0 * na.y * wa + l1 * nb.y * wb + l2 * nc.y * wc) / invW,
                     (l0 * na.z * wa + l1 * nb.z * wb + l2 * nc.z * wc) / invW,
                 )
                 val toEye = (eye - world).normalised()
-                // Turned to face the viewer, which is what makes drawing both sides look right
-                // rather than merely fill the gap. A surface whose stored normal points away is
-                // being seen from behind, and shading it with that normal lights it as though the
-                // key light were behind the letter — the wedge stops being a hole and becomes a
-                // black patch instead, which is no better.
-                val facing = interpolated.x * toEye.x + interpolated.y * toEye.y + interpolated.z * toEye.z
-                val normal = if (facing < 0f) {
-                    Vec3(-interpolated.x, -interpolated.y, -interpolated.z)
-                } else {
-                    interpolated
-                }
+                val normal = normalRaw
 
                 // The face's gradient, sampled from the letter's *own* coordinates rather than the
                 // world ones interpolated above. Using world space would slide the ramp across the
