@@ -10,18 +10,18 @@
 |---|---|---|---|---|
 | `core:model` | `core-document` | §۴.۱ مدل سند | لایه‌ای، نه DAG | گراف جهت‌دار؛ امروز پشتهٔ لایه با افکت‌های ترتیبی است |
 | `core:codec` | `core-io` | §۱۲ فرمت‌ها | خواندن/نوشتن PNG، JPEG، WebP، HEIF، PDF؛ خواندن PSD | `.kbd` (فرمت بومی امروز `.pxl` است)، TIFF، AVIF، EXR، RAW |
-| `core:text` | `core-text` | §۵ تایپوگرافی فارسی | shaping از استک اندروید (Minikin/HarfBuzz) | HarfBuzz بسته‌بندی‌شده در NDK — §۵.۲.الف |
+| `core:text` | `core-text` | §۵ تایپوگرافی فارسی | shaping از استک اندروید، کشیده، دوجهته، **خوشهٔ متصل (§۶.۹.۱)** | HarfBuzz بسته‌بندی‌شده در NDK — §۵.۲.الف |
 | `core:fonts` | `core-text` | §۵.۲.ج.۸ مدیریت فونت | اسکن، گروه‌بندی، جست‌وجو، پیش‌نمایش فارسی | تشخیص ویژگی‌های OpenType هر فونت و هشدار |
 | `core:render` | `core-render` | §۴.۲ لایهٔ رندر، §۷.۶ لایه‌های تنظیم | ۲۷ حالت ترکیب، ۲۲ لایهٔ تنظیم، Layer Styles | کاشی‌بندی، ۳۲ بیت float خطی، OCIO/ACEScg |
 | `core:canvas` | `core-render` | §۷.۹ سند و کارگاه | خط‌کش، راهنما، چسبندگی، چرخش نما | Artboards متعدد |
 | `core:imaging` | `core-raster` | §۷.۷ فیلترها | تاری، شارپ، نویز، سایه/هایلایت، استایلایز، بافت رویه‌ای | Liquify، Face-Aware Liquify، Blur Gallery کامل، Camera Raw |
 | `core:paint` | `core-raster` | §۷.۱ موتور قلم | نوک، فاصله، فشار، نرم‌سازی، پراکندگی، بافت | نقاشی متقارن، ایمپورت ABR، Dual Brush |
 | `core:vector` | `core-vector` | §۸.۱ مسیر و هندسه | بزیه، بولین، آفست، پروفایل عرض، SVG | Pathfinder کامل، Shape Builder، Image Trace |
-| `core:mesh` | `core-3d` | §۶ تایپوگرافی سه‌بعدی | مثلث‌بندی، اکسترود، بِوِل، **محافظ شعاع فارسی (§۶.۲)**، PBR، رستریزه | Filament، IBL، مسیریاب پرتو، نوار خوشه‌ها |
+| `core:mesh` | `core-3d` | §۶ تایپوگرافی سه‌بعدی | مثلث‌بندی، اکسترود، بِوِل، **محافظ شعاع فارسی (§۶.۲)**، PBR، رستریزه | Filament، IBL، مسیریاب پرتو |
 | `core:editor` | `core-document` | §۴.۱، §۱۳ | حالت ویرایشگر، تاریخچه، انتخاب، کتابخانه | تاریخچهٔ درختی/شاخه‌ای |
 | `core:ai` | `core-ai` | §۱۰ لایهٔ انتزاع | `SegmentationModel` → `SubjectCutout` با مسیر کلاسیک | Model Router و Provider Adapter به‌صورت جدا |
 | `engine:android` | `core-render` + پل | §۴.۴ استک اندروید | OpenGL ES، ONNX Runtime، کدک‌های پلتفرم | Vulkan، NDK/C++، JNI |
-| `app:android` | `app` + `design-system` + `feature-*` | §۱۳ رابط کاربری | سیستم طراحی «کارگاه»، خانه، ویرایشگر، ۲۰ پنل | تفکیک `design-system` به ماژول Gradle مستقل |
+| `app:android` | `app` + `design-system` + `feature-*` | §۱۳ رابط کاربری | سیستم طراحی «کارگاه»، خانه، ویرایشگر، ۲۰ پنل، **نوار خوشه‌ها (ایدهٔ ۳)** | تفکیک `design-system` به ماژول Gradle مستقل |
 
 ---
 

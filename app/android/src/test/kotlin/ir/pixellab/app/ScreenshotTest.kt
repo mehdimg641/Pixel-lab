@@ -183,6 +183,29 @@ class ScreenshotTest {
     }
 
     @Test
+    fun `the glyph ribbon draws one chip per connected cluster`() {
+        // The specification's own fixtures, so the picture can be checked by a Persian reader
+        // against §۹ rather than against my arithmetic. «سلام» must show two chips, not four.
+        frame("glyph-ribbon") {
+            val state = remember { RibbonState() }
+            SheetSection("نوار خوشه‌ها")
+            GlyphRibbonPanel(text = "سلام دنیا", state = state, onStretch = { _, _ -> })
+            SheetSection("با نیم‌فاصله")
+            GlyphRibbonPanel(
+                text = "می‌گرداندند",
+                state = remember { RibbonState() },
+                onStretch = { _, _ -> },
+            )
+            SheetSection("دوجهته")
+            GlyphRibbonPanel(
+                text = "KAR20 مدیا",
+                state = remember { RibbonState() },
+                onStretch = { _, _ -> },
+            )
+        }
+    }
+
+    @Test
     fun `the shared components draw`() {
         frame("components") {
             var chosen by remember { mutableStateOf(1) }

@@ -124,6 +124,10 @@ fun EditorScreen(
     var editingText by remember { mutableStateOf<LayerId?>(null) }
     var dock by remember { mutableStateOf(Dock.PHOTO) }
 
+    // The ribbon's own state: which cluster is chosen and at what granularity. Beside the editor
+    // rather than inside the document, because a chosen chip is not part of the artwork.
+    val ribbon = remember { RibbonState() }
+
     /**
      * The panel to open once an imported picture has actually landed.
      *
@@ -245,6 +249,16 @@ fun EditorScreen(
                 exit = slideOutVertically(tween(Motion.STANDARD, easing = Motion.ease)) { it },
             ) {
                 SelectionCard(state, model, onEditText = { editingText = it })
+            }
+            val editing = state.primaryLayer as? Layer.Text
+            if (editing != null && dock in TYPESETTING) {
+                GlyphRibbonPanel(
+                    text = editing.spec.text,
+                    state = ribbon,
+                    onStretch = { cluster, amount ->
+                        model.setText(editing.id, stretched(editing.spec.text, cluster, amount))
+                    },
+                )
             }
             Ribbon(
                 dock = dock,
@@ -603,6 +617,38 @@ internal fun MainDock(
             }
         }
     }
+}
+
+/**
+ * The docks where a Persian cluster is the thing being worked on.
+ *
+ * Text and 3D. On the photo dock a selected text layer is incidental — the user is retouching a
+ * photograph the caption happens to sit on — and taking the ribbon's eighty-eight points there would
+ * push the retouch tools off the screen for a caption nobody is editing.
+ */
+private val TYPESETTING = setOf(Dock.TEXT, Dock.DIMENSIONAL)
+
+/**
+ * Applies a stretch, in either direction.
+ *
+ * A negative amount is a drag back towards the start, which has to *remove* kashida rather than add
+ * a negative number of them — so it re-stretches the cluster from its unstretched form, which is
+ * also what makes the gesture exactly reversible instead of accumulating rounding.
+ */
+private fun stretched(
+    text: String,
+    cluster: ir.pixellab.core.text.TextCluster,
+    amount: Int,
+): String {
+    val plain = ir.pixellab.core.text.Clusters.resetElongation(text, cluster)
+    val already = cluster.text.count { it == ir.pixellab.core.text.ArabicJoining.TATWEEL }
+    val wanted = (already + amount).coerceAtLeast(0)
+    if (wanted == 0) return plain
+    // Re-split, because removing the kashida moved every offset after this cluster.
+    val target = ir.pixellab.core.text.Clusters.of(plain)
+        .firstOrNull { it.start <= cluster.start && it.text.isNotBlank() && it.joined }
+        ?: return plain
+    return ir.pixellab.core.text.Clusters.elongate(plain, target, wanted)
 }
 
 /** The tool a dock entry arms. Chosen so the first canvas touch after a switch does the obvious. */
