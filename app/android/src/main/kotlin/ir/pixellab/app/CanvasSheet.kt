@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import ir.pixellab.core.editor.AspectRatio
 import ir.pixellab.core.editor.CanvasAnchor
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.model.Color
@@ -99,12 +100,27 @@ fun CanvasSheetBody(
         }
 
         SheetSection("برش")
-        SheetAction("برش به انتخاب", enabled = model.select.selection != null) { model.cropToSelection() }
+        // The ratio row first, because it is the answer to "what am I cropping this for?" and every
+        // reference app puts it before the frame. Freeform stays a chip rather than being the absence
+        // of one, so turning the constraint off is as visible as turning it on.
+        SheetChips {
+            SheetChip("آزاد", chosen = model.select.ratio == null) { model.cropRatio(null) }
+            SheetChip("کل بوم") {
+                model.cropRatio(null)
+                model.select.frame(canvas.width, canvas.height)
+            }
+            for ((label, ratio) in AspectRatio.PRESETS) {
+                SheetChip(label, chosen = model.select.ratio == ratio) { model.cropRatio(ratio) }
+            }
+            SheetChip("چرخاندن نسبت", enabled = model.select.ratio != null) { model.flipCropRatio() }
+        }
+        SheetAction("برش به قاب", enabled = model.select.selection != null) { model.cropToSelection() }
         SheetHint(
-            if (model.select.selection == null) {
-                "اول با ابزار انتخاب یک ناحیه بکشید"
-            } else {
-                "بوم به کادرِ دربرگیرندهٔ انتخاب کوچک می‌شود"
+            when {
+                model.select.ratio != null ->
+                    "قاب روی بوم است — جابه‌جایش کنید یا دوباره بکشید؛ نسبتش ثابت می‌ماند"
+                model.select.selection == null -> "یک نسبت بزنید، یا با ابزار انتخاب قابی بکشید"
+                else -> "بوم به کادرِ دربرگیرندهٔ انتخاب کوچک می‌شود"
             },
         )
 

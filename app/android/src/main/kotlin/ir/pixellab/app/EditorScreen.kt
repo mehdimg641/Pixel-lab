@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Category
+import androidx.compose.material.icons.outlined.Compare
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Delete
@@ -463,6 +464,16 @@ internal fun TopBar(
             // undo that only knew about the document would skip every stroke.
             BarIcon(Icons.AutoMirrored.Outlined.Undo, "برگشت", enabled = model.canUndo, onClick = model::undo)
             BarIcon(Icons.AutoMirrored.Outlined.Redo, "جلو", enabled = model.canRedo, onClick = model::redo)
+            // Next to undo because it answers the neighbouring question — "was that better?" — and
+            // because on a phone the only place a compare gets used is the place a thumb already is.
+            HeldBarIcon(
+                Icons.Outlined.Compare,
+                "مقایسه با اول کار",
+                enabled = model.historyPosition > 0,
+                held = model.comparing,
+                onPress = model::beginCompare,
+                onRelease = model::endCompare,
+            )
             BarIcon(Icons.Outlined.FitScreen, "اندازهٔ صفحه") { model.act { fitCanvas() } }
             BarIcon(Icons.Outlined.Settings, "تنظیمات") {
                 model.act { openSheet(SheetContent.Settings, SheetDetent.FULL) }

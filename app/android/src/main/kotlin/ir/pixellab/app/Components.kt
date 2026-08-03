@@ -3,6 +3,7 @@ package ir.pixellab.app
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
@@ -394,6 +396,66 @@ fun BarIcon(
             icon,
             contentDescription = null,
             tint = if (enabled) tint else Ink.TextDisabled,
+            modifier = Modifier.size(Frame.icon),
+        )
+    }
+}
+
+/**
+ * A bar icon that acts while it is held down and undoes itself on release.
+ *
+ * Separate from [BarIcon] because the gesture is a different promise. A tap is a decision the user
+ * has made; a press-and-hold is a *look* — nothing has changed by the time the finger comes up. The
+ * before/after compare in every photo app on the reference list works this way, and it works this way
+ * because a compare that toggled would leave the app sitting in a state that is not the document.
+ *
+ * [onRelease] runs whether the finger lifted or the gesture was cancelled, so an interrupted press
+ * can never strand the interface showing the wrong picture.
+ */
+@Composable
+fun HeldBarIcon(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    held: Boolean = false,
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
+) {
+    Box(
+        modifier
+            .size(Space.touch)
+            .clip(Corners.chip)
+            .then(
+                if (enabled) {
+                    Modifier.pointerInput(Unit) {
+                        detectTapGestures(
+                            onPress = {
+                                onPress()
+                                tryAwaitRelease()
+                                onRelease()
+                            },
+                        )
+                    }
+                } else {
+                    Modifier
+                },
+            )
+            .semantics {
+                contentDescription = label
+                role = Role.Button
+                if (!enabled) disabled()
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = when {
+                !enabled -> Ink.TextDisabled
+                held -> Ink.Accent
+                else -> Ink.Text
+            },
             modifier = Modifier.size(Frame.icon),
         )
     }

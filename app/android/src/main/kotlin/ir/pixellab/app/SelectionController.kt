@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import ir.pixellab.core.codec.RasterImage
+import ir.pixellab.core.editor.AspectRatio
 import ir.pixellab.core.model.Rect
 import ir.pixellab.core.model.Vec2
 import ir.pixellab.core.paint.Edge
@@ -33,6 +34,19 @@ class SelectionController {
     var contiguous: Boolean by mutableStateOf(true)
     var feather: Float by mutableStateOf(0f)
 
+    /**
+     * Photoshop's *Fixed Ratio* marquee style, and the crop tool's ratio, which are the same thing.
+     *
+     * Null is freeform. When it is set, a dragged rectangle or ellipse is reshaped to the proportion
+     * before it becomes a selection, so the frame the user is about to crop to is already the right
+     * shape while they are still moving it — rather than being corrected after they let go, which is
+     * the version that feels like the app disagreeing with them.
+     *
+     * It lives on the controller rather than in the document because it is a tool setting: it must
+     * survive an undo and must not be saved into the file.
+     */
+    var ratio: AspectRatio? by mutableStateOf(null)
+
     var selection: PixelSelection? by mutableStateOf(null)
         private set
 
@@ -46,18 +60,30 @@ class SelectionController {
 
     private var anchor: Vec2? = null
 
-    fun begin(at: Vec2) {
+    /** Remembered from [begin] so the live draft can be shaped and clamped the same way [end] will. */
+    private var canvasWidth = 0
+    private var canvasHeight = 0
+
+    fun begin(at: Vec2, width: Int, height: Int) {
         anchor = at
+        canvasWidth = width
+        canvasHeight = height
         draft = listOf(at)
     }
 
     fun extend(at: Vec2) {
         val start = anchor ?: return
         draft = when (shape) {
-            // A lasso keeps every point; the others need only the two corners, and keeping the rest
-            // would make a slow drag build a list thousands long for a rectangle.
+            // A lasso keeps every point; the others are described by their box, and keeping every
+            // sample would make a slow drag build a list thousands long for a rectangle.
             SelectionShape.LASSO -> draft + at
-            else -> listOf(start, at)
+            // The box itself, not the diagonal across it. Drawing two points meant a marquee drag
+            // showed a line where the selection was going to be — legible only to someone who
+            // already knew what it stood for, and useless the moment a ratio reshapes the box under
+            // the finger, because the corner being dragged is no longer where the finger is.
+            SelectionShape.RECTANGLE -> outlineOf(framed(start, at, canvasWidth, canvasHeight))
+            SelectionShape.ELLIPSE -> ellipseOf(framed(start, at, canvasWidth, canvasHeight))
+            SelectionShape.WAND -> listOf(start, at)
         }
     }
 
@@ -70,8 +96,8 @@ class SelectionController {
     fun end(at: Vec2, width: Int, height: Int, pixels: RasterImage?) {
         val start = anchor ?: return
         val region = when (shape) {
-            SelectionShape.RECTANGLE -> Marquee.rectangle(width, height, boxOf(start, at), feather)
-            SelectionShape.ELLIPSE -> Marquee.ellipse(width, height, boxOf(start, at), feather)
+            SelectionShape.RECTANGLE -> Marquee.rectangle(width, height, framed(start, at, width, height), feather)
+            SelectionShape.ELLIPSE -> Marquee.ellipse(width, height, framed(start, at, width, height), feather)
             SelectionShape.LASSO -> Marquee.polygon(width, height, draft + at, feather)
             SelectionShape.WAND -> {
                 val image = pixels
@@ -90,6 +116,22 @@ class SelectionController {
     }
 
     fun selectAll(width: Int, height: Int) = replace(PixelSelection.everything(width, height))
+
+    /**
+     * Lays the biggest frame of the current [ratio] over the whole canvas.
+     *
+     * The half of a crop interface that is not dragging: press 1:1 and the frame appears, already
+     * correct and already the largest it can be. Without it, choosing a ratio would do nothing
+     * visible until the user happened to draw something.
+     */
+    fun frame(width: Int, height: Int) {
+        val canvas = Rect(0f, 0f, width.toFloat(), height.toFloat())
+        val box = ratio?.fit(canvas) ?: canvas
+        shape = SelectionShape.RECTANGLE
+        // Replaces outright rather than going through `use`: a frame is not a correction to an
+        // existing selection, and combining it with one would produce a non-rectangular crop box.
+        replace(Marquee.rectangle(width, height, box, feather))
+    }
 
     /**
      * Adopts a selection computed somewhere else, honouring the combining mode.
@@ -140,8 +182,45 @@ class SelectionController {
         minOf(a.x, b.x), minOf(a.y, b.y), maxOf(a.x, b.x), maxOf(a.y, b.y),
     )
 
+    /** The dragged box, reshaped by [ratio] and kept on the canvas when one is set. */
+    private fun framed(a: Vec2, b: Vec2, width: Int, height: Int): Rect {
+        val box = boxOf(a, b)
+        val fixed = ratio ?: return box
+        val bounds = if (width > 0 && height > 0) Rect(0f, 0f, width.toFloat(), height.toFloat()) else null
+        return fixed.constrain(box, bounds)
+    }
+
+    /** The four corners, closed, so the draft draws as the rectangle rather than as its diagonal. */
+    private fun outlineOf(box: Rect) = listOf(
+        Vec2(box.left, box.top),
+        Vec2(box.right, box.top),
+        Vec2(box.right, box.bottom),
+        Vec2(box.left, box.bottom),
+        Vec2(box.left, box.top),
+    )
+
+    /**
+     * The ellipse inscribed in [box], as a closed polygon.
+     *
+     * Enough segments that the curve reads as a curve at any zoom a phone reaches, and few enough
+     * that rebuilding it on every pointer sample costs nothing.
+     */
+    private fun ellipseOf(box: Rect): List<Vec2> {
+        val cx = (box.left + box.right) / 2f
+        val cy = (box.top + box.bottom) / 2f
+        val rx = box.width / 2f
+        val ry = box.height / 2f
+        return (0..ELLIPSE_SEGMENTS).map { step ->
+            val angle = step * 2f * Math.PI.toFloat() / ELLIPSE_SEGMENTS
+            Vec2(cx + rx * kotlin.math.cos(angle), cy + ry * kotlin.math.sin(angle))
+        }
+    }
+
     private companion object {
         /** Roughly one sample per screen pixel on a phone; finer than that draws nothing new. */
         const val OUTLINE_TARGET = 1080
+
+        /** Segments in a drafted ellipse. Past this the extra vertices land inside one screen pixel. */
+        const val ELLIPSE_SEGMENTS = 64
     }
 }

@@ -219,6 +219,45 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         while (steps.size < target) redo()
     }
 
+    /**
+     * True while the user is holding the compare control and looking at where they started.
+     *
+     * Only the tint of that one icon reads it. It exists so the button can show that it is doing
+     * something — without it, a held compare on a document whose edits are subtle looks broken.
+     */
+    var comparing: Boolean by mutableStateOf(false)
+        private set
+
+    private var comparedFrom = 0
+
+    /**
+     * Press-and-hold "before".
+     *
+     * By walking the history to zero and back rather than by keeping a snapshot, because a snapshot
+     * of the document would be a lie: painted pixels live on the asset raster and are re-applied by
+     * the paint controller, so a document captured at load and re-rendered later would show every
+     * brush stroke made since. [jumpTo] already replays both kinds of step, which is the whole
+     * reason it exists, and reusing it means compare cannot drift away from undo.
+     *
+     * The cost is replaying the session on press. That is bounded by the history length, each step
+     * is either a document swap or a bitmap swap, and it happens once per press rather than per
+     * frame — which is why this is a hold rather than a toggle.
+     */
+    fun beginCompare() {
+        if (comparing) return
+        comparedFrom = historyPosition
+        if (comparedFrom == 0) return
+        comparing = true
+        jumpTo(0)
+    }
+
+    /** Puts the document back exactly where the press found it. */
+    fun endCompare() {
+        if (!comparing) return
+        jumpTo(comparedFrom)
+        comparing = false
+    }
+
     val current: Editor get() = editor
 
     fun act(body: Editor.() -> Unit) = edit(body)
@@ -623,7 +662,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val canvas = state.document.canvas
         return when (gesture) {
             is CanvasGesture.DragStart -> {
-                select.begin(canvasPoint(gesture.position))
+                select.begin(canvasPoint(gesture.position), canvas.width, canvas.height)
                 true
             }
             is CanvasGesture.Drag -> {
@@ -638,7 +677,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             // The wand is a tap, not a drag, and it is the tool people reach for first.
             is CanvasGesture.Tap -> {
                 val at = canvasPoint(gesture.position)
-                select.begin(at)
+                select.begin(at, canvas.width, canvas.height)
                 select.end(at, canvas.width, canvas.height, sampledPixels())
                 paint.selection = select.selection
                 true
@@ -874,6 +913,29 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         select.clear()
         paint.selection = null
         return true
+    }
+
+    /**
+     * Chooses a crop proportion and lays the frame down in one go.
+     *
+     * One call rather than "set the ratio" and then "now draw one", because pressing 1:1 and seeing
+     * nothing happen is the version of this that gets reported as broken. Passing null goes back to
+     * freeform and leaves whatever frame is already there — the user is about to drag it, and
+     * clearing it would throw away the thing they were adjusting.
+     */
+    fun cropRatio(ratio: ir.pixellab.core.editor.AspectRatio?) {
+        select.ratio = ratio
+        if (ratio != null) {
+            val canvas = state.document.canvas
+            select.frame(canvas.width, canvas.height)
+            paint.selection = select.selection
+        }
+    }
+
+    /** Turns the current crop frame on its side — landscape to portrait without re-choosing. */
+    fun flipCropRatio() {
+        val current = select.ratio ?: return
+        cropRatio(current.flipped())
     }
 
     /** The colour behind everything — Photoshop's background layer, without the layer. */
