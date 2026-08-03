@@ -61,44 +61,95 @@ object EffectRaster {
         val effects = style.activeEffects
         if (effects.isEmpty()) return source.copy()
 
+        // The torn edge comes first, and it changes the *silhouette* rather than the finished
+        // picture. Applying it last was the obvious arrangement and it destroyed everything behind
+        // the layer: a glow is faint by construction, so eroding the composite against a threshold
+        // wiped the glow out entirely and left the erosion looking like a bug in the glow.
+        //
+        // Roughening the outline first is also what the effect is for. A flame, a torn sheet and a
+        // spray-painted stencil all have a shadow and a glow that follow the ragged edge, not the
+        // clean one it was cut from.
+        val silhouette = effects.filterIsInstance<Effect.EdgeRoughen>()
+            .fold(source) { current, effect -> roughen(current, effect) }
+
         // Everything from here to the final conversion is float. A style is not one operation —
         // this face passes through an overlay, a pattern, an inner shadow and a bevel, and the
         // result is composited over an extrusion, over two shadows, under a stroke. Rounding to
         // eight bits at each of those is not one rounding error: the errors accumulate, and they
         // accumulate *coherently* across a smooth ramp, which is exactly what bands a gradient and
         // walks a colour off the swatch that was picked.
-        val base = Surface.of(source)
+        //
+        // It starts from the layer's own paint, before any effect touches it. That step was missing,
+        // and its absence was invisible in exactly the way that matters: the fill is where a style's
+        // *colour* comes from, so half the catalogue — every gold, every chrome, every gradient face
+        // — rendered as whatever the silhouette happened to be, usually white, with the effects
+        // correctly drawn around it. Each effect looked right on its own and the picture was wrong.
+        val base = fillOf(silhouette, style, patterns)
 
-        // The layer itself, with everything that paints *into* it already applied. Order matters
-        // among these too: the overlay lays the colour down, the inner shadow darkens its edges,
-        // and the bevel lights the result — a bevel computed before the colour exists would shade
-        // a surface nobody sees.
+        // The layer itself, with everything that paints *into* it already applied, in the order the
+        // slots say: the overlay lays the colour down, satin folds a sheen across it, the two inner
+        // effects work its edges, and the bevel lights the result. A bevel computed before the
+        // colour exists would shade a surface nobody sees.
         var layer = base.copy()
         for (effect in effects.filterIsInstance<Effect.Overlay>()) {
             layer = overlay(layer, effect, patterns)
         }
+        for (effect in effects.filterIsInstance<Effect.Satin>()) {
+            layer = satin(layer, silhouette, effect)
+        }
+        for (effect in effects.filterIsInstance<Effect.InnerGlow>()) {
+            layer = innerGlow(layer, silhouette, effect)
+        }
         for (effect in effects.filterIsInstance<Effect.InnerShadow>()) {
-            layer = innerShadow(layer, source, effect)
+            layer = innerShadow(layer, silhouette, effect)
         }
         for (effect in effects.filterIsInstance<Effect.Bevel>()) {
-            layer = bevel(layer, source, effect)
+            layer = bevel(layer, silhouette, effect)
         }
 
-        var out = Surface(source.width, source.height)
+        var out = Surface(silhouette.width, silhouette.height)
 
-        // Behind, furthest first: the shadow falls on everything, the extrusion sits on the shadow.
+        // Behind, furthest first, in [PassSlot]'s own order — which is Photoshop's. The shadow falls
+        // on everything, the glow sits on the shadow, the extrusion on the glow.
         for (effect in effects.filterIsInstance<Effect.DropShadow>()) {
-            out = over(out, dropShadow(source, effect), effect.blendMode, effect.opacity)
+            out = over(out, dropShadow(silhouette, effect), effect.blendMode, effect.opacity)
+        }
+        for (effect in effects.filterIsInstance<Effect.OuterGlow>()) {
+            out = over(out, outerGlow(silhouette, effect), effect.blendMode, effect.opacity)
         }
         for (effect in effects.filterIsInstance<Effect.Extrude>()) {
-            out = over(out, extrude(source, effect), effect.blendMode, effect.opacity)
+            out = over(out, extrude(silhouette, effect), effect.blendMode, effect.opacity)
+        }
+        for (effect in effects.filterIsInstance<Effect.Reflection>()) {
+            out = over(out, reflection(layer, effect), effect.blendMode, effect.opacity)
         }
 
         out = over(out, layer, BlendMode.NORMAL, 1f)
 
         // And over the top.
         for (effect in effects.filterIsInstance<Effect.Stroke>()) {
-            out = over(out, stroke(source, effect), effect.blendMode, effect.opacity)
+            out = over(out, stroke(silhouette, effect), effect.blendMode, effect.opacity)
+        }
+
+        // The post slot works on the finished layer rather than on its silhouette, which is why
+        // these come last and why they are the only ones that can change what is already drawn.
+        for (effect in effects) {
+            out = when (effect) {
+                is Effect.Noise -> noise(out, effect)
+                is Effect.ChromaticOffset -> chromaticOffset(out, effect)
+                // Everything else has already been drawn above, and the edge was roughened before
+                // anything was. Named rather than left to an else so that a new effect fails the
+                // build here instead of silently never rendering — which is exactly how seven of
+                // these came to be missing in the first place.
+                is Effect.Stroke, is Effect.DropShadow, is Effect.InnerShadow, is Effect.OuterGlow,
+                is Effect.InnerGlow, is Effect.Bevel, is Effect.Satin, is Effect.Overlay,
+                is Effect.Extrude, is Effect.Reflection, is Effect.EdgeRoughen,
+                    -> out
+                // Frosted glass reads the destination buffer, not the layer, so it belongs to the
+                // compositor rather than to a layer's own style. There is nothing sensible for it to
+                // do here, and inventing something would be worse than doing nothing.
+                is Effect.BackdropBlur -> out
+            }
         }
         return out.toRaster()
     }
@@ -407,6 +458,357 @@ object EffectRaster {
     }
 
     /**
+     * The layer's silhouette, painted with the style's own fill.
+     *
+     * Fill opacity rather than layer opacity, and the distinction is the whole reason it is a
+     * separate number: dropping the fill to nothing leaves every effect at full strength, which is
+     * what makes hollow text — a stroke and a shadow with nothing between them — possible at all.
+     * Layer opacity would fade the stroke along with the face and give a ghost instead.
+     */
+    private fun fillOf(
+        source: Raster,
+        style: Style,
+        patterns: (ir.pixellab.core.model.AssetId) -> Raster?,
+    ): Surface {
+        val out = Surface.of(source)
+        val fill = style.fill
+        // Frosted glass reads the buffer beneath the layer, which a per-layer compositor does not
+        // have. Left as the silhouette's own colour rather than guessed at.
+        if (fill is Fill.Backdrop) return out
+
+        val gradient = fill as? Fill.Gradient
+        val stops = gradient?.stops?.sortedBy { it.position }
+        val pattern = (fill as? Fill.Pattern)?.let { p -> patterns(p.asset)?.let { p to it } }
+        val flat = if (gradient == null && pattern == null) fillColour(fill) else null
+        val opacity = style.fillOpacity.coerceIn(0f, 1f)
+
+        for (y in 0 until out.height) {
+            for (x in 0 until out.width) {
+                val i = y * out.width + x
+                val base = i * Surface.CHANNELS
+                if (out.data[base + 3] <= 0f) continue
+                val paint = when {
+                    gradient != null -> Ramp.colorAt(
+                        stops.orEmpty(),
+                        Ramp.parameterAt(gradient, x.toFloat() / out.width, y.toFloat() / out.height),
+                    )
+                    pattern != null -> tileAt(pattern.second, pattern.first, x, y)
+                    else -> flat!!
+                }
+                out.data[base] = paint.r
+                out.data[base + 1] = paint.g
+                out.data[base + 2] = paint.b
+                out.data[base + 3] *= paint.a * opacity
+            }
+        }
+        return out
+    }
+
+    /**
+     * A glow spreading outwards from the silhouette.
+     *
+     * A shadow with the offset taken out is the tempting shortcut and it is wrong in two ways that
+     * both show. A glow is *contoured*: the falloff runs through a curve rather than straight down,
+     * which is what lets a neon sign have a hot core and a long faint halo instead of one linear
+     * fade. And the layer's own pixels are knocked out unconditionally, so the glow never tints the
+     * shape it surrounds — a shadow only does that when asked.
+     */
+    private fun outerGlow(source: Raster, effect: Effect.OuterGlow): Surface {
+        val alpha = alphaOf(source)
+        var mask = alpha
+        if (effect.spread > 0f) mask = spread(mask, source.width, source.height, effect.spread)
+        if (effect.blur > 0f) mask = blur(mask, source.width, source.height, effect.blur)
+
+        val out = Surface(source.width, source.height)
+        val gradient = effect.fill as? Fill.Gradient
+        val stops = gradient?.stops?.sortedBy { it.position }
+        val flat = if (gradient == null) fillColour(effect.fill) else null
+
+        for (i in mask.indices) {
+            val shaped = effect.contour.evaluate(mask[i].coerceIn(0f, 1f))
+            // Outside only. A glow that painted over its own shape would grey out every letter it
+            // is supposed to be lighting from behind.
+            val a = shaped * (1f - alpha[i])
+            if (a <= 0f) continue
+            // A gradient glow is read along the falloff rather than across the canvas: the ramp is
+            // the distance from the shape, which is what makes a two-colour glow shift with radius.
+            val colour = if (stops != null) Ramp.colorAt(stops, 1f - shaped) else flat!!
+            write(out, i, colour, a)
+        }
+        return out
+    }
+
+    /**
+     * A glow living inside the silhouette, from its edge or from its centre.
+     *
+     * The two sources are genuinely different measurements and not a flipped sign. From the edge,
+     * the glow is the blurred *hole* outside the shape seen through it — bright at the rim, fading
+     * inwards. From the centre it is the distance field itself — brightest deep inside, fading out
+     * to the rim. Photoshop offers both because they do opposite jobs: an edge glow lines a letter,
+     * a centre glow inflates it.
+     */
+    private fun innerGlow(layer: Surface, source: Raster, effect: Effect.InnerGlow): Surface {
+        val w = layer.width
+        val h = layer.height
+        val alpha = alphaOf(source)
+
+        var field = when (effect.source) {
+            ir.pixellab.core.model.GlowSource.EDGE -> FloatArray(alpha.size) { 1f - alpha[it] }
+            ir.pixellab.core.model.GlowSource.CENTER -> {
+                // Normalised by the deepest point so the centre reaches full strength whatever the
+                // letter's weight; an unnormalised field makes a thin stroke glow barely at all.
+                val inside = distanceInside(source)
+                val deepest = inside.max().coerceAtLeast(1f)
+                FloatArray(inside.size) { inside[it] / deepest }
+            }
+        }
+        if (effect.choke > 0f) field = spread(field, w, h, effect.choke)
+        if (effect.blur > 0f) field = blur(field, w, h, effect.blur)
+
+        val out = layer.copy()
+        val colour = fillColour(effect.fill)
+        for (i in field.indices) {
+            if (alpha[i] <= 0f) continue
+            val strength = effect.contour.evaluate(field[i].coerceIn(0f, 1f)) * alpha[i] * effect.opacity
+            if (strength <= 0f) continue
+            paintOn(out, i, colour, strength, effect.blendMode)
+        }
+        return out
+    }
+
+    /**
+     * Satin: the shape folded against itself.
+     *
+     * Two offset copies of the blurred silhouette, subtracted. That difference is zero wherever the
+     * shape is uniform and rises wherever it curves, so what appears is a soft band following every
+     * bend of the letterform — the folded-cloth sheen the effect is named for. Nothing else in the
+     * stack produces a pattern that depends on the shape's *curvature* rather than on its edge.
+     */
+    private fun satin(layer: Surface, source: Raster, effect: Effect.Satin): Surface {
+        val w = layer.width
+        val h = layer.height
+        val alpha = alphaOf(source)
+        val soft = if (effect.blur > 0f) blur(alpha, w, h, effect.blur) else alpha
+
+        val radians = effect.angle * DEG_TO_RAD
+        val dx = cos(radians) * effect.distance
+        val dy = -sin(radians) * effect.distance
+
+        val out = layer.copy()
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val i = y * w + x
+                if (alpha[i] <= 0f) continue
+                val a = sampleAt(soft, w, h, (x + dx).roundToInt(), (y + dy).roundToInt())
+                val b = sampleAt(soft, w, h, (x - dx).roundToInt(), (y - dy).roundToInt())
+                var v = kotlin.math.abs(a - b)
+                if (effect.invert) v = 1f - v
+                v = effect.contour.evaluate(v.coerceIn(0f, 1f))
+                paintOn(out, i, effect.color, v * alpha[i] * effect.opacity, effect.blendMode)
+            }
+        }
+        return out
+    }
+
+    /**
+     * A mirrored copy below the layer, fading away.
+     *
+     * Mirrored about the bottom of what is actually drawn rather than about the middle of the
+     * buffer. The buffer is padded by however much bleed the effect stack asked for, so reflecting
+     * about its centre floats the reflection somewhere in the empty margin and the gap parameter
+     * then means nothing.
+     */
+    private fun reflection(layer: Surface, effect: Effect.Reflection): Surface {
+        val w = layer.width
+        val h = layer.height
+        val out = Surface(w, h)
+
+        var bottom = -1
+        for (y in h - 1 downTo 0) {
+            if ((0 until w).any { layer.alphaAt(y * w + it) > 0f }) {
+                bottom = y
+                break
+            }
+        }
+        if (bottom < 0) return out
+
+        val start = bottom + effect.gap.roundToInt() + 1
+        val span = (h * effect.height).roundToInt().coerceAtLeast(1)
+        for (y in start until minOf(h, start + span)) {
+            val t = (y - start).toFloat() / span
+            val fade = effect.startOpacity + (effect.endOpacity - effect.startOpacity) * t
+            if (fade <= 0f) continue
+            val from = bottom - (y - start)
+            if (from < 0) break
+            for (x in 0 until w) {
+                val src = from * w + x
+                val a = layer.alphaAt(src) * fade
+                if (a <= 0f) continue
+                val srcBase = src * Surface.CHANNELS
+                val base = (y * w + x) * Surface.CHANNELS
+                out.data[base] = layer.data[srcBase]
+                out.data[base + 1] = layer.data[srcBase + 1]
+                out.data[base + 2] = layer.data[srcBase + 2]
+                out.data[base + 3] = a
+            }
+        }
+        return if (effect.blur > 0f) blurSurface(out, effect.blur) else out
+    }
+
+    /**
+     * Grain over the finished layer.
+     *
+     * Coloured noise is three independent draws, not one draw tinted. That distinction is the whole
+     * difference between glitter — thousands of facets each catching the light at its own angle —
+     * and a dirty print.
+     *
+     * The hash is a pure function of the coordinate, so the grain is identical every render. Noise
+     * that moved between frames would make a still document shimmer on screen and differ from its
+     * own export.
+     */
+    private fun noise(surface: Surface, effect: Effect.Noise): Surface {
+        val out = surface.copy()
+        val scale = if (effect.scale <= 0f) 1f else effect.scale
+        for (y in 0 until surface.height) {
+            for (x in 0 until surface.width) {
+                val i = y * surface.width + x
+                if (out.alphaAt(i) <= 0f) continue
+                val u = (x / scale).toInt()
+                val v = (y / scale).toInt()
+                val mono = hash(u, v, 0) - HALF
+                val base = i * Surface.CHANNELS
+                val dr = mono * effect.amount
+                val dg = (if (effect.monochrome) mono else hash(u, v, 17) - HALF) * effect.amount
+                val db = (if (effect.monochrome) mono else hash(u, v, 43) - HALF) * effect.amount
+                val k = effect.opacity.coerceIn(0f, 1f)
+                out.data[base] = lerp(out.data[base], (out.data[base] + dr).coerceIn(0f, 1f), k)
+                out.data[base + 1] = lerp(out.data[base + 1], (out.data[base + 1] + dg).coerceIn(0f, 1f), k)
+                out.data[base + 2] = lerp(out.data[base + 2], (out.data[base + 2] + db).coerceIn(0f, 1f), k)
+            }
+        }
+        return out
+    }
+
+    /**
+     * Each channel sampled from a different place — the RGB split.
+     *
+     * Alpha takes the *maximum* of the three rather than any one of them, so the fringe reaches as
+     * far as the furthest channel. Taking one channel's alpha clips the other two against a
+     * silhouette they no longer share, and the split then stops dead at the original outline.
+     */
+    private fun chromaticOffset(surface: Surface, effect: Effect.ChromaticOffset): Surface {
+        val w = surface.width
+        val h = surface.height
+        val out = Surface(w, h)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val i = y * w + x
+                val base = i * Surface.CHANNELS
+                val red = channelAt(surface, x - effect.redOffset.x, y - effect.redOffset.y, 0)
+                val green = channelAt(surface, x - effect.greenOffset.x, y - effect.greenOffset.y, 1)
+                val blue = channelAt(surface, x - effect.blueOffset.x, y - effect.blueOffset.y, 2)
+                out.data[base] = red.first
+                out.data[base + 1] = green.first
+                out.data[base + 2] = blue.first
+                out.data[base + 3] = maxOf(red.second, green.second, blue.second)
+            }
+        }
+        return out
+    }
+
+    /**
+     * Fractal noise added to the distance field, eroding the silhouette.
+     *
+     * Displacing the *field* rather than fading the alpha is what makes this a torn edge instead of
+     * a soft one. Fading gives every boundary pixel the same partial coverage and reads as blur;
+     * moving the boundary itself takes bites out of the outline, which is what a flame, a torn sheet
+     * of paper and a spray-painted stencil all actually have.
+     */
+    private fun roughen(source: Raster, effect: Effect.EdgeRoughen): Raster {
+        val w = source.width
+        val h = source.height
+        val set = BooleanArray(w * h) { (source.pixels[it] ushr 24) > HALF_BYTE }
+        val outside = Signal.distance(set, w, h)
+        val inside = Signal.distance(BooleanArray(w * h) { !set[it] }, w, h)
+
+        val pixels = IntArray(w * h)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val i = y * w + x
+                // Signed: negative inside the shape, positive outside, which is the field the GPU
+                // path displaces and the only form in which "erode" is a single addition.
+                val signed = outside[i] - inside[i]
+                val displaced = signed + fbm(x, y, effect.detail, effect.seed) * effect.amount
+                val coverage = (HALF - displaced).coerceIn(0f, 1f)
+                val alpha = (((source.pixels[i] ushr 24) and 0xFF) * coverage).toInt().coerceIn(0, 255)
+                pixels[i] = (alpha shl 24) or (source.pixels[i] and 0xFFFFFF)
+            }
+        }
+        return Raster(w, h, pixels)
+    }
+
+    /** One channel and its alpha at a fractional position, bilinearly. */
+    private fun channelAt(surface: Surface, x: Float, y: Float, channel: Int): Pair<Float, Float> {
+        val x0 = kotlin.math.floor(x).toInt()
+        val y0 = kotlin.math.floor(y).toInt()
+        val fx = x - x0
+        val fy = y - y0
+
+        fun at(px: Int, py: Int, c: Int): Float {
+            if (px < 0 || py < 0 || px >= surface.width || py >= surface.height) return 0f
+            return surface.data[(py * surface.width + px) * Surface.CHANNELS + c]
+        }
+
+        fun sample(c: Int): Float {
+            val top = at(x0, y0, c) * (1f - fx) + at(x0 + 1, y0, c) * fx
+            val bottom = at(x0, y0 + 1, c) * (1f - fx) + at(x0 + 1, y0 + 1, c) * fx
+            return top * (1f - fy) + bottom * fy
+        }
+        return sample(channel) to sample(3)
+    }
+
+    /** Blurs a surface's alpha and colour together, for the reflection's soft copy. */
+    private fun blurSurface(surface: Surface, radius: Float): Surface {
+        val out = Surface(surface.width, surface.height)
+        for (c in 0 until Surface.CHANNELS) {
+            val plane = FloatArray(surface.width * surface.height) {
+                surface.data[it * Surface.CHANNELS + c]
+            }
+            val blurred = blur(plane, surface.width, surface.height, radius)
+            for (i in blurred.indices) out.data[i * Surface.CHANNELS + c] = blurred[i]
+        }
+        return out
+    }
+
+    /**
+     * A stable hash of a lattice point.
+     *
+     * The same one the GPU path uses, so a grain generated here and a grain generated there land on
+     * the same pixels — otherwise an exported document's noise would not match its own preview.
+     */
+    private fun hash(x: Int, y: Int, salt: Int): Float {
+        var n = x * HASH_X + y * HASH_Y + salt * HASH_SALT
+        n = n xor (n shl 13)
+        n = n xor (n ushr 17)
+        n = n xor (n shl 5)
+        return (n and HASH_MASK).toFloat() / HASH_MASK
+    }
+
+    /** Four octaves of value noise; [detail] decides how much each finer one contributes. */
+    private fun fbm(x: Int, y: Int, detail: Float, seed: Int): Float {
+        var total = 0f
+        var amplitude = HALF
+        var frequency = 1
+        val persistence = lerp(0.2f, 0.7f, detail.coerceIn(0f, 1f))
+        for (octave in 0 until FBM_OCTAVES) {
+            total += (hash(x / frequency, y / frequency, seed + octave) - HALF) * amplitude
+            frequency *= 2
+            amplitude *= persistence
+        }
+        return total
+    }
+
+    /**
      * Samples a pattern tile at a canvas position, repeating it.
      *
      * The modulo is taken twice because Kotlin's remainder keeps the sign of its left operand, so a
@@ -629,6 +1031,22 @@ object EffectRaster {
 
     private const val HALF = 0.5f
     private const val HALF_BYTE = 127
+
+    /**
+     * A large odd multiplier per axis, which is what keeps a lattice hash from repeating along one.
+     *
+     * The same three the GLSL uses, so grain generated here lands on the same pixels as grain
+     * generated on the device — otherwise an export would not match the preview it came from.
+     */
+    private const val HASH_X = 374761393
+    private const val HASH_Y = 668265263
+    private const val HASH_SALT = 2246822519.toInt()
+
+    /** Twenty-four bits: finer than a float's mantissa needs and far finer than eight-bit output. */
+    private const val HASH_MASK = 0xFFFFFF
+
+    /** Four octaves. Past that the finest is below a pixel and only costs time. */
+    private const val FBM_OCTAVES = 4
     private const val STRAIGHT = 180f
     private const val DEG_TO_RAD = 0.017453292f
 

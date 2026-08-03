@@ -27,7 +27,20 @@ import kotlinx.serialization.Serializable
  * *is* that list, so saving one is storing the value rather than serialising a special case.
  */
 @Serializable
-data class StylePreset(val name: String, val style: Style)
+data class StylePreset(
+    val name: String,
+    val style: Style,
+    /**
+     * A stable ASCII handle, separate from the display name.
+     *
+     * The name is Persian and meant to be read; this is meant to be *written* — into a file name,
+     * into a saved document that refers to a preset, into a test's output directory. Deriving one
+     * from the other is not possible in either direction: a slug of Persian text is a row of
+     * dashes, and a translation back is a guess. So both are stored, and renaming the visible one
+     * never breaks anything that referred to it.
+     */
+    val id: String = "",
+)
 
 /**
  * A starting document.
@@ -68,6 +81,7 @@ object Library {
          */
         StylePreset(
             name = "جلد سه‌بعدی — فیروزه و طلا",
+            id = "cover-teal-gold",
             style = Style(
                 fill = Fill.Solid(Color.WHITE),
                 effects = listOf(
@@ -115,6 +129,7 @@ object Library {
 
         StylePreset(
             name = "تیتر سفید با دور مشکی",
+            id = "headline-outline",
             style = Style(
                 fill = Fill.Solid(Color.WHITE),
                 effects = listOf(
@@ -128,6 +143,7 @@ object Library {
 
         StylePreset(
             name = "طلایی",
+            id = "gold",
             style = Style(
                 fill = Fill.Gradient(
                     type = GradientType.LINEAR,
@@ -152,6 +168,7 @@ object Library {
 
         StylePreset(
             name = "برجستهٔ سه‌بعدی",
+            id = "extruded-3d",
             style = Style(
                 fill = Fill.Solid(Color(0.95f, 0.24f, 0.32f)),
                 effects = listOf(
@@ -172,6 +189,7 @@ object Library {
 
         StylePreset(
             name = "نئون",
+            id = "neon",
             style = Style(
                 fill = Fill.Solid(Color(1f, 1f, 1f)),
                 effects = listOf(
@@ -184,6 +202,7 @@ object Library {
 
         StylePreset(
             name = "توخالی",
+            id = "hollow",
             style = Style(
                 fill = Fill.Solid(Color.WHITE),
                 // Fill opacity, not layer opacity: dropping the fill to nothing leaves every effect
@@ -195,6 +214,7 @@ object Library {
 
         StylePreset(
             name = "شیشه‌ای",
+            id = "glass",
             style = Style(
                 fill = Fill.Backdrop(blurRadius = 18f, saturation = 1.2f, brightness = 1.05f),
                 effects = listOf(
@@ -204,8 +224,267 @@ object Library {
             ),
         ),
 
+        /**
+         * Chrome.
+         *
+         * Three ingredients, and leaving any one out gives grey plastic. The fill is a five-stop
+         * vertical ramp with a *horizon* in it — dark, white, mid, white, dark — because a polished
+         * surface reflects the sky above and the ground below and the join between them is the band
+         * across the middle of every chrome letter ever made. The gloss contour rings, putting a
+         * second highlight below the first. And the bevel is chiselled rather than smooth, because
+         * chrome has an edge and a smooth shoulder rounds it away.
+         */
+        StylePreset(
+            name = "کروم",
+            id = "chrome",
+            style = Style(
+                fill = Fill.Gradient(
+                    type = GradientType.LINEAR,
+                    angle = 90f,
+                    stops = listOf(
+                        GradientStop(0f, Color(0.05f, 0.05f, 0.06f)),
+                        GradientStop(0.3f, Color(1f, 1f, 1f)),
+                        GradientStop(0.5f, Color(0.23f, 0.24f, 0.27f)),
+                        GradientStop(0.68f, Color(0.94f, 0.95f, 0.97f)),
+                        GradientStop(1f, Color(0.11f, 0.11f, 0.13f)),
+                    ),
+                ),
+                effects = listOf(
+                    Effect.Bevel(
+                        technique = ir.pixellab.core.model.BevelTechnique.CHISEL_HARD,
+                        depth = 250f,
+                        size = 5f,
+                        angle = 90f,
+                        altitude = 16f,
+                        useGlobalLight = false,
+                        glossContour = ir.pixellab.core.model.Curve.RING,
+                        highlightOpacity = 1f,
+                        shadowOpacity = 0.85f,
+                    ),
+                    Effect.InnerGlow(
+                        blur = 18f,
+                        fill = Fill.Solid(Color.WHITE),
+                        blendMode = BlendMode.SCREEN,
+                        opacity = 0.6f,
+                    ),
+                    Effect.InnerShadow(angle = 90f, distance = 3f, blur = 8f, opacity = 0.75f),
+                    Effect.Stroke(width = 2f, fill = Fill.Solid(Color(0.08f, 0.08f, 0.1f))),
+                    Effect.DropShadow(blur = 18f, distance = 8f, opacity = 0.55f),
+                ),
+            ),
+        ),
+
+        /**
+         * Brushed metal.
+         *
+         * Chrome without the horizon: one soft ramp, grain along it, and satin to give the sheen a
+         * direction. The grain is the whole difference — polished metal reflects, brushed metal
+         * scatters, and scattering is noise.
+         */
+        StylePreset(
+            name = "فلز کشیده",
+            id = "brushed-metal",
+            style = Style(
+                fill = Fill.Gradient(
+                    type = GradientType.LINEAR,
+                    angle = 90f,
+                    stops = listOf(
+                        GradientStop(0f, Color(0.32f, 0.33f, 0.36f)),
+                        GradientStop(0.45f, Color(0.78f, 0.79f, 0.82f)),
+                        GradientStop(1f, Color(0.26f, 0.27f, 0.3f)),
+                    ),
+                ),
+                effects = listOf(
+                    Effect.Noise(amount = 0.09f, scale = 0.35f, monochrome = true),
+                    Effect.Satin(
+                        color = Color(0.85f, 0.87f, 0.92f),
+                        angle = 20f,
+                        distance = 14f,
+                        blur = 20f,
+                        blendMode = BlendMode.SCREEN,
+                        opacity = 0.35f,
+                    ),
+                    Effect.Bevel(depth = 120f, size = 4f, soften = 1f, altitude = 55f),
+                    Effect.DropShadow(blur = 14f, distance = 6f, opacity = 0.5f),
+                ),
+            ),
+        ),
+
+        /**
+         * Fire.
+         *
+         * Built from the outside in, which is the order flame actually has: a wide red halo, a
+         * tighter orange one inside it, and a yellow-white core. The silhouette is roughened because
+         * a flame has no clean edge, and the roughening is what stops this reading as orange text
+         * with a glow behind it.
+         */
+        StylePreset(
+            name = "آتش",
+            id = "fire",
+            style = Style(
+                fill = Fill.Gradient(
+                    type = GradientType.LINEAR,
+                    angle = 90f,
+                    stops = listOf(
+                        GradientStop(0f, Color(0.55f, 0.05f, 0f)),
+                        GradientStop(0.5f, Color(1f, 0.45f, 0.02f)),
+                        GradientStop(1f, Color(1f, 0.93f, 0.55f)),
+                    ),
+                ),
+                effects = listOf(
+                    Effect.OuterGlow(blur = 55f, fill = Fill.Solid(Color(0.8f, 0.07f, 0f)), opacity = 0.75f),
+                    Effect.OuterGlow(blur = 22f, fill = Fill.Solid(Color(1f, 0.5f, 0.05f)), opacity = 0.9f),
+                    Effect.InnerGlow(blur = 10f, fill = Fill.Solid(Color(1f, 0.95f, 0.7f)), opacity = 0.85f),
+                    Effect.EdgeRoughen(amount = 3f, detail = 0.65f, seed = 7),
+                ),
+            ),
+        ),
+
+        /**
+         * Glitch.
+         *
+         * A channel offset and nothing else doing the work. The temptation is to add noise and a
+         * scanline and a shake, and the result reads as damage rather than as a signal — one clean
+         * separation of red and blue is what a broken feed actually looks like.
+         */
+        StylePreset(
+            name = "گلیچ",
+            id = "glitch",
+            style = Style(
+                fill = Fill.Solid(Color(0.96f, 0.96f, 0.98f)),
+                effects = listOf(
+                    Effect.ChromaticOffset(
+                        redOffset = Vec2(-7f, 1f),
+                        blueOffset = Vec2(7f, -1f),
+                    ),
+                    Effect.Stroke(width = 1.5f, fill = Fill.Solid(Color(0.05f, 0.05f, 0.07f))),
+                ),
+            ),
+        ),
+
+        /**
+         * Graffiti.
+         *
+         * Two strokes, not one: a thick black outline with a coloured one inside it, which is how
+         * every piece on a wall is actually built and why a single outline reads as a sticker. The
+         * extrusion is short and hard because spray paint has no soft shadow.
+         */
+        StylePreset(
+            name = "گرافیتی",
+            id = "graffiti",
+            style = Style(
+                fill = Fill.Gradient(
+                    type = GradientType.LINEAR,
+                    angle = 75f,
+                    stops = listOf(
+                        GradientStop(0f, Color(0.98f, 0.78f, 0.08f)),
+                        GradientStop(0.55f, Color(0.95f, 0.35f, 0.1f)),
+                        GradientStop(1f, Color(0.8f, 0.1f, 0.35f)),
+                    ),
+                ),
+                effects = listOf(
+                    Effect.Extrude(
+                        steps = 10,
+                        stepOffset = Vec2(2f, 3f),
+                        nearFill = Fill.Solid(Color(0.07f, 0.06f, 0.09f)),
+                        farFill = Fill.Solid(Color(0.07f, 0.06f, 0.09f)),
+                    ),
+                    Effect.Stroke(width = 12f, fill = Fill.Solid(Color(0.05f, 0.04f, 0.06f))),
+                    Effect.Stroke(width = 5f, fill = Fill.Solid(Color.WHITE)),
+                    Effect.EdgeRoughen(amount = 1.5f, detail = 0.35f, seed = 13),
+                ),
+            ),
+        ),
+
+        /**
+         * Glitter.
+         *
+         * Coloured rather than monochrome noise, and that is the point: glitter is thousands of tiny
+         * facets each catching the light at its own angle, so the sparkle has hue. Monochrome grain
+         * over a gradient reads as a dirty print.
+         */
+        StylePreset(
+            name = "اکلیل",
+            id = "glitter",
+            style = Style(
+                fill = Fill.Gradient(
+                    type = GradientType.LINEAR,
+                    angle = 60f,
+                    stops = listOf(
+                        GradientStop(0f, Color(0.75f, 0.25f, 0.62f)),
+                        GradientStop(0.5f, Color(0.98f, 0.72f, 0.85f)),
+                        GradientStop(1f, Color(0.45f, 0.3f, 0.78f)),
+                    ),
+                ),
+                effects = listOf(
+                    Effect.Noise(amount = 0.55f, scale = 0.12f, monochrome = false, blendMode = BlendMode.SCREEN),
+                    Effect.Bevel(depth = 200f, size = 3f, altitude = 65f, highlightOpacity = 0.9f),
+                    Effect.OuterGlow(blur = 24f, fill = Fill.Solid(Color(1f, 0.8f, 0.95f)), opacity = 0.5f),
+                    Effect.DropShadow(blur = 20f, distance = 7f, opacity = 0.45f),
+                ),
+            ),
+        ),
+
+        /**
+         * Eighties retro.
+         *
+         * The extrusion runs down-right into a magenta-to-violet fade rather than into a darker copy
+         * of the face, because the look comes from the sunset behind the letters and not from
+         * lighting. The chrome-blue face over it is the other half.
+         */
+        StylePreset(
+            name = "رترو هشتاد",
+            id = "retro-eighties",
+            style = Style(
+                fill = Fill.Gradient(
+                    type = GradientType.LINEAR,
+                    angle = 90f,
+                    stops = listOf(
+                        GradientStop(0f, Color(0.09f, 0.13f, 0.42f)),
+                        GradientStop(0.48f, Color(0.62f, 0.9f, 1f)),
+                        GradientStop(0.52f, Color(1f, 0.98f, 0.9f)),
+                        GradientStop(1f, Color(0.95f, 0.35f, 0.6f)),
+                    ),
+                ),
+                effects = listOf(
+                    Effect.Extrude(
+                        steps = 28,
+                        stepOffset = Vec2(1.2f, 1.6f),
+                        nearFill = Fill.Solid(Color(0.93f, 0.18f, 0.55f)),
+                        farFill = Fill.Solid(Color(0.3f, 0.06f, 0.42f)),
+                    ),
+                    Effect.Stroke(width = 4f, fill = Fill.Solid(Color(1f, 0.95f, 0.98f))),
+                    Effect.OuterGlow(blur = 40f, fill = Fill.Solid(Color(0.95f, 0.2f, 0.6f)), opacity = 0.55f),
+                ),
+            ),
+        ),
+
+        /**
+         * Cyberpunk.
+         *
+         * Neon's opposite arrangement: a dark face with the light *behind* it rather than a bright
+         * face glowing outwards. Cyan and magenta at different radii because the two never sit at
+         * the same distance in the reference work, and the channel split sells the screen it is
+         * supposedly being displayed on.
+         */
+        StylePreset(
+            name = "سایبرپانک",
+            id = "cyberpunk",
+            style = Style(
+                fill = Fill.Solid(Color(0.06f, 0.07f, 0.11f)),
+                effects = listOf(
+                    Effect.OuterGlow(blur = 48f, fill = Fill.Solid(Color(0.9f, 0.08f, 0.62f)), opacity = 0.7f),
+                    Effect.OuterGlow(blur = 18f, fill = Fill.Solid(Color(0.1f, 0.95f, 0.95f)), opacity = 0.85f),
+                    Effect.Stroke(width = 2.5f, fill = Fill.Solid(Color(0.35f, 1f, 1f))),
+                    Effect.InnerGlow(blur = 14f, fill = Fill.Solid(Color(0.1f, 0.8f, 0.9f)), opacity = 0.5f),
+                    Effect.ChromaticOffset(redOffset = Vec2(-2.5f, 0f), blueOffset = Vec2(2.5f, 0f)),
+                ),
+            ),
+        ),
+
         StylePreset(
             name = "سایهٔ بلند",
+            id = "long-shadow",
             style = Style(
                 fill = Fill.Solid(Color(0.15f, 0.16f, 0.2f)),
                 effects = listOf(

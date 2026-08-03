@@ -129,8 +129,13 @@ data class Perspective(
 )
 
 /**
- * A monotonic 0..1 -> 0..1 response curve, used for bevel contours, gradient interpolation and
- * glow falloff. Photoshop calls this a "contour"; every effect that shapes a ramp reuses it.
+ * A 0..1 -> 0..1 response curve, used for bevel contours, gradient interpolation and glow falloff.
+ * Photoshop calls this a "contour"; every effect that shapes a ramp reuses it.
+ *
+ * Usually monotonic and deliberately not required to be. A bevel's *gloss* contour is the one place
+ * where going up and back down is the entire point: that is what puts a second highlight below the
+ * first, and two highlights on one shoulder is what the eye reads as polished metal rather than as
+ * plastic. [RING] is that curve.
  */
 @Serializable
 data class Curve(val points: List<Vec2> = LINEAR_POINTS) {
@@ -161,5 +166,19 @@ data class Curve(val points: List<Vec2> = LINEAR_POINTS) {
         val ROUNDED = Curve(listOf(Vec2(0f, 0f), Vec2(0.3f, 0.72f), Vec2(0.6f, 0.94f), Vec2(1f, 1f)))
         /** Hard chamfer, the profile behind the faceted esports look. */
         val CHAMFER = Curve(listOf(Vec2(0f, 0f), Vec2(0.5f, 0.5f), Vec2(1f, 1f)))
+
+        /**
+         * Photoshop's Ring gloss contour: bright, dark, bright again across one shoulder.
+         *
+         * The single ingredient that separates chrome from grey plastic. A monotonic shoulder has
+         * one highlight and reads as a lit surface; this has two with a dark band between them, and
+         * that band is the reflection of the horizon every polished curve carries.
+         */
+        val RING = Curve(
+            listOf(
+                Vec2(0f, 0f), Vec2(0.18f, 0.95f), Vec2(0.38f, 0.12f),
+                Vec2(0.62f, 0.88f), Vec2(0.82f, 0.2f), Vec2(1f, 1f),
+            ),
+        )
     }
 }
