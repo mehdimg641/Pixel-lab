@@ -1132,6 +1132,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         ir.pixellab.engine.android.PixelFilters.motion(image, angle, distance, select.selection)
     }
 
+    suspend fun surfaceBlur(radius: Float, threshold: Float) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters.surface(image, radius, threshold, paint.selection)
+    }
+
     suspend fun lensBlur(radius: Float, blades: Int) = transform { image ->
         ir.pixellab.engine.android.PixelFilters.lens(image, radius, blades, selection = select.selection)
     }

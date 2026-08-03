@@ -98,6 +98,42 @@ object PixelFilters {
         return blend(source, smeared.unpremultiplied().toImage(), selection)
     }
 
+    /**
+     * Past this a bilateral pass is seconds rather than milliseconds, because its cost is the
+     * square of the radius. Photoshop's own slider stops at 100.
+     */
+    private const val SURFACE_RADIUS_CAP = 24f
+
+    /**
+     * Surface blur — a bilateral filter, smoothing within regions and stopping at edges.
+     *
+     * The one blur that can flatten skin texture, paper grain or JPEG mush without taking the eyes,
+     * the hairline and the type with it, because it refuses to average two values that differ by
+     * more than [threshold]. Photoshop's own panel calls the two controls Radius and Threshold and
+     * they are exactly the two sigmas.
+     *
+     * It has been in `core:imaging` since wave 5, documented as Photoshop's Surface Blur, and its
+     * only caller in the whole repository was a test.
+     *
+     * Quadratic in the radius, unlike every other blur here, and that is inherent: the range weight
+     * depends on the centre pixel, so the kernel is different for every pixel and cannot be
+     * separated into two passes. The radius is capped for that reason rather than for taste.
+     */
+    fun surface(
+        source: RasterImage,
+        radius: Float,
+        threshold: Float,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        if (radius < 1f || threshold <= 0f) return source
+        val smoothed = ir.pixellab.core.imaging.Blur.bilateral(
+            source.toRaster(),
+            sigmaSpace = radius.coerceAtMost(SURFACE_RADIUS_CAP),
+            sigmaRange = threshold,
+        )
+        return blend(source, smoothed.toImage(), selection)
+    }
+
     /** Lens blur with a real aperture shape, which is what gives bokeh its recognisable discs. */
     fun lens(
         source: RasterImage,

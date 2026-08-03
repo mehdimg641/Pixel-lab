@@ -54,6 +54,8 @@ fun FilterSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
     var highPassRadius by remember { mutableStateOf(DEFAULT_HIGH_PASS) }
     var threshold by remember { mutableStateOf(0f) }
     var vignetteAmount by remember { mutableStateOf(DEFAULT_VIGNETTE) }
+    var surfaceRadius by remember { mutableStateOf(DEFAULT_SURFACE_RADIUS) }
+    var surfaceThreshold by remember { mutableStateOf(DEFAULT_SURFACE_THRESHOLD) }
     var blockSize by remember { mutableStateOf(DEFAULT_BLOCK) }
     var grainAmount by remember { mutableStateOf(DEFAULT_GRAIN) }
     var monochromeGrain by remember { mutableStateOf(true) }
@@ -116,6 +118,21 @@ fun FilterSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
         SheetAction("اعمال", enabled = onPixels) { scope.launch { model.lensBlur(radius, blades) } }
         // The one thing that separates a lens from a Gaussian, and the reason the blade count is here.
         SheetHint("شکل دیافراگم، شکل بوکه را می‌سازد — شش‌پره بوکهٔ شش‌ضلعی می‌دهد")
+
+        SheetSection("محو سطحی")
+        SheetSlider(
+            "شعاع", surfaceRadius, 0f..MAX_SURFACE_RADIUS,
+            onChange = { value, _ -> surfaceRadius = value },
+        )
+        SheetSlider(
+            "آستانه", surfaceThreshold, 0.01f..MAX_SURFACE_THRESHOLD,
+            onChange = { value, _ -> surfaceThreshold = value },
+        )
+        SheetAction("اعمال", enabled = onPixels) {
+            scope.launch { model.surfaceBlur(surfaceRadius, surfaceThreshold) }
+        }
+        // The whole point of it, and the reason the second slider exists at all.
+        SheetHint("درون نواحی هم‌رنگ صاف می‌کند و سر لبه‌ها می‌ایستد — آستانه می‌گوید «لبه» یعنی چقدر اختلاف")
 
         SheetSection("محو تدریجی")
         SheetChips {
@@ -249,6 +266,12 @@ private const val SHARPEN_RADIUS = 1.5f
 /** The sharp region and its ramp, as multiples of the blur radius the user set. */
 private const val FOCUS_FRACTION = 6f
 private const val TRANSITION_FRACTION = 10f
+
+/** Photoshop's own defaults, and the pair that smooths skin without flattening a face. */
+private const val DEFAULT_SURFACE_RADIUS = 8f
+private const val DEFAULT_SURFACE_THRESHOLD = 0.06f
+private const val MAX_SURFACE_RADIUS = 24f
+private const val MAX_SURFACE_THRESHOLD = 0.5f
 
 private const val DEFAULT_VIGNETTE = -0.4f
 
