@@ -52,7 +52,10 @@ class ReferenceMatchTest {
             fullName = "Vazirmatn Bold",
             weight = 900,
             italic = false,
-            axes = emptyMap(),
+            // Declared, because the loader drops any axis the file does not claim to have. The real
+            // app fills this in from its font scan; a fixture that leaves it empty silently renders
+            // every weight as Regular.
+            axes = mapOf(FontRef.AXIS_WEIGHT to 100f..900f),
             features = emptySet(),
             script = Script.ARABIC,
             hasPersianDigits = true,
@@ -62,8 +65,8 @@ class ReferenceMatchTest {
 
     /** Orange metal on every edge, teal on the face — as near the reference as flat colour reaches. */
     private fun trendLook(size: Float) = Geometry3D(
-        depth = size * 0.30f,
-        bevelSize = size * 0.012f,
+        depth = size * 0.45f,
+        bevelSize = size * 0.05f,
         faceMaterial = Material(
             baseColor = Color(0.09f, 0.45f, 0.44f),
             roughness = 0.35f,
@@ -71,8 +74,8 @@ class ReferenceMatchTest {
         ),
         bevelMaterial = ORANGE,
         sideMaterial = ORANGE,
-        rotation = Vec3(-6f, 14f, 0f),
-        fieldOfView = 28f,
+        rotation = Vec3(-14f, 26f, 0f),
+        fieldOfView = 34f,
     )
 
     @Test
@@ -81,7 +84,15 @@ class ReferenceMatchTest {
         val size = 240f
         val layer = Layer.Text(
             id = LayerId("trend"),
-            spec = TextSpec(text = "TREND", font = FontRef("Vazirmatn"), size = size),
+            spec = TextSpec(
+                text = "TREND",
+                font = FontRef(
+                    family = "Vazirmatn",
+                    weight = 900,
+                    variations = mapOf(FontRef.AXIS_WEIGHT to 900f),
+                ),
+                size = size,
+            ),
             name = "trend",
             transform = Transform(),
             style = Style.PLAIN_BLACK,
