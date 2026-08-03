@@ -865,17 +865,30 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      * what the user is reading off the canvas. On a rotated or scaled layer the two differ, and
      * showing the raw translation would put a number in the field that does not match the ruler.
      */
-    fun setPlacement(id: LayerId, left: Float?, top: Float?, rotation: Float?) = edit {
+    fun setPlacement(
+        id: LayerId,
+        left: Float?,
+        top: Float?,
+        rotation: Float?,
+        skewX: Float? = null,
+        skewY: Float? = null,
+    ) = edit {
         val layer = state.document.findLayer(id) ?: return@edit
-        val box = ir.pixellab.core.canvas.Handles.canvasBounds(bounds.of(layer), layer.transform)
+        val limit = ir.pixellab.core.canvas.Handles.SKEW_LIMIT
+        val skewed = layer.transform.copy(
+            rotation = rotation ?: layer.transform.rotation,
+            skew = Vec2(
+                (skewX ?: layer.transform.skew.x).coerceIn(-limit, limit),
+                (skewY ?: layer.transform.skew.y).coerceIn(-limit, limit),
+            ),
+        )
+        // The box is measured *after* the rotation and skew are applied, because slanting a layer
+        // moves its bounding box even when nothing was translated. Measuring first and translating
+        // by the old delta would leave the typed X and Y off by however much the skew shifted it.
+        val box = ir.pixellab.core.canvas.Handles.canvasBounds(bounds.of(layer), skewed)
         val delta = Vec2((left ?: box.left) - box.left, (top ?: box.top) - box.top)
         replaceLayer(id) {
-            it.withTransform(
-                it.transform.copy(
-                    translation = it.transform.translation + delta,
-                    rotation = rotation ?: it.transform.rotation,
-                ),
-            )
+            it.withTransform(skewed.copy(translation = it.transform.translation + delta))
         }
     }
 

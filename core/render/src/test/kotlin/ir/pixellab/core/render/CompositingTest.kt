@@ -163,4 +163,52 @@ class CompositingTest {
             actual.y shouldBe ((expected.y / canvas.y) plusOrMinus 0.0005f)
         }
     }
+
+    @Test
+    fun `a skew slants the layer and keeps its anchor still`() {
+        // Skew was in the model and read by nothing — the compositor built its matrix from
+        // translation, rotation and scale only, so the panel accepted an angle and the picture
+        // never moved. Photoshop's own Skew command is exactly this.
+        val bounds = Rect(0f, 0f, 100f, 100f)
+        val skewed = Transform(skew = Vec2(45f, 0f))
+        val map = Compositing.layerToCanvas(bounds, skewed)
+
+        // The anchor is the fixed point of every transform about it.
+        map.map(Vec2(50f, 50f)) shouldBeNear Vec2(50f, 50f)
+        // A tangent of one at forty-five degrees: a point fifty above the anchor slides fifty left.
+        map.map(Vec2(50f, 0f)) shouldBeNear Vec2(0f, 0f)
+        map.map(Vec2(50f, 100f)) shouldBeNear Vec2(100f, 100f)
+    }
+
+    @Test
+    fun `the layer map agrees with the handles the gestures use`() {
+        // The same reason the camera test above exists, for the other of the two maps: these are
+        // independent implementations of one placement, and the order they compose scale, skew and
+        // rotation in has to match or a skewed layer's handles drift off its artwork.
+        val bounds = Rect(10f, 20f, 210f, 140f)
+        val transform = Transform(
+            translation = Vec2(35f, -18f),
+            scale = Vec2(1.4f, 0.8f),
+            rotation = 22f,
+            skew = Vec2(14f, -7f),
+            anchor = Vec2(0.35f, 0.6f),
+        )
+        val map = Compositing.layerToCanvas(bounds, transform)
+        for (probe in listOf(Vec2(10f, 20f), Vec2(210f, 20f), Vec2(210f, 140f), Vec2(97f, 63f))) {
+            map.map(probe) shouldBeNear
+                ir.pixellab.core.canvas.Handles.localToCanvas(probe, bounds, transform)
+        }
+    }
+
+    @Test
+    fun `a skew survives the round trip back to layer coordinates`() {
+        // The inverse is what a drag uses to turn a finger position into a point on the artwork, so
+        // an un-inverted shear means a skewed layer cannot be picked up where it is drawn.
+        val bounds = Rect(0f, 0f, 200f, 120f)
+        val transform = Transform(scale = Vec2(1.3f, 0.9f), rotation = -12f, skew = Vec2(20f, 10f))
+        for (probe in listOf(Vec2(0f, 0f), Vec2(200f, 0f), Vec2(140f, 95f))) {
+            val onCanvas = ir.pixellab.core.canvas.Handles.localToCanvas(probe, bounds, transform)
+            ir.pixellab.core.canvas.Handles.canvasToLocal(onCanvas, bounds, transform) shouldBeNear probe
+        }
+    }
 }

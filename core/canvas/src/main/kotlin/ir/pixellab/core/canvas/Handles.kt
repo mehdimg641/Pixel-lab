@@ -123,20 +123,59 @@ data class HandleLayout(
  */
 object Handles {
 
-    /** Maps a point in the layer's own coordinates onto the canvas. */
+    /**
+     * Maps a point in the layer's own coordinates onto the canvas.
+     *
+     * Scale, then skew, then rotate, about the anchor. The order matters and is the same one
+     * `Compositing.layerToCanvas` builds its matrix in — these two are independent implementations
+     * of one placement, and a disagreement between them shows as selection handles that no longer
+     * sit on the artwork they belong to.
+     */
     fun localToCanvas(local: Vec2, bounds: Rect, transform: Transform): Vec2 {
         val anchor = anchorOf(bounds, transform)
-        return ((local - anchor) * transform.scale).rotated(transform.rotation) + anchor + transform.translation
+        val scaled = (local - anchor) * transform.scale
+        return sheared(scaled, transform.skew).rotated(transform.rotation) + anchor + transform.translation
     }
 
     fun canvasToLocal(canvas: Vec2, bounds: Rect, transform: Transform): Vec2 {
         val anchor = anchorOf(bounds, transform)
         val unrotated = (canvas - transform.translation - anchor).rotated(-transform.rotation)
+        val unsheared = unsheared(unrotated, transform.skew)
         return Vec2(
-            anchor.x + unrotated.x / nonZero(transform.scale.x),
-            anchor.y + unrotated.y / nonZero(transform.scale.y),
+            anchor.x + unsheared.x / nonZero(transform.scale.x),
+            anchor.y + unsheared.y / nonZero(transform.scale.y),
         )
     }
+
+    /**
+     * Slants a vector along the layer's own axes — Photoshop's Skew, in degrees.
+     *
+     * Degrees rather than a ratio because that is what a designer reads off a reference: an italic
+     * is "twelve degrees", never "point two one".
+     */
+    private fun sheared(v: Vec2, skew: Vec2): Vec2 {
+        if (skew.x == 0f && skew.y == 0f) return v
+        val tx = tanDegrees(skew.x)
+        val ty = tanDegrees(skew.y)
+        return Vec2(v.x + tx * v.y, ty * v.x + v.y)
+    }
+
+    private fun unsheared(v: Vec2, skew: Vec2): Vec2 {
+        if (skew.x == 0f && skew.y == 0f) return v
+        val tx = tanDegrees(skew.x)
+        val ty = tanDegrees(skew.y)
+        // The determinant of a shear is 1 - tx·ty, and it reaches zero when the two slants make the
+        // axes parallel. Clamping each to 85 degrees keeps it clear of that, and this guard covers
+        // the corner where both are near the limit at once.
+        val determinant = nonZero(1f - tx * ty)
+        return Vec2((v.x - tx * v.y) / determinant, (v.y - ty * v.x) / determinant)
+    }
+
+    private fun tanDegrees(degrees: Float) =
+        kotlin.math.tan(Math.toRadians(degrees.coerceIn(-SKEW_LIMIT, SKEW_LIMIT).toDouble())).toFloat()
+
+    /** Photoshop's own slider stops here, and past it the tangent runs away. */
+    const val SKEW_LIMIT = 85f
 
     fun layout(
         bounds: Rect,

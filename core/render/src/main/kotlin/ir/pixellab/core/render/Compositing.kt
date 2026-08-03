@@ -58,6 +58,24 @@ value class Affine(val values: FloatArray) {
             val r = Math.toRadians(degrees.toDouble())
             return of(cos(r).toFloat(), sin(r).toFloat(), -sin(r).toFloat(), cos(r).toFloat(), 0f, 0f)
         }
+
+        /**
+         * Slants the axes — Photoshop's Skew, in degrees.
+         *
+         * Degrees rather than a raw ratio because that is what the panel shows and what a designer
+         * reads off a reference: an italic is "twelve degrees", never "point two one". The tangent
+         * converts one to the other, and it is the reason the control has to stop short of a right
+         * angle — at ninety the axes are parallel, the determinant is zero, and the layer collapses
+         * to a line it can never be dragged back from.
+         */
+        fun shear(xDegrees: Float, yDegrees: Float): Affine {
+            val sx = kotlin.math.tan(Math.toRadians(xDegrees.coerceIn(-SHEAR_LIMIT, SHEAR_LIMIT).toDouble()))
+            val sy = kotlin.math.tan(Math.toRadians(yDegrees.coerceIn(-SHEAR_LIMIT, SHEAR_LIMIT).toDouble()))
+            return of(1f, sy.toFloat(), sx.toFloat(), 1f, 0f, 0f)
+        }
+
+        /** Photoshop's own slider stops here, and past it the tangent runs away. */
+        const val SHEAR_LIMIT = 85f
     }
 }
 
@@ -95,8 +113,14 @@ object Compositing {
     /**
      * Maps a point in the layer's own coordinates onto the canvas.
      *
-     * The same arithmetic as `Handles.localToCanvas`, as a matrix: scale and rotate about the
+     * The same arithmetic as `Handles.localToCanvas`, as a matrix: scale, skew and rotate about the
      * anchor, then translate.
+     *
+     * **The order is rotate ∘ skew ∘ scale**, and it is not interchangeable. Skewing after rotating
+     * slants along the *screen's* axes rather than the layer's, so a rotated layer's skew handle
+     * would drag it in a direction unrelated to the edge being pulled. Scaling last would have a
+     * non-uniform scale change the skew angle, since a shear and a scale do not commute — which
+     * shows as an italic that leans further the wider the layer is stretched.
      */
     fun layerToCanvas(bounds: Rect, transform: Transform): Affine {
         val anchor = Vec2(
@@ -105,6 +129,7 @@ object Compositing {
         )
         return Affine.translate(anchor.x + transform.translation.x, anchor.y + transform.translation.y) *
             Affine.rotate(transform.rotation) *
+            Affine.shear(transform.skew.x, transform.skew.y) *
             Affine.scale(transform.scale.x, transform.scale.y) *
             Affine.translate(-anchor.x, -anchor.y)
     }

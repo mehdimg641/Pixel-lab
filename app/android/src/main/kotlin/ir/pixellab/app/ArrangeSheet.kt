@@ -172,6 +172,12 @@ private fun Placement(state: EditorState, model: EditorViewModel, modifier: Modi
     var angle by remember(layer.transform.rotation) {
         mutableStateOf(layer.transform.rotation.toInt().toString())
     }
+    var skewX by remember(layer.transform.skew.x) {
+        mutableStateOf(layer.transform.skew.x.toInt().toString())
+    }
+    var skewY by remember(layer.transform.skew.y) {
+        mutableStateOf(layer.transform.skew.y.toInt().toString())
+    }
 
     Column(modifier) {
         SheetSection("مختصات دقیق")
@@ -183,9 +189,25 @@ private fun Placement(state: EditorState, model: EditorViewModel, modifier: Modi
             SheetNumberField("Y", y, modifier = Modifier.weight(1f)) { y = signedDigits(it) }
             SheetNumberField("چرخش", angle, modifier = Modifier.weight(1f)) { angle = signedDigits(it) }
         }
-        SheetHint("اندازه: ${box.width.toInt()}×${box.height.toInt()}")
+        // Skew beside rotation rather than on its own screen: they are the same gesture in
+        // Photoshop's Transform menu, and a designer reaching for one usually wants the other.
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SheetNumberField("اریب افقی", skewX, modifier = Modifier.weight(1f)) { skewX = signedDigits(it) }
+            SheetNumberField("اریب عمودی", skewY, modifier = Modifier.weight(1f)) { skewY = signedDigits(it) }
+        }
+        SheetHint("اندازه: ${box.width.toInt()}×${box.height.toInt()} — اریب بر حسب درجه، تا ۸۵")
         SheetAction("اعمال") {
-            model.setPlacement(id, x.toFloatOrNull(), y.toFloatOrNull(), angle.toFloatOrNull())
+            model.setPlacement(
+                id,
+                x.toFloatOrNull(),
+                y.toFloatOrNull(),
+                angle.toFloatOrNull(),
+                skewX.toFloatOrNull(),
+                skewY.toFloatOrNull(),
+            )
         }
     }
 }
