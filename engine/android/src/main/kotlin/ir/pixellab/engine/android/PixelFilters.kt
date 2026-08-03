@@ -271,6 +271,51 @@ object PixelFilters {
     fun highPass(source: RasterImage, radius: Float): RasterImage =
         ir.pixellab.core.imaging.Sharpen.highPass(source.toRaster(), radius).toImage()
 
+    /**
+     * Haze removal by the dark channel prior.
+     *
+     * Straight colour rather than premultiplied: the prior reads the *minimum* of the three
+     * channels, and multiplying by alpha first would make every semi-transparent pixel look like
+     * deep shadow — which the estimator would read as no haze at all.
+     */
+    fun dehaze(source: RasterImage, strength: Float, selection: PixelSelection? = null): RasterImage {
+        if (strength <= 0f) return source
+        val clear = ir.pixellab.core.imaging.Dehaze.apply(source.toRaster(), strength)
+        return blend(source, clear.toImage(), selection)
+    }
+
+    /** Contrast at a chosen size — texture, clarity or whole-scene brilliance. */
+    fun localContrast(
+        source: RasterImage,
+        scale: ir.pixellab.core.imaging.LocalContrast.Scale,
+        amount: Float,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        if (amount == 0f) return source
+        val pushed = ir.pixellab.core.imaging.LocalContrast.apply(source.toRaster(), scale, amount)
+        return blend(source, pushed.toImage(), selection)
+    }
+
+    /**
+     * Crepuscular rays from a point.
+     *
+     * The source defaults to the centre of the selection when there is one — a user who has drawn a
+     * marquee round the sun has already said where the light is, and asking again would be the
+     * second question in a row with the same answer.
+     */
+    fun lightRays(
+        source: RasterImage,
+        at: Vec2,
+        threshold: Float = 0.75f,
+        length: Float = 0.6f,
+        intensity: Float = 0.6f,
+    ): RasterImage {
+        if (intensity <= 0f) return source
+        return ir.pixellab.core.imaging.LightRays
+            .apply(source.toRaster(), at, threshold, length, intensity)
+            .toImage()
+    }
+
     /** Darkens or lightens towards the corners, following the frame's own proportions. */
     fun vignette(source: RasterImage, amount: Float, midpoint: Float = 0.5f): RasterImage {
         if (amount == 0f) return source

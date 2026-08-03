@@ -915,6 +915,18 @@ rule([1277, 1278], DONE, "`SnapEngine.Kind.GRID`")
 rule([951], DONE, "`Material.unlit` — سطحی که رنگ خودش را نگه می‌دارد، یعنی حاشیه روی حجم سه‌بعدی")
 rule([965], HALF, "بیست‌ودو تنظیم روی لایه هست و `Adjustment.ColorLookup` جدول می‌خواند؛ لایهٔ تنظیم روی کل سند نه")
 
+# ───────────────────────────────────────────────── Hypic, from sixteen screenshots
+#
+# A naming collision worth writing down: section 5 is headed "های پیک (HiPaint)" and its hundred
+# rows describe HiPaint, the sketching app — watercolour brushes, symmetry, a floating reference
+# window. The app the user means by that name is *Hypic*, a photo editor, and it has no section in
+# this document at all. Its inventory is docs/REFERENCE-HYPIC.md until rows are written for it.
+#
+# Three of its adjustments were things we genuinely lacked, and all three are now built. They land
+# on section 9's technical rows because that is where this list keeps its filter entries.
+rule([484], DONE, "`LocalContrast.Scale.CLARITY` — کنتراست موضعی روی روشنایی، از شیت فیلتر")
+rule([868], DONE, "`LightRays` — پرتوهای پراکنده از یک نقطه، با میرایی در طول پرتو")
+
 # ───────────────────────────────────────────── AirBrush, re-read against thirty screenshots
 #
 # Section 7 was written from store copy and was the weakest in the document — the screenshots
@@ -926,8 +938,8 @@ rule(793, DONE, "`AspectRatio.PRESETS` در شیت بوم — ۱:۱، ۴:۵، ۹
 rule(794, DONE, "چرخش لایه با ورودی عددی؛ چرخش ۹۰ درجه و قرینه از شیت چیدمان")
 rule(804, DONE, "`HeldBarIcon` کنار واگرد — نگه دار تا اولِ کار را ببینی، ول کن تا برگردد")
 # What the screenshots showed that the list did not.
-rule(802, HALF, "بلور محدود به انتخاب هست؛ شکل دیافراگم (بوکه) و شیب تدریجی نه")
-rule(801, HALF, "همان — تیلت‌شیفت به گرادیانِ شدت روی بلور نیاز دارد که هنوز نیست")
+rule(802, DONE, "`LensBlur` با پرهٔ دیافراگم (۵، ۶، ۸) و وزن‌دهی هایلایت، از شیت فیلتر")
+rule(801, DONE, "`GradientBlur.Shape.LINEAR` — تیلت‌شیفت، از شیت فیلتر؛ `RADIAL` بوکهٔ پرتره")
 rule([805, 806], MISSING, "ذخیرهٔ «لوک» از تنظیم‌های فعلی و زدنش روی عکس بعدی — `StylePreset` هست، معادلِ تصویری‌اش نه")
 rule(783, HALF, "`CubeLut` فایل `.cube` را می‌خواند و لایهٔ جدول رنگ به آن وصل است؛ شبکهٔ بندانگشتیِ زنده و خودِ لوک‌ها نیست")
 

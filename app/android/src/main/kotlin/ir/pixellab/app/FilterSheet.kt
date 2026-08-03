@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.imaging.GradientBlur
+import ir.pixellab.core.imaging.LocalContrast
 import ir.pixellab.core.imaging.HistogramChannel
 import ir.pixellab.core.imaging.RadialBlur
 import ir.pixellab.core.model.Layer
@@ -59,6 +60,12 @@ fun FilterSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
     var blockSize by remember { mutableStateOf(DEFAULT_BLOCK) }
     var grainAmount by remember { mutableStateOf(DEFAULT_GRAIN) }
     var monochromeGrain by remember { mutableStateOf(true) }
+    var hazeStrength by remember { mutableStateOf(DEFAULT_HAZE) }
+    var contrastScale by remember { mutableStateOf(LocalContrast.Scale.CLARITY) }
+    var contrastAmount by remember { mutableStateOf(DEFAULT_LOCAL_CONTRAST) }
+    var rayThreshold by remember { mutableStateOf(DEFAULT_RAY_THRESHOLD) }
+    var rayLength by remember { mutableStateOf(DEFAULT_RAY_LENGTH) }
+    var rayIntensity by remember { mutableStateOf(DEFAULT_RAY_INTENSITY) }
 
     Column(modifier.fillMaxWidth()) {
         SheetHint(
@@ -203,6 +210,41 @@ fun FilterSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
         }
         SheetHint("بالاگذر روی یک لایهٔ جدید با مود Overlay ساخته می‌شود — روی خود عکس بی‌معنی است")
 
+        SheetSection("هوا و نور")
+        SheetSlider("مه‌زدایی", hazeStrength, 0f..1f, onChange = { value, _ -> hazeStrength = value })
+        SheetAction("اعمال مه‌زدایی", enabled = onPixels) { scope.launch { model.dehaze(hazeStrength) } }
+        // Why it is not the contrast slider, said in the one sentence that makes the difference land.
+        SheetHint("مه به فاصله بستگی دارد — این فیلتر دورها را باز می‌کند و نزدیک‌ها را دست‌نخورده می‌گذارد")
+
+        SheetChips {
+            for (scale in LocalContrast.Scale.entries) {
+                SheetChip(scale.persianLabel, chosen = contrastScale == scale) { contrastScale = scale }
+            }
+        }
+        SheetSlider(
+            "کنتراست موضعی", contrastAmount, -1f..1f,
+            onChange = { value, _ -> contrastAmount = value },
+        )
+        SheetAction("اعمال", enabled = onPixels) {
+            scope.launch { model.localContrast(contrastScale, contrastAmount) }
+        }
+        // Three names across the reference apps, one operation. Saying so is the useful part.
+        SheetHint("هر سه یک کارند با اندازهٔ متفاوت: بافت یعنی منافذ و پارچه، شفافیت یعنی حجم صورت، درخشندگی یعنی کل صحنه")
+
+        SheetSlider("آستانهٔ نور", rayThreshold, 0.3f..0.98f, onChange = { value, _ -> rayThreshold = value })
+        SheetSlider("طول پرتو", rayLength, 0.1f..1f, onChange = { value, _ -> rayLength = value })
+        SheetSlider("شدت پرتو", rayIntensity, 0f..1f, onChange = { value, _ -> rayIntensity = value })
+        SheetAction("پرتوهای نور", enabled = onPixels) {
+            scope.launch { model.lightRays(rayThreshold, rayLength, rayIntensity) }
+        }
+        SheetHint(
+            if (model.select.selection == null) {
+                "خورشید وسط قاب فرض می‌شود — با انتخاب، جایش را خودتان بگویید"
+            } else {
+                "پرتوها از وسط ناحیهٔ انتخاب‌شده بیرون می‌زنند"
+            },
+        )
+
         SheetSection("جلوه‌های پایانی")
         SheetSlider(
             "وینیت",
@@ -277,6 +319,14 @@ private const val DEFAULT_VIGNETTE = -0.4f
 
 private const val DEFAULT_BLOCK = 12
 private const val MAX_BLOCK = 80f
+
+private const val DEFAULT_HAZE = 0.5f
+private const val DEFAULT_LOCAL_CONTRAST = 0.4f
+
+/** Rays start off; the threshold and length are only meaningful once someone reaches for them. */
+private const val DEFAULT_RAY_THRESHOLD = 0.8f
+private const val DEFAULT_RAY_LENGTH = 0.6f
+private const val DEFAULT_RAY_INTENSITY = 0f
 
 private const val DEFAULT_GRAIN = 0.06f
 private const val MAX_GRAIN = 0.4f

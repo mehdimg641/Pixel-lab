@@ -1295,6 +1295,35 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         ir.pixellab.engine.android.PixelFilters.sharpen(image, amount, radius, threshold, select.selection)
     }
 
+    /** Haze removal — the one control in a photo app's adjust row that a curve cannot imitate. */
+    suspend fun dehaze(strength: Float) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters.dehaze(image, strength, select.selection)
+    }
+
+    /** Texture, clarity or brilliance — one operation at three sizes of detail. */
+    suspend fun localContrast(scale: ir.pixellab.core.imaging.LocalContrast.Scale, amount: Float) =
+        transform { image ->
+            ir.pixellab.engine.android.PixelFilters.localContrast(image, scale, amount, select.selection)
+        }
+
+    /**
+     * God rays from a point, defaulting to the middle of the selection.
+     *
+     * Not narrowed by the selection: rays leave the light and cross the whole frame, and clipping
+     * them to the marquee that located the sun would cut every one of them off at its own source.
+     */
+    suspend fun lightRays(threshold: Float, length: Float, intensity: Float) {
+        val box = select.selection?.bounds
+        transform { image ->
+            val at = if (box != null) {
+                Vec2((box.left + box.right) / 2f, (box.top + box.bottom) / 2f)
+            } else {
+                Vec2(image.width / 2f, image.height / 2f)
+            }
+            ir.pixellab.engine.android.PixelFilters.lightRays(image, at, threshold, length, intensity)
+        }
+    }
+
     /**
      * Opens the shadows and pulls back the highlights, each on a local mask.
      *
