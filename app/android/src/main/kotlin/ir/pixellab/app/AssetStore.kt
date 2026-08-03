@@ -13,6 +13,18 @@ import ir.pixellab.engine.android.ImageSizes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** Where the application's own textures live inside the APK, and how they are named once decoded. */
+const val BUNDLED_TEXTURES = "textures"
+
+/**
+ * The id a bundled texture answers to.
+ *
+ * Prefixed so a built-in can never collide with an asset the user's own project brought with it,
+ * and derived from the file name so a preset can name its texture without a registry to look it up
+ * in — the preset and the file agree because they spell the same thing.
+ */
+fun bundledId(fileName: String) = AssetId("bundled:" + fileName.substringBeforeLast('.'))
+
 /**
  * The decoded images a document refers to.
  *
@@ -53,6 +65,32 @@ class AssetStore {
 
     fun put(id: AssetId, image: RasterImage) {
         replace(LinkedHashMap(decoded).also { it[id.value] = image })
+    }
+
+    /**
+     * Decodes the textures shipped inside the application.
+     *
+     * These are the exception to this app's rule that it carries no asset pack, and the exception
+     * earns itself: a built-in style is only built-in if everything it references is present the
+     * first time it is tapped. A preset whose texture had to be downloaded, or generated on the
+     * device and then differ between versions, would be a preset that sometimes works.
+     *
+     * Failures are swallowed per file for the same reason a project's assets are: one texture that
+     * will not decode must not cost the others, and a style missing its pattern still applies
+     * everything else it carries.
+     */
+    suspend fun loadBundled(assets: android.content.res.AssetManager) = withContext(Dispatchers.IO) {
+        val fresh = LinkedHashMap(decoded)
+        val names = runCatching { assets.list(BUNDLED_TEXTURES) }.getOrNull().orEmpty()
+        for (name in names) {
+            val bytes = runCatching {
+                assets.open("$BUNDLED_TEXTURES/$name").use { it.readBytes() }
+            }.getOrNull() ?: continue
+            runCatching { Codecs.decode(bytes) }.getOrNull()?.let {
+                fresh[bundledId(name).value] = it
+            }
+        }
+        withContext(Dispatchers.Main) { replace(fresh) }
     }
 
     fun clear() = replace(LinkedHashMap())

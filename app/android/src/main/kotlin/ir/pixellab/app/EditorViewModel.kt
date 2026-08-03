@@ -119,6 +119,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         // Off the main thread from the first frame: the canvas has to draw before the library is
         // known, and text arrives when it is.
         viewModelScope.launch {
+            // Before the fonts, because a built-in style is only built-in if the texture it names
+            // is already decoded the first time someone taps it. It is a handful of small files
+            // and it settles long before anyone reaches the library.
+            assetStore.loadBundled(application.assets)
+
             fontStore.rescan()
             // The chrome measures through this too, so the handles would otherwise keep the
             // placeholder box the text was measured with before the scan landed. The screen

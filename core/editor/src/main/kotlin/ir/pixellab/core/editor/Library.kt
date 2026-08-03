@@ -55,6 +55,64 @@ data class TemplatePreset(
 object Library {
 
     val styles: List<StylePreset> = listOf(
+        /**
+         * The cover title this application was built to make.
+         *
+         * The one preset here that is a whole treatment rather than a starting point, because this
+         * particular look is not something a user assembles by accident: it is six effects whose
+         * order matters, and the texture on its face is a file that ships inside the application.
+         *
+         * The asset id names a bundled texture. If it is missing the pattern simply does not paint
+         * and the rest of the style still applies — a style that refused to load because one of its
+         * six parts was absent would be worse than one that arrives a shade flatter.
+         */
+        StylePreset(
+            name = "جلد سه‌بعدی — فیروزه و طلا",
+            style = Style(
+                fill = Fill.Solid(Color.WHITE),
+                effects = listOf(
+                    // Two shadows: one tight to seat the word on the page, one wide for the depth
+                    // of the room behind it. A single shadow can be either and reads as a sticker.
+                    Effect.DropShadow(color = Color(0.04f, 0.03f, 0.02f), angle = 125f, distance = 10f, blur = 5f, opacity = 0.60f),
+                    Effect.DropShadow(color = Color(0.06f, 0.05f, 0.04f), angle = 125f, distance = 35f, blur = 25f, opacity = 0.30f),
+                    Effect.Extrude(
+                        steps = 60,
+                        stepOffset = ir.pixellab.core.model.Vec2(0.9f, 0.9f),
+                        nearFill = Fill.Solid(Color(0.98f, 0.62f, 0.13f)),
+                        farFill = Fill.Solid(Color(0.38f, 0.14f, 0.03f)),
+                    ),
+                    Effect.Overlay(
+                        fill = Fill.Gradient(
+                            type = GradientType.LINEAR,
+                            stops = listOf(
+                                GradientStop(0f, Color(0.051f, 0.231f, 0.275f)),
+                                GradientStop(0.55f, Color(0f, 0.659f, 0.588f)),
+                                GradientStop(1f, Color(0.878f, 0.624f, 0.404f)),
+                            ),
+                            angle = 45f,
+                        ),
+                    ),
+                    Effect.Overlay(
+                        fill = Fill.Pattern(asset = ir.pixellab.core.model.AssetId("bundled:paint-teal")),
+                        blendMode = ir.pixellab.core.model.BlendMode.OVERLAY,
+                        opacity = 0.6f,
+                    ),
+                    Effect.InnerShadow(color = Color(0.06f, 0.16f, 0.18f), angle = 125f, distance = 5f, blur = 16f, opacity = 0.55f),
+                    Effect.Bevel(
+                        depth = 160f,
+                        size = 13f,
+                        angle = 125f,
+                        altitude = 42f,
+                        highlightColor = Color(1f, 0.97f, 0.86f),
+                        highlightOpacity = 0.7f,
+                        shadowColor = Color(0.10f, 0.20f, 0.22f),
+                        shadowOpacity = 0.5f,
+                    ),
+                    Effect.Stroke(width = 5f, fill = Fill.Solid(Color(1f, 0.82f, 0.24f)), position = ir.pixellab.core.model.StrokePosition.OUTSIDE),
+                ),
+            ),
+        ),
+
         StylePreset(
             name = "تیتر سفید با دور مشکی",
             style = Style(

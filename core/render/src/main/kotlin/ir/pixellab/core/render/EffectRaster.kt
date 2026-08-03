@@ -122,8 +122,8 @@ object EffectRaster {
             stamp(
                 out = out,
                 source = source,
-                dx = (effect.stepOffset.x * step).roundToInt(),
-                dy = (effect.stepOffset.y * step).roundToInt(),
+                dx = effect.stepOffset.x * step,
+                dy = effect.stepOffset.y * step,
                 colour = colour,
                 strength = alpha,
             )
@@ -557,19 +557,43 @@ object EffectRaster {
         return out
     }
 
-    /** Draws the source's silhouette in one colour, offset, over whatever is already there. */
-    private fun stamp(out: Raster, source: Raster, dx: Int, dy: Int, colour: Color, strength: Float) {
+    /**
+     * Draws the source's silhouette in one colour, offset by a *fractional* amount.
+     *
+     * Sub-pixel, and that is the difference between an extrusion and a staircase. Rounding each
+     * step to whole pixels means several consecutive steps land on the same one — at an offset
+     * below a pixel, most of them do — so a sixty-step block is a handful of distinct positions
+     * with hard jumps between them, and its edge steps rather than ramps. Photoshop's duplicates
+     * sit wherever the transform puts them and are resampled; these do the same.
+     *
+     * Bilinear against the source's alpha, so an edge landing between two pixels is shared between
+     * them and the block's silhouette stays as smooth as the letter's own.
+     */
+    private fun stamp(out: Raster, source: Raster, dx: Float, dy: Float, colour: Color, strength: Float) {
         for (y in 0 until out.height) {
-            val sy = y - dy
-            if (sy < 0 || sy >= source.height) continue
             for (x in 0 until out.width) {
-                val sx = x - dx
-                if (sx < 0 || sx >= source.width) continue
-                val a = ((source.pixels[sy * source.width + sx] ushr 24) and 0xFF) / 255f * strength
+                val a = sampleAlpha(source, x - dx, y - dy) * strength
                 if (a <= 0f) continue
                 out.pixels[y * out.width + x] = overPixel(out.pixels[y * out.width + x], pack(colour, a))
             }
         }
+    }
+
+    /** The source's alpha at a fractional position, bilinearly. */
+    private fun sampleAlpha(source: Raster, x: Float, y: Float): Float {
+        val x0 = kotlin.math.floor(x).toInt()
+        val y0 = kotlin.math.floor(y).toInt()
+        val fx = x - x0
+        val fy = y - y0
+
+        fun at(px: Int, py: Int): Float {
+            if (px < 0 || py < 0 || px >= source.width || py >= source.height) return 0f
+            return ((source.pixels[py * source.width + px] ushr 24) and 0xFF) / 255f
+        }
+
+        val top = at(x0, y0) * (1f - fx) + at(x0 + 1, y0) * fx
+        val bottom = at(x0, y0 + 1) * (1f - fx) + at(x0 + 1, y0 + 1) * fx
+        return top * (1f - fy) + bottom * fy
     }
 
     private fun over(under: Raster, above: Raster, mode: BlendMode, opacity: Float): Raster {
