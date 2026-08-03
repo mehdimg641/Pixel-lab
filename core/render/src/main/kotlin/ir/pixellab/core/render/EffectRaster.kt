@@ -50,10 +50,19 @@ object EffectRaster {
         val effects = style.activeEffects
         if (effects.isEmpty()) return source.copy()
 
-        // The layer itself, with anything that paints into it already applied.
+        // The layer itself, with everything that paints *into* it already applied. Order matters
+        // among these too: the overlay lays the colour down, the inner shadow darkens its edges,
+        // and the bevel lights the result — a bevel computed before the colour exists would shade
+        // a surface nobody sees.
         var layer = source.copy()
         for (effect in effects.filterIsInstance<Effect.Overlay>()) {
             layer = overlay(layer, effect)
+        }
+        for (effect in effects.filterIsInstance<Effect.InnerShadow>()) {
+            layer = innerShadow(layer, source, effect)
+        }
+        for (effect in effects.filterIsInstance<Effect.Bevel>()) {
+            layer = bevel(layer, source, effect)
         }
 
         var out = Raster.empty(source.width, source.height)
@@ -207,6 +216,168 @@ object EffectRaster {
             }
         }
         return out
+    }
+
+    /**
+     * Bevel and emboss — the effect that makes a flat shape read as a solid one.
+     *
+     * Built the way Photoshop builds it, which is a *height field and a light* rather than a pair of
+     * offset copies. Every naive implementation draws the shape once lightened up and left, once
+     * darkened down and right, and the result gives itself away instantly: the highlight is the
+     * letter's own silhouette rather than its edge, so a round bowl gets a crescent where it should
+     * get a rim that follows the curve all the way round.
+     *
+     * Three steps. The distance from each pixel to the outside of the shape, clamped to the bevel's
+     * size, gives a ramp from edge to interior. The profile curve shapes that ramp — the whole
+     * difference between a rounded shoulder and a chiselled one lives here, and nothing else. Then
+     * the surface normal is the gradient of that height field, and the shading is one dot product
+     * against a light placed by the effect's own angle and altitude.
+     *
+     * The two halves go on with different blend modes because they are different things: the
+     * highlight screens light onto the surface and the shadow multiplies it away, so a black face
+     * still takes a highlight and a white one still takes a shadow. Painting both with normal alpha
+     * is the other classic mistake, and it turns every bevel grey.
+     */
+    private fun bevel(layer: Raster, source: Raster, effect: Effect.Bevel): Raster {
+        val w = layer.width
+        val h = layer.height
+        val size = effect.size.coerceAtLeast(1f)
+        val inside = distanceInside(source)
+
+        var height = FloatArray(inside.size) {
+            effect.profile.evaluate((inside[it] / size).coerceIn(0f, 1f))
+        }
+        // Smoothed before the gradient is taken, and not optionally.
+        //
+        // A chamfer distance field advances in steps of 1 and √2, so its surface is faceted at the
+        // scale of a pixel. That is invisible in the field itself and glaring in its derivative: the
+        // normal flips between a handful of orientations across a smooth shoulder and the bevel
+        // comes out mottled, which reads as noise rather than as a surface. One pixel of blur costs
+        // nothing and removes it. Photoshop's own soften rides on top of the same pass.
+        height = blur(height, w, h, (effect.soften + 1f).coerceAtLeast(1f))
+
+        // A light on the unit sphere: azimuth round the plane, altitude up out of it.
+        val azimuth = effect.angle * DEG_TO_RAD
+        val altitude = effect.altitude * DEG_TO_RAD
+        val lx = cos(altitude) * cos(azimuth)
+        val ly = -cos(altitude) * sin(azimuth)
+        val lz = sin(altitude)
+
+        // Photoshop's depth is a percentage and runs well past 100 on purpose; it scales how far the
+        // height climbs across the bevel, which is what turns a soft swell into an inflated dome.
+        val relief = (effect.depth / HUNDRED) * size * DEPTH_GAIN
+        val out = layer.copy()
+
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val i = y * w + x
+                val alpha = (source.pixels[i] ushr 24) and 0xFF
+                if (alpha == 0) continue
+
+                // Central differences, clamped at the border so the frame's edge does not read as a
+                // cliff and light up every letter that touches it.
+                val dx = (heightAt(height, w, h, x + 1, y) - heightAt(height, w, h, x - 1, y)) * relief
+                val dy = (heightAt(height, w, h, x, y + 1) - heightAt(height, w, h, x, y - 1)) * relief
+                val length = kotlin.math.sqrt(dx * dx + dy * dy + 4f)
+                val nx = -dx / length
+                val ny = -dy / length
+                val nz = 2f / length
+
+                var lambert = nx * lx + ny * ly + nz * lz
+                if (effect.direction == ir.pixellab.core.model.BevelDirection.DOWN) lambert = -lambert
+                // Against a flat surface's response, so an unbevelled interior stays exactly as it
+                // was painted instead of being tinted by the light everywhere.
+                val flat = lz
+                val delta = effect.glossContour.evaluate(abs(lambert - flat).coerceIn(0f, 1f))
+                if (delta <= 0f) continue
+
+                out.pixels[i] = if (lambert > flat) {
+                    paintOn(
+                        out.pixels[i],
+                        effect.highlightColor,
+                        delta * effect.highlightOpacity,
+                        effect.highlightBlend,
+                    )
+                } else {
+                    paintOn(
+                        out.pixels[i],
+                        effect.shadowColor,
+                        delta * effect.shadowOpacity,
+                        effect.shadowBlend,
+                    )
+                }
+            }
+        }
+        return out
+    }
+
+    /**
+     * A shadow cast onto the inside of the shape by its own edge.
+     *
+     * The same arithmetic as the drop shadow with the mask inverted, and then clipped back to the
+     * shape — which is the whole of what makes it read as an inset face rather than as a smudge
+     * round the outside.
+     */
+    private fun innerShadow(layer: Raster, source: Raster, effect: Effect.InnerShadow): Raster {
+        val w = layer.width
+        val h = layer.height
+        var hole = FloatArray(source.pixels.size) {
+            1f - ((source.pixels[it] ushr 24) and 0xFF) / 255f
+        }
+        if (effect.blur > 0f) hole = blur(hole, w, h, effect.blur)
+
+        val radians = (effect.angle + STRAIGHT) * DEG_TO_RAD
+        val dx = (cos(radians) * effect.distance).roundToInt()
+        val dy = (-sin(radians) * effect.distance).roundToInt()
+
+        val out = layer.copy()
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val i = y * w + x
+                val alpha = ((source.pixels[i] ushr 24) and 0xFF) / 255f
+                if (alpha <= 0f) continue
+                val darkness = sampleAt(hole, w, h, x - dx, y - dy) * alpha
+                if (darkness <= 0f) continue
+                out.pixels[i] = paintOn(
+                    out.pixels[i],
+                    effect.color,
+                    darkness * effect.opacity,
+                    effect.blendMode,
+                )
+            }
+        }
+        return out
+    }
+
+    /** Blends one colour onto one pixel, keeping the pixel's own alpha. */
+    private fun paintOn(pixel: Int, colour: Color, strength: Float, mode: BlendMode): Int {
+        val k = strength.coerceIn(0f, 1f)
+        if (k <= 0f) return pixel
+        val backdrop = Triple(
+            ((pixel shr 16) and 0xFF) / 255f,
+            ((pixel shr 8) and 0xFF) / 255f,
+            (pixel and 0xFF) / 255f,
+        )
+        val blended = Blending.rgb(mode, backdrop, Triple(colour.r, colour.g, colour.b))
+        return (pixel and ALPHA_MASK) or
+            (byte(lerp(backdrop.first, blended.first, k)) shl 16) or
+            (byte(lerp(backdrop.second, blended.second, k)) shl 8) or
+            byte(lerp(backdrop.third, blended.third, k))
+    }
+
+    private fun heightAt(height: FloatArray, width: Int, h: Int, x: Int, y: Int): Float =
+        height[y.coerceIn(0, h - 1) * width + x.coerceIn(0, width - 1)]
+
+    /** Distance from each opaque pixel to the nearest transparent one — the bevel's own ramp. */
+    private fun distanceInside(source: Raster): FloatArray {
+        val inverted = Raster(
+            source.width,
+            source.height,
+            IntArray(source.pixels.size) {
+                if ((source.pixels[it] ushr 24) > HALF_BYTE) 0 else (0xFF shl 24)
+            },
+        )
+        return distanceOutside(inverted)
     }
 
     // ---- the pieces the effects are built from ---------------------------------------------------
@@ -410,4 +581,15 @@ object EffectRaster {
 
     /** Three box passes approximate a Gaussian; the fourth is not worth its cost. */
     private const val BOX_PASSES = 3
+
+    private const val ALPHA_MASK = -0x1000000
+    private const val HUNDRED = 100f
+
+    /**
+     * How steeply the height field climbs for a given depth.
+     *
+     * Photoshop's depth of 100% is a pronounced bevel rather than a barely visible one, so the
+     * gradient needs a multiplier above one to match; below this the default reads as a smudge.
+     */
+    private const val DEPTH_GAIN = 4f
 }

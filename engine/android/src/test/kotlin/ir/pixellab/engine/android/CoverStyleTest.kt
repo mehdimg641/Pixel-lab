@@ -218,6 +218,28 @@ class CoverStyleTest {
                         angle = 74f,
                     ),
                 ),
+                // The inset face: a soft dark edge just inside the outline, which is what stops
+                // the face reading as a flat sticker laid on top of the block.
+                Effect.InnerShadow(
+                    color = Color(0.06f, 0.16f, 0.18f),
+                    angle = 125f,
+                    distance = 5f,
+                    blur = 16f,
+                    opacity = 0.55f,
+                ),
+                // The rim that makes it solid. A height field lit from one direction, not a pair of
+                // offset copies — the highlight has to follow the curve of a bowl all the way round.
+                Effect.Bevel(
+                    depth = 160f,
+                    size = 13f,
+                    angle = 125f,
+                    altitude = 42f,
+                    profile = Curve.ROUNDED,
+                    highlightColor = Color(1f, 0.97f, 0.86f),
+                    highlightOpacity = 0.7f,
+                    shadowColor = Color(0.10f, 0.20f, 0.22f),
+                    shadowOpacity = 0.5f,
+                ),
                 Effect.Stroke(
                     width = 5f,
                     fill = Fill.Solid(Color(1f, 0.82f, 0.24f)),
