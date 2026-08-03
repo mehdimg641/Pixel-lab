@@ -177,6 +177,18 @@ data class Material(
     val clearCoat: Float = 0f,
     val clearCoatRoughness: Float = 0.1f,
     val emissive: Color = Color.TRANSPARENT,
+    /**
+     * Paint this surface its base colour and do not light it.
+     *
+     * Not a shortcut — it is how a *stroke* is expressed on real geometry, and without it a whole
+     * family of type treatment is unreachable. The bright rim tracing a letter in a poster title is
+     * a constant colour: it reads the same on the edge facing the light and the edge facing away,
+     * because in the Photoshop stack it came from a stroke rather than from a surface. Shade that
+     * same rim physically and it can only be bright where it faces the key light, which is correct
+     * and is not the look. A designer asking for a gold line round their letter is not asking for
+     * gold; they are asking for a line.
+     */
+    val unlit: Boolean = false,
 ) {
     companion object {
         val GLOSSY_WHITE = Material(baseColor = Color.WHITE, roughness = 0.25f, clearCoat = 1f)
@@ -263,6 +275,20 @@ data class Geometry3D(
      * this replaces the colour being lit, not the lighting.
      */
     val faceFill: Fill.Gradient? = null,
+
+    /**
+     * A gradient painted along the depth of the side walls, in place of [sideMaterial]'s colour.
+     *
+     * Ramped from the front of the extrusion to the back rather than across the letter, because that
+     * is the axis the look lives on: a poster title's block runs bright where it leaves the face and
+     * falls into shadow at the far end, evenly, on every letter and every edge.
+     *
+     * A physically shaded metal cannot be asked for that. Its brightness is decided by where each
+     * wall faces relative to the light, so one side of a letter blazes and the opposite side goes
+     * black — correct, and not what the treatment is. This makes the falloff something the designer
+     * states rather than something the lighting happens to produce.
+     */
+    val sideFill: Fill.Gradient? = null,
     /**
      * How far the back of the extrusion leans sideways, per unit of depth.
      *

@@ -82,6 +82,7 @@ object Rasteriser {
         // per fragment, because both are constant across the whole letter and sorting a stop list
         // inside the inner loop would cost more than the shading does.
         val facePaint = geometry.faceFill?.let { FacePaint.of(it, mesh) }
+        val sidePaint = geometry.sideFill?.let { SidePaint.of(it, mesh) }
 
         for (t in 0 until mesh.triangleCount) {
             val surface = mesh.surfaces[t]
@@ -99,8 +100,12 @@ object Rasteriser {
                 },
                 // Only the face, and only where a mark has not claimed its own material — a dot
                 // given chrome asked for chrome, not for the body's gradient.
-                paint = facePaint?.takeIf {
-                    surface == Surface.FACE && !(markMaterial != null && mesh.marks[t])
+                paint = when {
+                    markMaterial != null && mesh.marks[t] -> null
+                    surface == Surface.FACE -> facePaint
+                    // The bevel takes the wall's ramp too, so the two meet in one colour instead of
+                    // stepping at the seam between them.
+                    else -> sidePaint
                 },
                 geometry = geometry,
                 colour = colour,
@@ -121,7 +126,7 @@ object Rasteriser {
         viewProjection: Mat4,
         eye: Vec3,
         material: Material,
-        paint: FacePaint?,
+        paint: SurfacePaint?,
         geometry: Geometry3D,
         colour: IntArray,
         depth: FloatArray,
@@ -229,17 +234,30 @@ object Rasteriser {
                 } else {
                     val ox = (l0 * objectA.x * wa + l1 * objectB.x * wb + l2 * objectC.x * wc) / invW
                     val oy = (l0 * objectA.y * wa + l1 * objectB.y * wb + l2 * objectC.y * wc) / invW
-                    material.copy(baseColor = Pbr.decode(paint.at(ox, oy)))
+                    val oz = (l0 * objectA.z * wa + l1 * objectB.z * wb + l2 * objectC.z * wc) / invW
+                    val sampled = paint.at(ox, oy, oz)
+                    // An unlit surface emits its colour directly, so the ramp must stay in the space
+                    // the user authored it in; a lit one is about to be shaded in linear light.
+                    material.copy(
+                        baseColor = if (material.unlit) sampled else Pbr.decode(sampled),
+                    )
                 }
 
-                val shaded = Pbr.toneMap(
-                    Pbr.shade(
-                        normal = normal,
-                        view = toEye,
-                        material = painted,
-                        rig = geometry.lighting,
-                    ),
-                )
+                // Straight through for an unlit surface: no shading, and no tone map either. Tone
+                // mapping exists to bring a lit result back into display range, and running it over
+                // a colour the user chose would darken and desaturate the very swatch they picked.
+                val shaded = if (painted.unlit) {
+                    painted.baseColor
+                } else {
+                    Pbr.toneMap(
+                        Pbr.shade(
+                            normal = normal,
+                            view = toEye,
+                            material = painted,
+                            rig = geometry.lighting,
+                        ),
+                    )
+                }
                 colour[at] = argb(shaded)
             }
         }
@@ -331,8 +349,15 @@ object Rasteriser {
         return out
     }
 
+    /**
+     * Decodes a material's authored sRGB swatches into the linear light the shading runs in.
+     *
+     * An unlit material keeps its base colour exactly as authored, because it never reaches the
+     * shading at all — decoding it here and emitting it unchanged would show the user a different
+     * colour from the one they picked.
+     */
     private fun linearised(material: Material) = material.copy(
-        baseColor = Pbr.decode(material.baseColor),
+        baseColor = if (material.unlit) material.baseColor else Pbr.decode(material.baseColor),
         emissive = Pbr.decode(material.emissive),
     )
 
@@ -373,6 +398,11 @@ object Rasteriser {
  * the mesh's, not the canvas's, which is what makes a ramp describe *the word* — the same gradient
  * reads identically on a caption and a poster headline, and does not shift when the text moves.
  */
+/** A gradient sampled per fragment from the letter's own coordinates. */
+internal interface SurfacePaint {
+    fun at(x: Float, y: Float, z: Float): Color
+}
+
 internal class FacePaint private constructor(
     private val gradient: Fill.Gradient,
     private val stops: List<GradientStop>,
@@ -380,8 +410,8 @@ internal class FacePaint private constructor(
     private val minY: Float,
     private val spanX: Float,
     private val spanY: Float,
-) {
-    fun at(x: Float, y: Float): Color = Ramp.colorAt(
+) : SurfacePaint {
+    override fun at(x: Float, y: Float, z: Float): Color = Ramp.colorAt(
         stops,
         Ramp.parameterAt(gradient, (x - minX) / spanX, (y - minY) / spanY),
     )
@@ -402,6 +432,42 @@ internal class FacePaint private constructor(
                 spanY = spanY,
             )
         }
+    }
+}
+
+/**
+ * A gradient sampled along the depth of the extrusion rather than across the letter.
+ *
+ * The front of the block is 0 and the back is 1, whatever the letter's outline is doing, so every
+ * wall on every letter falls off together. That is the property the treatment depends on and the
+ * one physical shading cannot give: lit metal is bright where it happens to face the key light, so
+ * the left of a letter blazes while its right goes black.
+ */
+internal class SidePaint private constructor(
+    private val gradient: Fill.Gradient,
+    private val stops: List<GradientStop>,
+    private val minZ: Float,
+    private val spanZ: Float,
+) : SurfacePaint {
+    // Handed to the ramp as x, so a gradient at the default angle runs front-to-back and its stops
+    // read in the order the user placed them.
+    override fun at(x: Float, y: Float, z: Float): Color = Ramp.colorAt(
+        stops,
+        Ramp.parameterAt(gradient, 1f - (z - minZ) / spanZ, HALF),
+    )
+
+    companion object {
+        fun of(gradient: Fill.Gradient, mesh: Mesh): SidePaint {
+            val (min, max) = mesh.bounds()
+            return SidePaint(
+                gradient = gradient,
+                stops = gradient.stops.sortedBy { it.position },
+                minZ = min.z,
+                spanZ = (max.z - min.z).takeIf { it > 0f } ?: 1f,
+            )
+        }
+
+        private const val HALF = 0.5f
     }
 }
 

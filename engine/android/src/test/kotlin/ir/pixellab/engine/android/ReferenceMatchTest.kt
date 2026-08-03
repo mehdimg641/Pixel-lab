@@ -78,8 +78,11 @@ class ReferenceMatchTest {
         bevelSize = size * bevelFraction,
         faceMaterial = Material(roughness = 0.30f, clearCoat = 1f),
         faceFill = TEAL_TO_PEACH,
-        bevelMaterial = ORANGE,
-        sideMaterial = ORANGE,
+        // The rim is a stroke, so it is unlit: one colour the whole way round the letter, the same
+        // on the edge facing the light and the edge facing away.
+        bevelMaterial = Material(baseColor = Color(1f, 0.80f, 0.20f), unlit = true),
+        sideMaterial = Material(unlit = true),
+        sideFill = ORANGE_BLOCK,
         // Down and to the right, which is where the reference throws its block.
         extrusionTilt = Vec2(0.34f, -0.30f),
         rotation = Vec3(-3f, 4f, 0f),
@@ -166,10 +169,18 @@ class ReferenceMatchTest {
     }
 
     private companion object {
-        val ORANGE = Material(
-            baseColor = Color(0.96f, 0.52f, 0.11f),
-            metallic = 1f,
-            roughness = 0.32f,
+        /**
+         * The block, ramped front to back.
+         *
+         * Bright saturated orange where it leaves the face, falling to a deep burnt tone at the far
+         * end — stated outright rather than left to whichever way each wall happens to face.
+         */
+        val ORANGE_BLOCK = Fill.Gradient(
+            stops = listOf(
+                GradientStop(0f, Color(0.98f, 0.62f, 0.13f)),
+                GradientStop(0.45f, Color(0.85f, 0.42f, 0.08f)),
+                GradientStop(1f, Color(0.42f, 0.16f, 0.04f)),
+            ),
         )
 
         /**
