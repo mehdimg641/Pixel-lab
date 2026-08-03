@@ -45,15 +45,48 @@ object TextTo3D {
         height: Int,
         rasterizer: TextRasterizer = TextRasterizer(),
         supersample: Int = 2,
+        /**
+         * Where the document's environment map comes from, when it names one.
+         *
+         * A function rather than the pixels, because the common case is that no environment is
+         * named and the generated studio is used — resolving an asset nobody asked for would decode
+         * a photograph on every render.
+         */
+        assets: AssetSource = AssetSource.NONE,
     ): RasterImage? {
         val font = fonts.resolve(layer.spec.font) ?: return null
         val outline = TextToShape.outlineOf(layer.spec, font, rasterizer)
         val mesh = meshOf(outline, geometry)
         if (mesh.triangleCount == 0) return null
 
-        val rendered = Rasteriser.render(mesh, geometry, width, height, supersample)
+        val rendered = Rasteriser.render(
+            mesh, geometry, width, height, supersample,
+            environment = environmentFor(geometry.lighting, assets),
+        )
         if (rendered.isEmpty) return null
         return RasterImage(rendered.width, rendered.height, rendered.pixels)
+    }
+
+    /**
+     * The document's environment, or the generated studio when it names none or the file is gone.
+     *
+     * A missing asset falls back rather than failing. An environment is a *look*, and a render that
+     * refused to draw because a photograph had been moved would be worse than one that draws in the
+     * studio it shipped with.
+     */
+    private fun environmentFor(
+        rig: ir.pixellab.core.model.LightRig,
+        assets: AssetSource,
+    ): ir.pixellab.core.mesh.EnvironmentMap {
+        val asset = rig.environment ?: return ir.pixellab.core.mesh.Studio
+        val image = assets.load(asset) ?: return ir.pixellab.core.mesh.Studio
+        return ir.pixellab.core.mesh.LatLong(
+            pixels = image.pixels,
+            width = image.width,
+            height = image.height,
+            intensity = rig.environmentIntensity,
+            rotation = rig.environmentRotation,
+        )
     }
 
     /**

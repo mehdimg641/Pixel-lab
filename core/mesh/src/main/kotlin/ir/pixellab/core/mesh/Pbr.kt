@@ -38,6 +38,12 @@ object Pbr {
         material: Material,
         rig: LightRig,
         ambient: Color = AMBIENT,
+        /**
+         * Where reflections come from. Defaults to the generated studio, which is why a gold letter
+         * looks like gold on a first launch with no assets at all; a document naming a real
+         * environment gets that one instead.
+         */
+        environment: EnvironmentMap = Studio,
     ): Color {
         val n = normal.normalised()
         val v = view.normalised()
@@ -62,7 +68,7 @@ object Pbr {
         // by direct light alone comes out a flat grey slab. A metal's appearance *is* what it
         // reflects, and with no environment there is nothing to reflect.
         val reflected = (n * (2f * nDotV) - v).normalised()
-        val specularEnvironment = environment(reflected, roughness)
+        val specularEnvironment = environment.sample(reflected, roughness)
         // Fresnel at the viewing angle, weakened by roughness so a matte surface does not develop
         // a mirror rim it has no business having.
         val ambientF = fresnelRoughness(nDotV, f0, roughness, metallic)
@@ -70,7 +76,7 @@ object Pbr {
         // A very rough sample along the normal stands in for the irradiance a diffuse surface
         // gathers. Crude next to a real convolution, and it buys the thing that matters: a face
         // turned away from every light is tinted by the room rather than being black.
-        val diffuseEnvironment = environment(n, 1f)
+        val diffuseEnvironment = environment.sample(n, 1f)
 
         var result = Vec3(
             diffuseColor.x * diffuseEnvironment.x * ambient.r * AMBIENT_GAIN +
@@ -213,7 +219,7 @@ object Pbr {
      * @param roughness blurs the reflection by fading towards the environment's average, which is
      *   what a real prefiltered map converges to at its coarsest level.
      */
-    internal fun environment(direction: Vec3, roughness: Float): Vec3 {
+    internal fun studio(direction: Vec3, roughness: Float): Vec3 {
         val d = direction.normalised()
 
         // Sky above, floor below, with a soft transition rather than a horizon line — a hard line

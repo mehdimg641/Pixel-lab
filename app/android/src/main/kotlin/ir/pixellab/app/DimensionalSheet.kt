@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import ir.pixellab.core.editor.EditorState
@@ -14,6 +15,8 @@ import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.Light
 import ir.pixellab.core.model.Material
 import ir.pixellab.core.model.Vec3
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 /**
@@ -31,6 +34,13 @@ import kotlinx.coroutines.launch
 @Composable
 fun DimensionalSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Scanned here rather than held by the view model: the whole point of the assets folder is that
+    // the user copies a file in from *outside* the app, so there is no event to react to and the
+    // only correct time to look is when the panel that offers them is being drawn.
+    val environments = remember {
+        AssetLibrary.scan(context).firstOrNull { it.kind == AssetKind.ENVIRONMENTS }?.files.orEmpty()
+    }
     val layer = state.primaryLayer as? Layer.Text
     if (layer == null) {
         Column(modifier.fillMaxWidth()) {
@@ -142,6 +152,40 @@ fun DimensionalSheetBody(state: EditorState, model: EditorViewModel, modifier: M
                     ),
                 )
             }
+        }
+
+        SheetSection("محیط بازتاب")
+        // The whole reason a metal looks like metal. Three point lights cannot light a mirror: a
+        // chrome letter shaded by direct light alone is a flat grey slab, because what a mirror
+        // shows is the *room*. The generated studio is what makes that work with no assets at all;
+        // this is for when the user has a real photograph of a real place.
+        SheetChips {
+            SheetChip("استودیوی تولیدشده", chosen = geometry.lighting.environment == null) {
+                model.setEnvironment(id, null, "")
+            }
+            for (file in environments) {
+                val name = file.name.substringBeforeLast('.')
+                SheetChip(name, chosen = geometry.lighting.environment?.value == "hdr:$name") {
+                    scope.launch {
+                        val image = withContext(Dispatchers.IO) {
+                            runCatching { ir.pixellab.core.codec.Codecs.decode(file.readBytes()) }.getOrNull()
+                        }
+                        model.setEnvironment(id, image, name)
+                    }
+                }
+            }
+        }
+        if (geometry.lighting.environment != null) {
+            SheetSlider("شدت محیط", geometry.lighting.environmentIntensity, 0f..4f, onChange = { v, _ ->
+                put(geometry.copy(lighting = geometry.lighting.copy(environmentIntensity = v)))
+            })
+            // Turning the world rather than the letter, which is how a highlight is placed on a
+            // curve without moving the letter off the layout.
+            SheetSlider("چرخش محیط", geometry.lighting.environmentRotation, 0f..360f, onChange = { v, _ ->
+                put(geometry.copy(lighting = geometry.lighting.copy(environmentRotation = v)))
+            })
+        } else {
+            SheetHint("پوشهٔ hdr در فضای اپ را پر کنید تا اینجا فهرست شود — تصویر ۳۶۰ درجه (equirectangular)")
         }
 
         SheetSection("ساخت")

@@ -39,6 +39,11 @@ object Rasteriser {
         width: Int,
         height: Int,
         supersample: Int = 2,
+        /**
+         * What the metal reflects. Defaults to the generated studio; a caller that has resolved
+         * `LightRig.environment` to pixels passes a [LatLong] instead.
+         */
+        environment: EnvironmentMap = Studio,
     ): Rendered {
         require(width > 0 && height > 0) { "the target must be positive, got ${width}x$height" }
         if (mesh.triangleCount == 0) return Rendered(width, height, IntArray(width * height))
@@ -108,6 +113,7 @@ object Rasteriser {
                     else -> sidePaint
                 },
                 geometry = geometry,
+                environment = environment,
                 colour = colour,
                 depth = depth,
                 width = w,
@@ -128,6 +134,7 @@ object Rasteriser {
         material: Material,
         paint: SurfacePaint?,
         geometry: Geometry3D,
+        environment: EnvironmentMap,
         colour: IntArray,
         depth: FloatArray,
         width: Int,
@@ -255,6 +262,7 @@ object Rasteriser {
                             view = toEye,
                             material = painted,
                             rig = geometry.lighting,
+                            environment = environment,
                         ),
                     )
                 }

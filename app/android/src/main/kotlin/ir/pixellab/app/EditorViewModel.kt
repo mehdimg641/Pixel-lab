@@ -296,6 +296,28 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      * pixels cannot be turned back into a string — and losing the editable text along with it is
      * the sort of thing a user discovers an hour later when the client changes a word.
      */
+    /**
+     * Points a 3D layer at an environment map, or back at the generated studio.
+     *
+     * The pixels go into the asset store under an id derived from the file name, so the document
+     * refers to a name rather than carrying a megabyte of photograph, and the same map chosen twice
+     * is one asset.
+     *
+     * @return false when the file could not be decoded, which the caller reports rather than
+     *   silently leaving the layer in the studio.
+     */
+    fun setEnvironment(id: LayerId, image: ir.pixellab.core.codec.RasterImage?, name: String): Boolean {
+        val geometry = geometry3DOf(id)
+        if (image == null) {
+            setGeometry3D(id, geometry.copy(lighting = geometry.lighting.copy(environment = null)))
+            return true
+        }
+        val asset = ir.pixellab.core.model.AssetId("hdr:$name")
+        assetStore.put(asset, image)
+        setGeometry3D(id, geometry.copy(lighting = geometry.lighting.copy(environment = asset)))
+        return true
+    }
+
     suspend fun render3D(id: LayerId, supersample: Int = 2): Boolean {
         val layer = state.document.findLayer(id) as? Layer.Text ?: return false
         if (!ir.pixellab.engine.android.TextTo3D.canRender(layer, fonts)) return false
@@ -310,6 +332,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 width = canvas.width,
                 height = canvas.height,
                 supersample = supersample,
+                assets = assetStore.source,
             )
         } ?: return false
 
