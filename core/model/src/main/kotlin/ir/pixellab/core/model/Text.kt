@@ -274,10 +274,10 @@ data class Geometry3D(
      * upright and frontal while their depth runs off at an angle. It is a shear, not a rotation, and
      * the two are not interchangeable at any angle.
      *
-     * **Known limit: gaps open in the block past roughly a third.** A straight extrusion never shows
-     * its back, so a seam there was invisible and stayed unnoticed; leaning the block far enough
-     * swings that seam into view and the extrusion breaks into facets. Below about 0.3 it reads as
-     * one solid, which covers the treatments this exists for. The seam itself is the thing to fix.
+     * There is no safe range to respect. This carried a warning that gaps opened in the block past
+     * roughly a third, which turned out to be a misreading: the extrusion had never been a closed
+     * surface, and leaning it was only the first thing to make that visible. The surface is closed
+     * now and the lean is bounded by taste alone.
      */
     val extrusionTilt: Vec2 = Vec2.ZERO,
 
