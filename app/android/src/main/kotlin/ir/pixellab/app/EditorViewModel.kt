@@ -1495,6 +1495,79 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     /** What the settings screen says is answering: the model's name, or the classical path. */
     fun cutoutDescription(): String = cutout().describe
 
+    // ---- faces -----------------------------------------------------------------------------------
+
+    /**
+     * The face detector, created once and kept.
+     *
+     * Unlike the segmentation model, this one is bundled in the APK rather than installed by the
+     * user, so there is nothing to re-check per call — and construction loads a 3.7 MB graph, which
+     * is not something to repeat on every slider drag.
+     */
+    private val faceModel: ir.pixellab.core.ai.FaceModel? by lazy {
+        ir.pixellab.engine.android.MediaPipeFaceModel.create(getApplication())
+    }
+
+    /** The faces found in the selected layer, cached until the layer's pixels change. */
+    var faces: List<ir.pixellab.core.ai.FaceLandmarks> by mutableStateOf(emptyList())
+        private set
+
+    /** Null until a detection has been run; then a message the panel can show. */
+    var faceOutcome: String? by mutableStateOf(null)
+        private set
+
+    var detecting: Boolean by mutableStateOf(false)
+        private set
+
+    /**
+     * Finds the faces in the selected image layer.
+     *
+     * Explicit rather than automatic on selection. Detection is a hundred-millisecond pass over a
+     * full-resolution photograph, and running it every time a layer is touched would tax every user
+     * for a feature most of them are not using at that moment.
+     */
+    suspend fun detectFaces() {
+        val layer = state.primaryLayer as? Layer.Image
+        if (layer == null) {
+            faceOutcome = "یک لایهٔ تصویر انتخاب کنید"
+            return
+        }
+        val model = faceModel
+        if (model == null) {
+            faceOutcome = "مدل چهره روی این دستگاه بارگذاری نشد"
+            return
+        }
+        val source = assetStore.source.load(layer.asset) ?: return
+        detecting = true
+        val found = try {
+            withContext(kotlinx.coroutines.Dispatchers.Default) {
+                model.detect(source.pixels, source.width, source.height)
+            }
+        } finally {
+            detecting = false
+        }
+        faces = found
+        faceOutcome = when (found.size) {
+            0 -> "چهره‌ای پیدا نشد"
+            1 -> "یک چهره پیدا شد"
+            else -> "${Digits.prose(found.size)} چهره پیدا شد"
+        }
+    }
+
+    /** Applies every face setting in one pass, so the picture is resampled once. */
+    suspend fun applyFaceSettings(settings: ir.pixellab.engine.android.FaceTools.Settings) {
+        val found = faces
+        if (found.isEmpty() || settings.isIdentity) return
+        transform { image -> ir.pixellab.engine.android.FaceTools.apply(image, found, settings) }
+        // The mesh described the pixels as they were. After a warp it describes something that is no
+        // longer there, and a second adjustment computed from stale points moves the wrong part of
+        // the face — so the panel asks for a fresh detection rather than silently drifting.
+        if (settings.reshape.values.any { it != 0f }) {
+            faces = emptyList()
+            faceOutcome = "تغییر شکل اعمال شد — برای ادامه دوباره تشخیص بدهید"
+        }
+    }
+
     /** Turns the current selection into a mask on the selected layer, non-destructively. */
     fun maskFromSelection(): Boolean {
         val id = state.selection.primary ?: return false

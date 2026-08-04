@@ -915,6 +915,33 @@ rule([1277, 1278], DONE, "`SnapEngine.Kind.GRID`")
 rule([951], DONE, "`Material.unlit` — سطحی که رنگ خودش را نگه می‌دارد، یعنی حاشیه روی حجم سه‌بعدی")
 rule([965], HALF, "بیست‌ودو تنظیم روی لایه هست و `Adjustment.ColorLookup` جدول می‌خواند؛ لایهٔ تنظیم روی کل سند نه")
 
+# ─────────────────────────────────────── the face model, which was a decision and is now made
+#
+# The user's answer to "this needs a model you have to supply" was: download it yourself. So it is
+# downloaded — MediaPipe's face_landmarker.task, Apache 2.0, 3.7 MB, bundled in the APK and running
+# entirely on the device. docs/licenses/README.md records why that does not contradict the offline
+# rule: nothing about a detection leaves the phone.
+#
+# Everything below was blocked on exactly that and on nothing else. The pixel operations already
+# existed; what was missing was knowing where a lip was.
+rule([460], DONE, "`FaceRetouch.tint` روی ماسک لب/گونه/پلک/ابرو — رنگ روی بافت خودِ عکس می‌نشیند")
+rule([461], DONE, "`FaceRetouch.whiten` روی ماسک داخل دهان — اول اشباع‌زدایی، بعد روشنایی")
+rule([462], DONE, "`FaceRetouch.removeRedEye` — مردمک را داخل ماسک چشم پیدا می‌کند")
+rule((757, 758), DONE, "سفید کردن دندان با لغزندهٔ شدت، در شیت پرتره")
+rule((759, 760), DONE, "`FaceRetouch.brighten` و `FaceReshape.Adjustment.EYES`")
+rule((762, 766), DONE, "لاغری صورت، خط فک، گونه، بینی — `FaceReshape` با نقاط مهارشده")
+rule(767, HALF, "حجم مو به ماسک مو نیاز دارد که مدل چهره نمی‌دهد")
+rule(768, HALF, "خط رویش مو — همان")
+rule((773, 782), DONE, "آرایش دیجیتال روی ماسک‌های `FaceRegion`، با شفافیتِ جدا برای هر کدام")
+rule(799, DONE, "`FaceRetouch.removeRedEye`")
+rule((820, 821), DONE, "`FaceRetouch.reduceShine` و نرمی پوستِ محدود به ماسکِ پوست")
+rule((831, 832), HALF, "فرم دندان و لبخند به مش دندان نیاز دارند، نه نقاط چهره")
+rule((833, 835), HALF, "گردن، شانه و قد بیرون از مشِ چهره‌اند — با `Liquify` دستی شدنی")
+rule(836, HALF, "عضله — همان")
+rule(837, DONE, "`FaceRetouch.reduceShine` رنگ پوست را به میانگینِ خودِ همان صورت می‌برد")
+rule([843, 844], HALF, "همهٔ اجزایش هست و با یک پیش‌فرض جمع می‌شود؛ دکمهٔ «یک‌لمسی» هنوز نه")
+rule(1076, DONE, "شیت پرتره — تشخیص، آرایش، دندان، چشم، تغییر شکل")
+
 # ───────────────────────────────────────────────── Hypic, from sixteen screenshots
 #
 # A naming collision worth writing down: section 5 is headed "های پیک (HiPaint)" and its hundred

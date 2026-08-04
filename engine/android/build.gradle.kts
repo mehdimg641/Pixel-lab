@@ -67,6 +67,7 @@ dependencies {
     // The inference runtime. Heavy — several megabytes of native library per ABI — and worth it:
     // it is what makes a professional segmentation network run on the device at all.
     implementation(libs.onnxruntime.android)
+    implementation(libs.mediapipe.tasks.vision)
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotest.assertions)

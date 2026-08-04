@@ -9,6 +9,7 @@ androidx-annotation = "1.9.1"
 junit = "5.11.3"
 compose-bom = "2024.12.01"
 onnxruntime = "1.27.0"
+mediapipe = "0.10.35"
 activity-compose = "1.9.3"
 lifecycle = "2.8.7"
 
@@ -21,6 +22,7 @@ androidx-test-core = { module = "androidx.test:core", version = "1.6.1" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
 androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "androidx-annotation" }
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
+mediapipe-tasks-vision = { module = "com.google.mediapipe:tasks-vision", version.ref = "mediapipe" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
 compose-ui = { module = "androidx.compose.ui:ui" }
 compose-ui-graphics = { module = "androidx.compose.ui:ui-graphics" }

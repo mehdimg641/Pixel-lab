@@ -107,6 +107,16 @@ sealed interface SheetContent {
     /** Cutting out, retouching and warping the selected image layer. */
     data object Retouch : SheetContent
 
+    /**
+     * Portrait: what the face model finds, and everything that can be done once it has.
+     *
+     * Held apart from [Retouch] because the two answer different questions. Retouch is manual and
+     * works on any picture; this one needs a detected face and offers what a face makes possible —
+     * makeup, teeth, eyes, reshaping. Merging them would put half a panel behind a precondition the
+     * other half does not have.
+     */
+    data object Portrait : SheetContent
+
     /** The pen, node editing, variable width, Pathfinder and SVG. */
     data object Vector : SheetContent
 

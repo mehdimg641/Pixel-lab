@@ -24,6 +24,7 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -141,20 +142,28 @@ fun SheetChip(
     }
 }
 
-/** A labelled slider over a plain range, for the many controls that are not effect parameters. */
+/**
+ * A labelled slider over a plain range, for the many controls that are not effect parameters.
+ *
+ * [enabled] swallows the change rather than hiding the control. A slider that vanishes when its
+ * precondition is unmet makes the panel jump about as the user works; one that stays put, dimmed,
+ * says what the tool *will* offer and why it cannot yet.
+ */
 @Composable
 fun SheetSlider(
     label: String,
     value: Float,
     range: ClosedFloatingPointRange<Float>,
+    enabled: Boolean = true,
     onChange: (value: Float, continuous: Boolean) -> Unit,
     onCommit: () -> Unit = {},
 ) {
     PrecisionSlider(
         spec = ParameterSpec.Slider(key = label, label = label, range = range, default = value),
         value = value,
-        onChange = onChange,
-        onCommit = onCommit,
+        onChange = { v, continuous -> if (enabled) onChange(v, continuous) },
+        onCommit = { if (enabled) onCommit() },
+        modifier = if (enabled) Modifier else Modifier.alpha(DISABLED_ALPHA),
     )
 }
 
@@ -242,6 +251,9 @@ fun SheetAction(
 }
 
 /** How much of the accent a chosen chip's fill carries. Low: the label has to stay readable on it. */
+/** Dim enough to read as unavailable, bright enough that the label is still legible. */
+private const val DISABLED_ALPHA = 0.4f
+
 private const val CHOSEN_TINT = 0.16f
 
 /** The same colour at the strength an edge needs, which is more than a fill does. */

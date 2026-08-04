@@ -40,6 +40,7 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Draw
+import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.FitScreen
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FontDownload
@@ -365,6 +366,7 @@ fun EditorScreen(
                             modifier = Modifier.fillMaxHeight(),
                         )
                         is SheetContent.Retouch -> RetouchSheetBody(state, model, Modifier.fillMaxHeight())
+                        is SheetContent.Portrait -> PortraitSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Vector -> VectorSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.LibraryPanel -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.LayerParameters ->
@@ -547,6 +549,7 @@ internal fun Ribbon(
                 RibbonSheet(Icons.Outlined.Crop, "بوم", Tool.IMAGE, SheetContent.CanvasTools, state, model)
                 RibbonSheet(Icons.Outlined.Highlight, "انتخاب", Tool.SELECT, SheetContent.PixelSelection, state, model, SheetDetent.PEEK)
                 RibbonSheet(Icons.Outlined.AutoFixHigh, "ترمیم", Tool.RETOUCH, SheetContent.Retouch, state, model)
+                RibbonSheet(Icons.Outlined.Face, "پرتره", Tool.RETOUCH, SheetContent.Portrait, state, model)
                 RibbonSheet(Icons.Outlined.Tune, "تنظیم", Tool.ADJUST, SheetContent.Adjustments, state, model)
                 RibbonAction(Icons.Outlined.Brush, "قلم‌مو", Tool.BRUSH, state, model) {
                     // A brush needs somewhere to paint. Creating the layer on the first press
@@ -863,6 +866,7 @@ private fun sheetTitle(content: SheetContent): String = when (content) {
     SheetContent.PixelSelection -> "انتخاب"
     SheetContent.Adjustments -> "تنظیم"
     SheetContent.Retouch -> "ترمیم"
+    SheetContent.Portrait -> "پرتره"
     SheetContent.Vector -> "قلم و مسیر"
     SheetContent.LibraryPanel -> "لوک"
     SheetContent.CanvasTools -> "بوم"
