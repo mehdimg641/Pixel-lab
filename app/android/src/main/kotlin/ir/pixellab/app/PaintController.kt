@@ -4,6 +4,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import ir.pixellab.core.codec.RasterImage
+import ir.pixellab.engine.android.toImage
+import ir.pixellab.engine.android.toRaster
 import ir.pixellab.core.model.AssetId
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.Vec2
@@ -29,6 +31,16 @@ class PaintController(private val assets: AssetStore) {
     private var target: AssetId? = null
     private var before: RasterImage? = null
     private var strokes = 0
+
+    /**
+     * The stroke's points, kept only for the smudge brush.
+     *
+     * Smudge is the one mode that cannot be answered from the coverage mask: dragging colour depends
+     * on the *order* the dabs were laid and the direction the finger moved, and a mask has neither.
+     * So the path is recorded — and only when it will be used, because holding a few thousand points
+     * per stroke for the other six modes would be pure waste.
+     */
+    private val smudgePath = ArrayList<Vec2>()
 
     var preset: BrushPreset by mutableStateOf(BrushPreset.HARD)
 
@@ -118,6 +130,7 @@ class PaintController(private val assets: AssetStore) {
 
         target = image.asset
         before = pixels
+        smudgePath.clear()
         // Seeded from a counter rather than the clock, so an undone and redone stroke scatters
         // exactly as it did the first time.
         planner = StampPlanner(preset, seed = strokes++)
@@ -131,6 +144,7 @@ class PaintController(private val assets: AssetStore) {
     fun extend(at: Vec2, pressure: Float) {
         val current = stroke ?: return
         val plan = planner ?: return
+        if (preset.mode == ir.pixellab.core.paint.BrushMode.SMUDGE) smudgePath += at
         lay(current, plan.plan(listOf(StrokePoint(at, pressure))))
         publish()
     }
@@ -209,7 +223,17 @@ class PaintController(private val assets: AssetStore) {
         val asset = target ?: return
         val current = stroke ?: return
         val base = before ?: return
-        assets.put(asset, rasterizer.commit(base, current, selection))
+        // Recomputed from `before` every time rather than accumulated, which is what lets a smudge
+        // be replayed along the whole path so far without each frame smearing the previous frame's
+        // output — the same reason the other modes can re-derive their result from the coverage.
+        val painted = if (preset.mode == ir.pixellab.core.paint.BrushMode.SMUDGE) {
+            ir.pixellab.core.imaging.ToneBrush
+                .smudge(base.toRaster(), smudgePath.toList(), preset.size / 2f, preset.flow)
+                .toImage()
+        } else {
+            rasterizer.commit(base, current, selection)
+        }
+        assets.put(asset, painted)
         generation++
     }
 }

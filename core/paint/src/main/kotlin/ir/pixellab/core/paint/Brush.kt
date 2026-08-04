@@ -3,6 +3,7 @@ package ir.pixellab.core.paint
 import ir.pixellab.core.model.AssetId
 import ir.pixellab.core.model.BlendMode
 import ir.pixellab.core.model.Color
+import ir.pixellab.core.model.ToneRange
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -76,6 +77,36 @@ data class Dynamic(
  * nib responds to pressure, scattering is how a spray disperses, transfer is how ink loads.
  */
 @Serializable
+/**
+ * What a dab does when it lands.
+ *
+ * The five that are not [PAINT] all read the destination, which is why they could not be another
+ * preset and why they cost almost nothing now: the paint engine already produces exactly what they
+ * need, a coverage mask with the tip, flow, spacing and pressure already applied.
+ */
+enum class BrushMode(val persianLabel: String) {
+    PAINT("رنگ"),
+
+    /** Lightens — the darkroom operation of holding light back from part of the print. */
+    DODGE("روشن‌کننده"),
+
+    /** Darkens — the opposite one, giving part of the print more exposure. */
+    BURN("تیره‌کننده"),
+
+    /** Saturates or desaturates locally. The sign lives on the strength, not on the mode. */
+    SPONGE("اسفنجی"),
+
+    /** Drags colour along the stroke. The only one that depends on the path rather than the mask. */
+    SMUDGE("انگشتی"),
+
+    BLUR("محوکننده"),
+    SHARPEN("تیزکننده"),
+    ;
+
+    /** True when the dab paints [BrushPreset.color] rather than reading what is underneath. */
+    val paintsColour: Boolean get() = this == PAINT
+}
+
 data class BrushPreset(
     val name: String = "قلم",
     val tip: BrushTip = BrushTip.Round(),
@@ -165,6 +196,26 @@ data class BrushPreset(
      * is the right tool for taking a whole object out. Photoshop ships both for that reason.
      */
     val clone: Boolean = false,
+
+    /**
+     * What each dab *does* — Photoshop's toolbar, minus the colour.
+     *
+     * [BrushMode.PAINT] lays down [color]; every other mode reads the pixels underneath instead and
+     * changes them. They live on the preset rather than as separate tools because everything that
+     * makes a stroke feel like a stroke — the tip, the falloff, the spacing, the flow, the pressure
+     * dynamics, the smoothing — is identical for all of them. Only the last step differs.
+     *
+     * [erase] and [clone] predate this and stay as they are: both are still colour operations, just
+     * with an unusual source, and folding them into the enum would change two well-tested paths for
+     * a tidier type and no behaviour.
+     */
+    val mode: BrushMode = BrushMode.PAINT,
+
+    /** Which tones dodge and burn move. Ignored by every other mode. */
+    val toneRange: ToneRange = ToneRange.MIDTONES,
+
+    /** Keeps hue and saturation where they were while dodging or burning. */
+    val protectTones: Boolean = true,
 ) {
     init {
         require(size > 0f) { "a brush needs a positive size, got $size" }

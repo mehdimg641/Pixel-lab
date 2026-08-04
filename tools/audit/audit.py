@@ -915,6 +915,14 @@ rule([1277, 1278], DONE, "`SnapEngine.Kind.GRID`")
 rule([951], DONE, "`Material.unlit` — سطحی که رنگ خودش را نگه می‌دارد، یعنی حاشیه روی حجم سه‌بعدی")
 rule([965], HALF, "بیست‌ودو تنظیم روی لایه هست و `Adjustment.ColorLookup` جدول می‌خواند؛ لایهٔ تنظیم روی کل سند نه")
 
+# ──────────────────────────────────────── the six brushes that read instead of painting
+rule([16], DONE, "`BrushMode.BLUR` — همان موتور قلم‌مو، با ماسک پوششِ ضربه به‌جای رنگ")
+rule([17], DONE, "`BrushMode.SHARPEN`")
+rule([18], DONE, "`BrushMode.SMUDGE` — تنها حالتی که به مسیر نیاز دارد نه ماسک")
+rule([19], DONE, "`BrushMode.DODGE` با محدودهٔ تن و «حفظ رنگ»")
+rule([20], DONE, "`BrushMode.BURN` — همان تابع با علامت منفی")
+rule([21], DONE, "`BrushMode.SPONGE` با محافظتِ طراوت‌گونه از رنگ‌های اشباع")
+
 # ─────────────────────────────────────── the face model, which was a decision and is now made
 #
 # The user's answer to "this needs a model you have to supply" was: download it yourself. So it is

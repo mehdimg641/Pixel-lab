@@ -24,6 +24,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color as UiColor
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.model.Color
+import ir.pixellab.core.paint.BrushMode
+import ir.pixellab.core.model.ToneRange
 import ir.pixellab.core.paint.BrushPreset
 import ir.pixellab.core.paint.BrushTip
 import ir.pixellab.core.render.ParameterSpec
@@ -44,6 +46,38 @@ fun BrushSheetBody(model: EditorViewModel, modifier: Modifier = Modifier) {
 
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         PresetRow(preset) { model.paint.preset = it }
+
+        // What the dab does when it lands. A row rather than a separate tool per mode, because
+        // everything above and below it — tip, hardness, flow, spacing, smoothing, pressure — is
+        // identical for all seven and duplicating this panel six times would be the actual mistake.
+        SheetSection("کار قلم")
+        SheetChips {
+            for (mode in BrushMode.entries) {
+                SheetChip(mode.persianLabel, chosen = preset.mode == mode) {
+                    model.paint.preset = preset.copy(mode = mode)
+                }
+            }
+        }
+        if (preset.mode == BrushMode.DODGE || preset.mode == BrushMode.BURN) {
+            SheetChips {
+                for (range in ToneRange.entries) {
+                    SheetChip(range.persianLabel, chosen = preset.toneRange == range) {
+                        model.paint.preset = preset.copy(toneRange = range)
+                    }
+                }
+                SheetChip("حفظ رنگ", chosen = preset.protectTones) {
+                    model.paint.preset = preset.copy(protectTones = !preset.protectTones)
+                }
+            }
+            // The one control people do not know they need until the result is wrong.
+            SheetHint("محدوده تعیین می‌کند کدام تن‌ها حرکت کنند — سایه، میانی یا روشنایی")
+        }
+        if (preset.mode == BrushMode.SPONGE) {
+            SheetHint("رنگ سفید اشباع را بالا می‌برد و رنگ مشکی پایین — همان قراردادِ خودِ فتوشاپ")
+        }
+        if (!preset.mode.paintsColour) {
+            SheetHint("این قلم‌ها پیکسل زیر خودشان را می‌خوانند — «جریان» شدتشان است")
+        }
 
         BrushSlider("اندازه", preset.size, 1f..400f, ParameterSpec.Slider.Unit.PIXELS) {
             model.paint.preset = preset.copy(size = it)
@@ -71,7 +105,7 @@ fun BrushSheetBody(model: EditorViewModel, modifier: Modifier = Modifier) {
 
         if (preset.clone) {
             CloneSource(model)
-        } else if (!preset.erase) {
+        } else if (!preset.erase && (preset.mode.paintsColour || preset.mode == BrushMode.SPONGE)) {
             ColorRow(preset.color) { model.paint.preset = preset.copy(color = it) }
             Eyedropper(model)
         }

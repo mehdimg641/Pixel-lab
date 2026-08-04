@@ -67,4 +67,38 @@ object Tone {
      * keeps a desaturated shadow out of the adjustment.
      */
     const val HUE_BAND_MIN_SATURATION = 0.1f
+
+    /**
+     * Half-width of a dodge or burn tone range.
+     *
+     * Wide enough that the three overlap, so no luminance is orphaned between them — a gap would be
+     * a band of the picture no setting of the Range menu could reach.
+     */
+    const val TONE_RANGE_WIDTH = 0.3f
+}
+
+/**
+ * Which tones a dodge or burn moves — Photoshop's Range menu.
+ *
+ * In the model rather than beside either user, because two modules need it and neither depends on
+ * the other: `core:paint` carries it on the brush preset and `core:imaging` acts on it. A copy in
+ * each is a copy that drifts.
+ *
+ * Not a detail, either. Dodging with the range on shadows opens a dark corner without touching a
+ * sky; with the range on highlights it blows the sky out and leaves the corner alone. A dodge tool
+ * without ranges is a third of a dodge tool.
+ */
+enum class ToneRange(val persianLabel: String) {
+    SHADOWS("سایه‌ها"),
+    MIDTONES("میانی‌ها"),
+    HIGHLIGHTS("روشنایی‌ها"),
+    ;
+
+    /** Where on the luminance scale this range is centred. */
+    val centre: Float
+        get() = when (this) {
+            SHADOWS -> 0.15f
+            MIDTONES -> 0.5f
+            HIGHLIGHTS -> 0.85f
+        }
 }

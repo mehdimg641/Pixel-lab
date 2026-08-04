@@ -15,6 +15,8 @@ import android.graphics.Shader
 import android.os.Build
 import ir.pixellab.core.codec.RasterImage
 import ir.pixellab.core.model.BlendMode
+import ir.pixellab.core.imaging.ToneBrush
+import ir.pixellab.core.paint.BrushMode
 import ir.pixellab.core.paint.BrushPreset
 import ir.pixellab.core.paint.BrushTip
 import ir.pixellab.core.paint.PixelSelection
@@ -190,6 +192,11 @@ class BrushRasterizer {
      */
     fun commit(target: RasterImage, stroke: Stroke, selection: PixelSelection? = null): RasterImage {
         if (!stroke.touched) return target
+        // The tone brushes read the destination instead of painting on it, so the stroke buffer is
+        // coverage rather than colour and the composite below would be meaningless. Everything that
+        // makes the stroke feel like a stroke has already happened by this point — the tip's
+        // falloff, the flow, the spacing, the pressure — and is carried in that coverage.
+        if (!stroke.preset.mode.paintsColour) return applyTone(target, stroke, selection)
 
         val result = Bitmap.createBitmap(target.width, target.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(result)
@@ -210,6 +217,61 @@ class BrushRasterizer {
         result.getPixels(pixels, 0, target.width, 0, 0, target.width, target.height)
         result.recycle()
         return RasterImage(target.width, target.height, pixels)
+    }
+
+    /**
+     * Runs a tone brush through the stroke's coverage.
+     *
+     * The coverage comes out of the stroke buffer's *alpha*, which is precisely what the paint
+     * engine has been accumulating: the union of every dab, each with its own falloff and flow. That
+     * is why these five tools needed no new stroke machinery at all.
+     *
+     * @return the layer with the mode applied, or the layer unchanged for a mode that needs a path
+     *   rather than a mask — smudge is handled where the path still exists.
+     */
+    private fun applyTone(
+        target: RasterImage,
+        stroke: Stroke,
+        selection: PixelSelection?,
+    ): RasterImage {
+        val width = target.width
+        val height = target.height
+        val pixels = IntArray(width * height)
+        stroke.buffer.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        val coverage = FloatArray(width * height)
+        val opacity = stroke.preset.opacity.coerceIn(0f, 1f)
+        for (i in coverage.indices) {
+            var a = ((pixels[i] ushr 24) and 0xFF) / 255f * opacity
+            if (selection != null) a *= selection[i % width, i / width] / 255f
+            coverage[i] = a
+        }
+
+        val raster = target.toRaster()
+        val strength = stroke.preset.flow.coerceIn(0f, 1f)
+        val result = when (stroke.preset.mode) {
+            BrushMode.DODGE -> ToneBrush.dodgeBurn(
+                raster, coverage, strength, stroke.preset.toneRange, stroke.preset.protectTones,
+            )
+            BrushMode.BURN -> ToneBrush.dodgeBurn(
+                raster, coverage, -strength, stroke.preset.toneRange, stroke.preset.protectTones,
+            )
+            // The sponge's sign lives on the preset's colour choice rather than on a second mode:
+            // black desaturates and white saturates, which is how Photoshop's own toolbar reads.
+            BrushMode.SPONGE -> ToneBrush.sponge(raster, coverage, spongeSign(stroke) * strength)
+            BrushMode.BLUR -> ToneBrush.focus(raster, coverage, -strength)
+            BrushMode.SHARPEN -> ToneBrush.focus(raster, coverage, strength)
+            // Path-dependent, so it cannot be answered from a mask. Handled by the controller, which
+            // still has the points; returning the layer unchanged here keeps the two from fighting.
+            BrushMode.SMUDGE, BrushMode.PAINT -> return target
+        }
+        return result.toImage()
+    }
+
+    /** White saturates, black desaturates — the brush colour is the sponge's direction. */
+    private fun spongeSign(stroke: Stroke): Float {
+        val c = stroke.preset.color
+        return if (0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b >= 0.5f) 1f else -1f
     }
 
     /**
