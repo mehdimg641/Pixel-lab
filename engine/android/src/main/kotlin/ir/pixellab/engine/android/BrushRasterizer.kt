@@ -220,6 +220,30 @@ class BrushRasterizer {
     }
 
     /**
+     * The stroke's accumulated coverage, 0..1 per pixel.
+     *
+     * The alpha of the stroke buffer — the union of every dab with its own falloff and flow already
+     * applied. Exposed because it is what *both* things that are not painting want: the tone brushes
+     * below, and Quick Mask, which routes it into the selection instead of the layer. Neither needed
+     * any new stroke machinery, and this method is why.
+     *
+     * @param selection narrows the coverage, so a Quick Mask stroke or a dodge respects an existing
+     *   selection the same way an ordinary stroke does.
+     */
+    fun coverageOf(stroke: Stroke, selection: PixelSelection? = null): FloatArray {
+        val width = stroke.buffer.width
+        val height = stroke.buffer.height
+        val pixels = IntArray(width * height)
+        stroke.buffer.getPixels(pixels, 0, width, 0, 0, width, height)
+        val opacity = stroke.preset.opacity.coerceIn(0f, 1f)
+        return FloatArray(pixels.size) { i ->
+            var a = ((pixels[i] ushr 24) and 0xFF) / 255f * opacity
+            if (selection != null) a *= selection[i % width, i / width] / 255f
+            a
+        }
+    }
+
+    /**
      * Runs a tone brush through the stroke's coverage.
      *
      * The coverage comes out of the stroke buffer's *alpha*, which is precisely what the paint
@@ -234,19 +258,7 @@ class BrushRasterizer {
         stroke: Stroke,
         selection: PixelSelection?,
     ): RasterImage {
-        val width = target.width
-        val height = target.height
-        val pixels = IntArray(width * height)
-        stroke.buffer.getPixels(pixels, 0, width, 0, 0, width, height)
-
-        val coverage = FloatArray(width * height)
-        val opacity = stroke.preset.opacity.coerceIn(0f, 1f)
-        for (i in coverage.indices) {
-            var a = ((pixels[i] ushr 24) and 0xFF) / 255f * opacity
-            if (selection != null) a *= selection[i % width, i / width] / 255f
-            coverage[i] = a
-        }
-
+        val coverage = coverageOf(stroke, selection)
         val raster = target.toRaster()
         val strength = stroke.preset.flow.coerceIn(0f, 1f)
         val result = when (stroke.preset.mode) {

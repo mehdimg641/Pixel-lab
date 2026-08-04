@@ -68,7 +68,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     val bounds = LayerMeasure(images = assetStore.sizes)
 
     /** The brush, and the stroke it currently has in progress. */
-    val paint = PaintController(assetStore)
+    val paint = PaintController(assetStore).also { controller ->
+        // The selection is owned here, so the brush hands its coverage over rather than reaching for
+        // it — which keeps the paint controller free of any knowledge of what a selection is.
+        controller.onMaskStroke = { coverage, width, height -> paintMask(coverage, width, height) }
+    }
 
     /**
      * The chosen pixels.
@@ -1200,6 +1204,103 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     /** True while the next canvas tap samples a colour rather than doing what the tool does. */
     var armingEyedropper: Boolean by mutableStateOf(false)
+
+    // ---- the two colours the toolbar reads from --------------------------------------------------
+
+    /**
+     * Foreground and background — Photoshop's pair, absent from this project until now.
+     *
+     * Kept beside the selection rather than in the document: it is a tool setting, so it must survive
+     * an undo and must not be written into a saved file. Photoshop keeps it in preferences for the
+     * same reason.
+     */
+    var palette: ir.pixellab.core.editor.Palette by mutableStateOf(
+        ir.pixellab.core.editor.Palette.DEFAULT,
+    )
+        private set
+
+    /** Which slot a colour picker is currently editing. */
+    var editingSlot: ir.pixellab.core.editor.Palette.Slot by mutableStateOf(
+        ir.pixellab.core.editor.Palette.Slot.FOREGROUND,
+    )
+
+    /**
+     * Sets the slot being edited and keeps the brush in step.
+     *
+     * The brush's own colour is not a second source of truth — it mirrors the foreground, which is
+     * what makes picking a colour anywhere reach the brush without every sheet knowing about every
+     * other one.
+     */
+    fun setPaletteColor(color: Color) {
+        palette = palette.with(editingSlot, color)
+        if (editingSlot == ir.pixellab.core.editor.Palette.Slot.FOREGROUND) {
+            paint.preset = paint.preset.copy(color = color)
+        }
+    }
+
+    /** Photoshop's X, and pressed constantly: masking alternates between adding and removing. */
+    fun swapPalette() {
+        palette = palette.swapped()
+        paint.preset = paint.preset.copy(color = palette.foreground)
+    }
+
+    /** Photoshop's D — black on white, which is what every mask starts from. */
+    fun resetPalette() {
+        palette = palette.reset()
+        paint.preset = paint.preset.copy(color = palette.foreground)
+    }
+
+    // ---- Quick Mask ------------------------------------------------------------------------------
+
+    /**
+     * Photoshop's Q: edit the selection as if it were a picture.
+     *
+     * The reason it exists is that marching ants cannot show a *partial* selection. A feathered edge,
+     * a gradient mask, the soft boundary every tool in this app produces — all of it renders as one
+     * line at the fifty per cent mark, and the user is left guessing about the half of the
+     * information that matters most. Quick Mask draws the coverage itself.
+     *
+     * And once it is visible it is paintable, which is the second half: the brush becomes a selection
+     * tool with all its own machinery — soft tips, flow, pressure — and *that* is how a selection
+     * gets from good to exact.
+     */
+    var quickMask: Boolean by mutableStateOf(false)
+        private set
+
+    fun toggleQuickMask() {
+        val canvas = state.document.canvas
+        if (!quickMask && select.selection == null) {
+            // Entering with nothing selected starts from an empty mask rather than a full one, so
+            // the first brush stroke *adds*. Starting full would mean the first stroke appeared to
+            // do nothing until the user found the eraser.
+            select.use(ir.pixellab.core.paint.PixelSelection.nothing(canvas.width, canvas.height))
+        }
+        quickMask = !quickMask
+        paint.quickMask = quickMask
+        paint.selection = if (quickMask) null else select.selection
+    }
+
+    /** Paints into the mask instead of the layer, using the palette's own black-and-white rule. */
+    fun paintMask(coverage: FloatArray, width: Int, height: Int) {
+        val existing = select.selection ?: ir.pixellab.core.paint.PixelSelection.nothing(width, height)
+        if (existing.width != width || existing.height != height) return
+        // White adds, black subtracts — the rule Quick Mask is defined by, and the reason the
+        // palette had to exist before this could.
+        val adding = luminance(palette.foreground) >= 0.5f
+        val bytes = existing.coverage.copyOf()
+        for (i in coverage.indices) {
+            val w = coverage[i]
+            if (w <= 0f) continue
+            val was = bytes[i].toInt() and 0xFF
+            val target = if (adding) 255 else 0
+            bytes[i] = (was + (target - was) * w).toInt().coerceIn(0, 255).toByte()
+        }
+        // A fresh selection rather than a mutated one: bounds are computed at construction, and a
+        // selection whose bounds disagree with its coverage is one every downstream tool trusts.
+        select.set(ir.pixellab.core.paint.PixelSelection(width, height, bytes))
+    }
+
+    private fun luminance(c: Color) = 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b
 
     // ---- pixels ----------------------------------------------------------------------------------
 

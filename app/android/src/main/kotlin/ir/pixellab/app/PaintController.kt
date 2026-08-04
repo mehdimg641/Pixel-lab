@@ -44,6 +44,19 @@ class PaintController(private val assets: AssetStore) {
 
     var preset: BrushPreset by mutableStateOf(BrushPreset.HARD)
 
+    /**
+     * When true the stroke edits the *selection* rather than the layer — Quick Mask.
+     *
+     * The stroke machinery is untouched by this: the tip, the falloff, the flow, the spacing and the
+     * pressure all run exactly as they do for paint, and only the destination of the finished
+     * coverage changes. That is the whole reason Quick Mask is worth having — a selection edited with
+     * a soft brush at low flow is a selection no marquee tool can produce.
+     */
+    var quickMask: Boolean by mutableStateOf(false)
+
+    /** Where a Quick Mask stroke's coverage goes. Set by the view model, which owns the selection. */
+    var onMaskStroke: ((FloatArray, Int, Int) -> Unit)? = null
+
     /** Narrows every stroke, when the user has chosen pixels. */
     var selection: PixelSelection? by mutableStateOf(null)
 
@@ -179,6 +192,16 @@ class PaintController(private val assets: AssetStore) {
 
         val asset = target
         val previous = before
+        if (quickMask) {
+            handMaskOver(current)
+            current.recycle()
+            releaseSnapshot()
+            stroke = null
+            planner = null
+            target = null
+            before = null
+            return null
+        }
         publish()
         current.recycle()
         releaseSnapshot()
@@ -214,6 +237,18 @@ class PaintController(private val assets: AssetStore) {
         generation++
     }
 
+    /**
+     * Gives the finished stroke's coverage to whoever owns the selection.
+     *
+     * The alpha of the stroke buffer, which is exactly what the paint engine has been accumulating —
+     * the same handover the tone brushes use, and the reason neither needed new stroke machinery.
+     */
+    private fun handMaskOver(current: BrushRasterizer.Stroke) {
+        val handler = onMaskStroke ?: return
+        val image = before ?: return
+        handler(rasterizer.coverageOf(current), image.width, image.height)
+    }
+
     private fun releaseSnapshot() {
         cloneSnapshot?.recycle()
         cloneSnapshot = null
@@ -223,6 +258,10 @@ class PaintController(private val assets: AssetStore) {
         val asset = target ?: return
         val current = stroke ?: return
         val base = before ?: return
+        // Quick Mask never touches the layer, so there is nothing to publish here — the coverage is
+        // handed over at the end of the stroke instead. Publishing per frame would re-apply the
+        // whole stroke to the mask on every pointer sample and drive it to full opacity instantly.
+        if (quickMask) return
         // Recomputed from `before` every time rather than accumulated, which is what lets a smudge
         // be replayed along the whole path so far without each frame smearing the previous frame's
         // output — the same reason the other modes can re-derive their result from the coverage.

@@ -106,11 +106,43 @@ fun BrushSheetBody(model: EditorViewModel, modifier: Modifier = Modifier) {
         if (preset.clone) {
             CloneSource(model)
         } else if (!preset.erase && (preset.mode.paintsColour || preset.mode == BrushMode.SPONGE)) {
-            ColorRow(preset.color) { model.paint.preset = preset.copy(color = it) }
+            PalettePair(model)
+            ColorRow(model.palette[model.editingSlot]) { model.setPaletteColor(it) }
             Eyedropper(model)
         }
     }
 }
+
+/**
+ * Foreground and background, with swap and reset.
+ *
+ * The pair the whole toolbar reads from, and its absence was quietly shaping this interface: every
+ * sheet that needed a colour carried its own, so a colour chosen in one place could not be reached
+ * from another — which is *why* those sheets grew fixed swatches.
+ *
+ * Swap and reset are the ergonomics, not decoration. Photoshop's X and D are pressed constantly,
+ * because masking is a continuous alternation between adding and removing and with one colour that
+ * means opening a picker every few seconds.
+ */
+@Composable
+private fun PalettePair(model: EditorViewModel) {
+    val palette = model.palette
+    SheetChips {
+        for (slot in ir.pixellab.core.editor.Palette.Slot.entries) {
+            SheetChip(
+                slot.persianLabel,
+                chosen = model.editingSlot == slot,
+                tint = palette[slot].toCompose(),
+            ) { model.editingSlot = slot }
+        }
+        SheetChip("جابه‌جایی") { model.swapPalette() }
+        SheetChip("پیش‌فرض") { model.resetPalette() }
+    }
+    SheetHint("قلم‌مو با پیش‌زمینه می‌کشد و پاک‌کن پس‌زمینه را برمی‌گرداند — در ماسک سریع، سفید اضافه می‌کند و مشکی کم")
+}
+
+private fun ir.pixellab.core.model.Color.toCompose() =
+    androidx.compose.ui.graphics.Color(r, g, b, 1f)
 
 /**
  * The eyedropper.

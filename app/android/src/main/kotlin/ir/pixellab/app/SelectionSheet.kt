@@ -44,6 +44,20 @@ fun SelectionSheetBody(state: EditorState, model: EditorViewModel, modifier: Mod
     var sensitivity by remember { mutableStateOf(DEFAULT_SENSITIVITY) }
 
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+        ChipRow("ماسک سریع") {
+            Chip(
+                if (model.quickMask) "خروج از ماسک سریع" else "ماسک سریع",
+                chosen = model.quickMask,
+            ) { model.toggleQuickMask() }
+        }
+        SheetHint(
+            if (model.quickMask) {
+                "قرمز یعنی بیرون از انتخاب — با قلم‌موی سفید اضافه کنید و با مشکی کم"
+            } else {
+                "مورچه‌ها فقط مرزِ پنجاه‌درصد را نشان می‌دهند؛ ماسک سریع خودِ پوشش را می‌کشد"
+            },
+        )
+
         ChipRow("ابزار") {
             for (shape in SelectionShape.entries) {
                 Chip(labelOf(shape), chosen = select.shape == shape) { select.shape = shape }
@@ -54,6 +68,13 @@ fun SelectionSheetBody(state: EditorState, model: EditorViewModel, modifier: Mod
             for (mode in SelectionMode.entries) {
                 Chip(labelOf(mode), chosen = select.mode == mode) { select.mode = mode }
             }
+        }
+
+        if (select.shape == SelectionShape.QUICK) {
+            Slider("پهنای نمونه", select.quickRadius, 4f..80f) { select.quickRadius = it }
+            Slider("تلورانس", select.tolerance, 0f..160f) { select.tolerance = it }
+            // The one sentence that stops it being mistaken for a fatter magic wand.
+            SheetHint("روی ناحیه بکشید — از همان‌جا که کشیدید رشد می‌کند و سرِ لبه‌ها می‌ایستد")
         }
 
         if (select.shape == SelectionShape.WAND) {
@@ -175,6 +196,7 @@ private fun labelOf(shape: SelectionShape) = when (shape) {
     SelectionShape.ELLIPSE -> "بیضی"
     SelectionShape.LASSO -> "کمند"
     SelectionShape.WAND -> "عصای جادویی"
+    SelectionShape.QUICK -> "انتخاب سریع"
 }
 
 private fun labelOf(mode: SelectionMode) = when (mode) {

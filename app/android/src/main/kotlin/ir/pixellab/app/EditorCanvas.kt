@@ -146,7 +146,18 @@ private fun DrawScope.drawPenPath(pen: PenOverlay, viewport: Viewport) {
 }
 
 /** The chosen pixels, as they should appear over the artwork. */
-data class SelectionOverlay(val outline: List<ir.pixellab.core.paint.Edge>, val draft: List<Vec2>)
+data class SelectionOverlay(
+    val outline: List<ir.pixellab.core.paint.Edge>,
+    val draft: List<Vec2>,
+    /**
+     * The selection itself, drawn as a translucent wash when Quick Mask is on.
+     *
+     * Null the rest of the time. Marching ants cannot show a *partial* selection — a feathered edge,
+     * a gradient mask, the soft boundary every tool here produces all render as one line at the fifty
+     * per cent mark — so Quick Mask exists to draw the coverage instead, and this is what it draws.
+     */
+    val mask: ir.pixellab.core.paint.PixelSelection? = null,
+)
 
 /**
  * Draws the boundary of the chosen pixels.
@@ -157,6 +168,8 @@ data class SelectionOverlay(val outline: List<ir.pixellab.core.paint.Edge>, val 
  * make.
  */
 private fun DrawScope.drawPixelSelection(selection: SelectionOverlay, viewport: Viewport) {
+    selection.mask?.let { drawQuickMask(it, viewport) }
+
     for (edge in selection.outline) {
         val from = viewport.toScreen(edge.from)
         val to = viewport.toScreen(edge.to)
@@ -176,6 +189,53 @@ private fun DrawScope.drawPixelSelection(selection: SelectionOverlay, viewport: 
             UiColor.White,
             style = Stroke(width = 1.5f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))),
         )
+    }
+}
+
+/**
+ * The Quick Mask wash.
+ *
+ * Red at half opacity over what is **not** selected, which is Photoshop's convention and worth
+ * keeping for a reason beyond familiarity: the protected area is the one a user is trying to judge
+ * the shape of, and tinting the selected part instead would hide the artwork they are selecting.
+ *
+ * Sampled on a grid rather than drawn per pixel. A full-resolution mask on a six-megapixel document
+ * is millions of draw calls a frame; the grid is finer than the screen at any zoom the app reaches
+ * and costs a few thousand.
+ */
+private fun DrawScope.drawQuickMask(mask: ir.pixellab.core.paint.PixelSelection, viewport: Viewport) {
+    val topLeft = viewport.toCanvas(Vec2(0f, 0f))
+    val bottomRight = viewport.toCanvas(Vec2(size.width, size.height))
+    val x0 = topLeft.x.toInt().coerceIn(0, mask.width - 1)
+    val y0 = topLeft.y.toInt().coerceIn(0, mask.height - 1)
+    val x1 = bottomRight.x.toInt().coerceIn(0, mask.width - 1)
+    val y1 = bottomRight.y.toInt().coerceIn(0, mask.height - 1)
+    if (x1 <= x0 || y1 <= y0) return
+
+    // One cell per screen pixel or a little coarser, whichever is larger, so the cost is bounded by
+    // the screen rather than by the document.
+    val step = maxOf(1, ((x1 - x0) / MASK_CELLS), ((y1 - y0) / MASK_CELLS))
+    val cell = viewport.toScreen(Vec2(step.toFloat(), step.toFloat())) - viewport.toScreen(Vec2(0f, 0f))
+    val cellSize = androidx.compose.ui.geometry.Size(
+        cell.x.coerceAtLeast(1f), cell.y.coerceAtLeast(1f),
+    )
+
+    var y = y0
+    while (y <= y1) {
+        var x = x0
+        while (x <= x1) {
+            val protectedness = 1f - mask[x, y] / 255f
+            if (protectedness > 0.01f) {
+                val at = viewport.toScreen(Vec2(x.toFloat(), y.toFloat()))
+                drawRect(
+                    MASK_TINT.copy(alpha = MASK_ALPHA * protectedness),
+                    topLeft = Offset(at.x, at.y),
+                    size = cellSize,
+                )
+            }
+            x += step
+        }
+        y += step
     }
 }
 
@@ -373,3 +433,15 @@ private const val GRID_MINOR_ALPHA = 0.10f
 
 /** Subtle enough to judge colour through, strong enough to see the boundary. */
 private const val SAFE_ZONE_ALPHA = 0.34f
+
+/**
+ * Quick Mask's rubylith red — the colour of the physical masking film the mode is named after.
+ *
+ * Kept even though this app's accent is amber, because the wash has to be unmistakably *not* part of
+ * the artwork, and a red at half opacity is the one tint no photograph is mistaken for.
+ */
+private val MASK_TINT = UiColor(0.85f, 0.15f, 0.2f)
+private const val MASK_ALPHA = 0.5f
+
+/** Cells across the visible canvas. Finer than the screen at any zoom, and bounded by it. */
+private const val MASK_CELLS = 260

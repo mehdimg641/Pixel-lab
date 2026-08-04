@@ -243,7 +243,11 @@ fun EditorScreen(
             fonts = model.fonts,
             assets = model.assets,
             assetGeneration = model.paint.generation,
-            selection = SelectionOverlay(model.select.outline, model.select.draft),
+            selection = SelectionOverlay(
+                model.select.outline,
+                model.select.draft,
+                mask = if (model.quickMask) model.select.selection else null,
+            ),
             pen = PenOverlay(model.pen.path, model.pen.active),
             handle = handle,
             onGesture = model::onGesture,

@@ -915,6 +915,15 @@ rule([1277, 1278], DONE, "`SnapEngine.Kind.GRID`")
 rule([951], DONE, "`Material.unlit` — سطحی که رنگ خودش را نگه می‌دارد، یعنی حاشیه روی حجم سه‌بعدی")
 rule([965], HALF, "بیست‌ودو تنظیم روی لایه هست و `Adjustment.ColorLookup` جدول می‌خواند؛ لایهٔ تنظیم روی کل سند نه")
 
+# ─────────────────── the colour pair, and the two selection tools it was blocking
+#
+# The palette's absence was shaping the interface rather than merely missing from it: every sheet
+# that needed a colour carried its own, which is *why* they grew fixed swatches. Quick Mask could not
+# exist without it at all — the mode is defined by white adding and black subtracting.
+rule([42, 43], DONE, "`Palette` — پیش‌زمینه و پس‌زمینه با جابه‌جایی و پیش‌فرض، در شیت قلم‌مو")
+rule([44], DONE, "`toggleQuickMask` — پوشش به‌صورت لعابِ قرمز، و قلم‌مو رویش می‌نویسد")
+rule([147], DONE, "`QuickSelect` — رشد از روی ضربه با مدل خوشه‌ای رنگ و مسیرِ گلوگاهی")
+
 # ────────────────────────────── Pathfinder, which was there all along and had no test
 #
 # A second claim of mine that was wrong, the same shape as the LensBlur one: `PathOperation` has been

@@ -11,11 +11,23 @@ import ir.pixellab.core.paint.Edge
 import ir.pixellab.core.paint.MagicWand
 import ir.pixellab.core.paint.Marquee
 import ir.pixellab.core.paint.PixelSelection
+import ir.pixellab.core.paint.QuickSelect
 import ir.pixellab.core.paint.SelectionMode
 import ir.pixellab.core.paint.SelectionOutline
 
 /** Which shape a drag defines. */
-enum class SelectionShape { RECTANGLE, ELLIPSE, LASSO, WAND }
+enum class SelectionShape {
+    RECTANGLE, ELLIPSE, LASSO, WAND,
+
+    /**
+     * Quick Selection: drag across a region and it grows to fit.
+     *
+     * A drag like the lasso's, but the path is a *sample* rather than a boundary — which is why it
+     * keeps the points rather than the two corners, and why it is the only shape here whose result
+     * depends on the picture underneath.
+     */
+    QUICK,
+}
 
 /**
  * Choosing pixels.
@@ -64,6 +76,9 @@ class SelectionController {
     private var canvasWidth = 0
     private var canvasHeight = 0
 
+    /** How wide a quick-selection drag samples, in canvas pixels. */
+    var quickRadius: Float by mutableStateOf(DEFAULT_QUICK_RADIUS)
+
     fun begin(at: Vec2, width: Int, height: Int) {
         anchor = at
         canvasWidth = width
@@ -83,6 +98,9 @@ class SelectionController {
             // the finger, because the corner being dragged is no longer where the finger is.
             SelectionShape.RECTANGLE -> outlineOf(framed(start, at, canvasWidth, canvasHeight))
             SelectionShape.ELLIPSE -> ellipseOf(framed(start, at, canvasWidth, canvasHeight))
+            // Every point is kept, like the lasso's — but as a sample of the region rather than as
+            // its boundary, which is what the grower needs.
+            SelectionShape.QUICK -> draft + at
             SelectionShape.WAND -> listOf(start, at)
         }
     }
@@ -99,6 +117,22 @@ class SelectionController {
             SelectionShape.RECTANGLE -> Marquee.rectangle(width, height, framed(start, at, width, height), feather)
             SelectionShape.ELLIPSE -> Marquee.ellipse(width, height, framed(start, at, width, height), feather)
             SelectionShape.LASSO -> Marquee.polygon(width, height, draft + at, feather)
+            SelectionShape.QUICK -> {
+                val image = pixels
+                if (image == null) {
+                    null
+                } else {
+                    // Grown from whatever is already selected, so a second drag adds to the first
+                    // rather than starting over — which is how the tool is actually used.
+                    QuickSelect.select(
+                        image.pixels, image.width, image.height,
+                        stroke = draft + at,
+                        radius = quickRadius,
+                        tolerance = tolerance,
+                        existing = if (mode == SelectionMode.REPLACE) null else selection,
+                    ).let { if (feather > 0f) it.feathered(feather) else it }
+                }
+            }
             SelectionShape.WAND -> {
                 val image = pixels
                 if (image == null) {
@@ -150,6 +184,15 @@ class SelectionController {
             },
         )
     }
+
+    /**
+     * Replaces the selection outright, ignoring the combining mode.
+     *
+     * For callers that have computed the finished answer rather than a contribution to it — Quick
+     * Mask painting, and the crop frame. Going through [use] would let a subtract-mode brush stroke
+     * invert the mask it was meant to be editing.
+     */
+    fun set(region: PixelSelection) = replace(region)
 
     fun clear() {
         selection = null
@@ -222,5 +265,8 @@ class SelectionController {
 
         /** Segments in a drafted ellipse. Past this the extra vertices land inside one screen pixel. */
         const val ELLIPSE_SEGMENTS = 64
+
+        /** About a fingertip on a phone-sized canvas — wide enough to sample a region, not a line. */
+        const val DEFAULT_QUICK_RADIUS = 16f
     }
 }
