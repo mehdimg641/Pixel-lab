@@ -129,6 +129,16 @@ sealed interface SheetContent {
     /** The shape tool: which primitive, and the parameters of the one already selected. */
     data object ShapeTools : SheetContent
 
+    /**
+     * Several photographs in one frame: the layout, the spacing, and which pictures.
+     *
+     * Its own sheet rather than a corner of [CanvasTools], because a collage is a way of *starting*
+     * a document rather than an operation on one, and because it is the entry every reference app
+     * puts on its home screen. Burying it under the crop tool would be putting the second most-used
+     * thing in the app behind the least obvious door in it.
+     */
+    data object Collage : SheetContent
+
     /** Where things sit: aligning, distributing, mirroring, turning, merging, exact numbers. */
     data object Arrange : SheetContent
 

@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import ir.pixellab.core.canvas.CanvasGesture
 import ir.pixellab.core.canvas.Handle
+import ir.pixellab.core.editor.Collage
 import ir.pixellab.core.editor.Editor
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.editor.Tool
@@ -2007,6 +2008,116 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val layer = state.document.findLayer(id) as? Layer.Text ?: return null
         return fontStore.catalog.typefaces.firstOrNull { it.name == layer.spec.font.family }
     }
+
+    // ---- collage -----------------------------------------------------------------------------------
+
+    /**
+     * The collage being assembled, if one is.
+     *
+     * Kept beside the document rather than inside it because a layout and a spacing are not artwork:
+     * they are the recipe the artwork was built from, and the moment the user closes the panel the
+     * result is an ordinary stack of layers they can paint on, filter and export like any other.
+     *
+     * The photographs are held as [Collage.Photo] — an asset id and a pixel size — rather than as
+     * images, because the images are already in the asset store and the layout only needs to know
+     * how large each one is in order to fill its cell.
+     */
+    var collage: List<Collage.Photo> by mutableStateOf(emptyList())
+        private set
+
+    var collageLayout: Collage.Layout by mutableStateOf(Collage.LAYOUTS.first())
+        private set
+
+    var collageStyle: Collage.Style by mutableStateOf(Collage.Style())
+        private set
+
+    /**
+     * Adds a picked photograph to the collage.
+     *
+     * The layout follows the count until the user picks one themselves: someone who chose three
+     * pictures wants three cells, and making them find the 1+2 layout afterwards is a step that
+     * exists only because the program did not look at what it had been given. [chooseCollageLayout]
+     * sets [collageLayoutChosen], after which the layout stops moving under them.
+     */
+    fun addCollagePhoto(image: ir.pixellab.core.codec.RasterImage, name: String) {
+        val asset = ir.pixellab.core.model.AssetId("collage-photo-${collage.size}")
+        assetStore.put(asset, image)
+        paint.bumpGeneration()
+        collage = collage + Collage.Photo(
+            asset = asset,
+            size = Vec2(image.width.toFloat(), image.height.toFloat()),
+            name = name,
+        )
+        if (!collageLayoutChosen) collageLayout = Collage.bestFor(collage.size)
+        rebuildCollage()
+    }
+
+    /** Whether the user has picked a layout, after which adding a photograph must not change it. */
+    private var collageLayoutChosen = false
+
+    fun chooseCollageLayout(layout: Collage.Layout) {
+        collageLayoutChosen = true
+        collageLayout = layout
+        rebuildCollage()
+    }
+
+    fun updateCollageStyle(style: Collage.Style) {
+        collageStyle = style
+        rebuildCollage()
+    }
+
+    /** Drops a photograph from the collage; its cell stays, empty. */
+    fun removeCollagePhoto(index: Int) {
+        if (index !in collage.indices) return
+        collage = collage.filterIndexed { i, _ -> i != index }
+        rebuildCollage()
+    }
+
+    /** Starts over, so opening the panel on a second document does not inherit the first's pictures. */
+    fun clearCollage() {
+        collage = emptyList()
+        collageLayoutChosen = false
+        collageLayout = Collage.LAYOUTS.first()
+        collageStyle = Collage.Style()
+    }
+
+    /**
+     * Lays the collage out again, into the document the user already has.
+     *
+     * **Only the collage's own layers are replaced.** Everything else in the document — a caption
+     * typed over the top, an adjustment, a painted layer — is kept and stays above the collage. The
+     * obvious implementation, rebuilding the whole document from the recipe, would silently delete
+     * that work every time the spacing slider moved, and a slider that eats your caption is worse
+     * than no slider.
+     *
+     * Not recorded as history per drag either: the panel is a transaction with its own ✕ and ✓
+     * (see [noteSheetOpened]), and a hundred undo steps from one gesture is what that machinery
+     * exists to avoid.
+     */
+    private fun rebuildCollage() = edit {
+        val canvas = state.document.canvas
+        val built = Collage.build(
+            photos = collage,
+            layout = collageLayout,
+            width = canvas.width,
+            height = canvas.height,
+            style = collageStyle,
+        )
+        val ours = built.layers.mapTo(HashSet()) { it.id.value }
+        // Anything of ours already in the document goes; anything of the user's stays, and stays on
+        // top, because a collage is a background for the work rather than a cover over it.
+        val theirs = state.document.layers.filterNot { it.id.value in ours || isCollageLayer(it.id) }
+        replaceDocument(
+            state.document.copy(
+                canvas = canvas.copy(background = built.canvas.background),
+                layers = built.layers + theirs,
+            ),
+            recordHistory = true,
+        )
+    }
+
+    private fun isCollageLayer(id: LayerId) =
+        id.value.startsWith("collage-cell-") || id.value.startsWith("collage-photo-")
 
     private companion object {
         /** Regular. A picker that inserted at black weight would be lying about what it showed. */

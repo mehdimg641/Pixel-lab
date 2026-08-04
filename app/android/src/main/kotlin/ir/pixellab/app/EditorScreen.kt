@@ -45,6 +45,7 @@ import androidx.compose.material.icons.outlined.FitScreen
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FontDownload
 import androidx.compose.material.icons.outlined.Grid4x4
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Highlight
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.IosShare
@@ -155,6 +156,23 @@ fun EditorScreen(
                         if (pending != null) model.act { openSheet(pending, SheetDetent.FULL) }
                     }
                     .onFailure { outcome = FileOutcome.Refused(it.message ?: "تصویر خوانده نشد") }
+            }
+        }
+    }
+
+    // A collage is picked several photographs at a time, which is a different contract rather than
+    // the same one used repeatedly: making someone return to the gallery eleven times to fill a
+    // nine-cell layout is the difference between a feature people use and one they try once.
+    val pickingCollage = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents(),
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            scope.launch {
+                for (uri in uris) {
+                    loadImage(context, uri)
+                        .onSuccess { (image, name) -> model.addCollagePhoto(image, name) }
+                        .onFailure { outcome = FileOutcome.Refused(it.message ?: "تصویر خوانده نشد") }
+                }
             }
         }
     }
@@ -381,6 +399,11 @@ fun EditorScreen(
                             onPickImage = { picking.launch(IMAGE_MIME) },
                             modifier = Modifier.fillMaxHeight(),
                         )
+                        is SheetContent.Collage -> CollageSheetBody(
+                            model = model,
+                            onPickPhotos = { pickingCollage.launch(IMAGE_MIME) },
+                            modifier = Modifier.fillMaxHeight(),
+                        )
                         is SheetContent.ShapeTools -> ShapeSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Guides -> GuideSheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.Typography -> TypeSheetBody(state, model, Modifier.fillMaxHeight())
@@ -550,6 +573,7 @@ internal fun Ribbon(
         when (dock) {
             Dock.PHOTO -> {
                 RibbonAction(Icons.Outlined.Image, "افزودن", Tool.IMAGE, state, model, onPickImage)
+                RibbonSheet(Icons.Outlined.GridView, "کلاژ", Tool.IMAGE, SheetContent.Collage, state, model)
                 RibbonSheet(Icons.Outlined.Crop, "بوم", Tool.IMAGE, SheetContent.CanvasTools, state, model)
                 RibbonSheet(Icons.Outlined.Highlight, "انتخاب", Tool.SELECT, SheetContent.PixelSelection, state, model, SheetDetent.PEEK)
                 RibbonSheet(Icons.Outlined.AutoFixHigh, "ترمیم", Tool.RETOUCH, SheetContent.Retouch, state, model)
@@ -873,6 +897,7 @@ private fun sheetTitle(content: SheetContent): String = when (content) {
     SheetContent.Portrait -> "پرتره"
     SheetContent.Vector -> "قلم و مسیر"
     SheetContent.LibraryPanel -> "لوک"
+    SheetContent.Collage -> "کلاژ"
     SheetContent.CanvasTools -> "بوم"
     SheetContent.ShapeTools -> "شکل"
     SheetContent.Arrange -> "چیدمان"
