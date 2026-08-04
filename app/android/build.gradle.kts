@@ -50,21 +50,32 @@ android {
      * machine publishes. When they are absent the debug keystore is used instead, so a release build
      * is installable for testing on any checkout. It is not a *publishable* build — Play requires a
      * key only you hold — and nothing here pretends otherwise.
+     *
+     * And when *neither* exists the config is not created at all, so the build produces an unsigned
+     * release APK rather than failing. That case is not hypothetical: a fresh CI runner has never run
+     * a debug build, so `~/.android/debug.keystore` has never been generated, and naming a keystore
+     * that is not there fails `validateSigningRelease` before a line of the app is even packaged.
+     * A build server assembling a release it will not install should not need a key to succeed.
      */
+    val distributionKeystore: File? = run {
+        val declared = (project.findProperty("pixellab.keystore") as String?)?.let(::file)
+        if (declared != null && declared.exists()) return@run declared
+        File(System.getProperty("user.home"), ".android/debug.keystore").takeIf { it.exists() }
+    }
+
     signingConfigs {
-        create("distribution") {
-            val keystore = (project.findProperty("pixellab.keystore") as String?)?.let(::file)
-            if (keystore != null && keystore.exists()) {
-                storeFile = keystore
-                storePassword = project.findProperty("pixellab.storePassword") as String?
-                keyAlias = project.findProperty("pixellab.keyAlias") as String?
-                keyPassword = project.findProperty("pixellab.keyPassword") as String?
-            } else {
-                val debugKey = File(System.getProperty("user.home"), ".android/debug.keystore")
-                storeFile = debugKey
-                storePassword = "android"
-                keyAlias = "androiddebugkey"
-                keyPassword = "android"
+        if (distributionKeystore != null) {
+            create("distribution") {
+                storeFile = distributionKeystore
+                if (project.findProperty("pixellab.keystore") != null) {
+                    storePassword = project.findProperty("pixellab.storePassword") as String?
+                    keyAlias = project.findProperty("pixellab.keyAlias") as String?
+                    keyPassword = project.findProperty("pixellab.keyPassword") as String?
+                } else {
+                    storePassword = "android"
+                    keyAlias = "androiddebugkey"
+                    keyPassword = "android"
+                }
             }
         }
     }
@@ -77,7 +88,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("distribution")
+            signingConfig = signingConfigs.findByName("distribution")
         }
     }
 
