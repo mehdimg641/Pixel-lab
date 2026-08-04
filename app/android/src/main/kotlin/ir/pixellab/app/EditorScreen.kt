@@ -59,6 +59,7 @@ import androidx.compose.material.icons.outlined.VerticalAlignTop
 import androidx.compose.material.icons.outlined.ViewInAr
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -253,6 +254,13 @@ fun EditorScreen(
         onEntryHandled()
     }
 
+    // Every panel's empty state can reach these. A sheet that says "select an image layer" and
+    // offers no way to get one is the shape of bug that makes a whole application feel broken.
+    val actions = EditorActions(
+        pickImage = { picking.launch(IMAGE_MIME) },
+        addText = { model.addTextLayer()?.let { editingText = it } },
+    )
+
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink.Ground)) {
         val screenHeight = maxHeight
 
@@ -390,6 +398,7 @@ fun EditorScreen(
             ) {
                 Column(Modifier.fillMaxSize()) {
                     SheetHeader(state, model)
+                    CompositionLocalProvider(LocalEditorActions provides actions) {
                     when (val content = state.sheet.content) {
                         is SheetContent.EffectParameters ->
                             ParameterSheetBody(state, content, model, Modifier.fillMaxHeight())
@@ -439,6 +448,7 @@ fun EditorScreen(
                         // because the type says it could be and a silent `else` would swallow a
                         // future case that genuinely needs a screen.
                         null -> Box(Modifier.fillMaxSize())
+                    }
                     }
                 }
             }

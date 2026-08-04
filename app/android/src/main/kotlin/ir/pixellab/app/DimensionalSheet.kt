@@ -43,9 +43,14 @@ fun DimensionalSheetBody(state: EditorState, model: EditorViewModel, modifier: M
     }
     val layer = state.primaryLayer as? Layer.Text
     if (layer == null) {
-        Column(modifier.fillMaxWidth()) {
-            SheetHint("یک لایهٔ متن انتخاب کنید — سه‌بعدی از خود حروف ساخته می‌شود")
-        }
+        // The panel this application exists for, dead-ending on a precondition nothing in the
+        // interface could meet.
+        MissingSubject(
+            message = "یک لایهٔ متن انتخاب کنید — سه‌بعدی از خود حروف ساخته می‌شود",
+            action = "افزودن متن",
+            onAct = LocalEditorActions.current.addText,
+            modifier = modifier,
+        )
         return
     }
 

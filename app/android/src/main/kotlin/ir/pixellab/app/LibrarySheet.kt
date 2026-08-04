@@ -50,6 +50,8 @@ fun LibrarySheetBody(state: EditorState, model: EditorViewModel, modifier: Modif
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
 
+        if (!state.hasSelection) SheetAction("افزودن متن", onClick = LocalEditorActions.current.addText)
+
         Section("استایل‌ها")
         for (preset in Library.styles) {
             StyleRow(preset, enabled = state.hasSelection) { model.applyStyle(preset) }

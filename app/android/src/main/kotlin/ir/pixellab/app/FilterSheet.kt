@@ -75,6 +75,7 @@ fun FilterSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
                 else -> "فیلتر فقط داخل انتخاب اجرا می‌شود و لبه‌اش با همان نرمی محو می‌شود"
             },
         )
+        if (!onPixels) SheetAction("افزودن عکس", onClick = LocalEditorActions.current.pickImage)
 
         SheetSection("هیستوگرام")
         SheetChips {

@@ -105,6 +105,9 @@ fun SelectionSheetBody(state: EditorState, model: EditorViewModel, modifier: Mod
             color = Ink.TextMuted,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
+        if (state.primaryLayer !is Layer.Image) {
+            SheetAction("افزودن عکس", onClick = LocalEditorActions.current.pickImage)
+        }
 
         ChipRow("عملیات") {
             Chip("همه", chosen = false) {

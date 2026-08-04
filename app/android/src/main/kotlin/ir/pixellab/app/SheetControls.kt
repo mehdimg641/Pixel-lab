@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
@@ -247,6 +248,45 @@ fun SheetAction(
             style = MaterialTheme.typography.labelLarge,
             color = if (enabled) tint else Ink.TextDisabled,
         )
+    }
+}
+
+/**
+ * The two things a panel may need that only the screen can do.
+ *
+ * Passed as a composition local rather than as a parameter on nine sheets, because the alternative
+ * is nine signatures and nine call sites carrying a callback that only the empty state ever uses.
+ */
+data class EditorActions(
+    val pickImage: () -> Unit = {},
+    val addText: () -> Unit = {},
+)
+
+val LocalEditorActions = staticCompositionLocalOf { EditorActions() }
+
+/**
+ * What a panel shows when the thing it works on is not there.
+ *
+ * **The rule this exists to enforce: a panel that names a precondition has to offer the way to meet
+ * it.** Nine sheets said some version of "select an image layer" and stopped, and the two worst were
+ * the ones this application is *for* — تایپوگرافی and سه‌بعدی both told the user to select a text
+ * layer that nothing in the interface could create. From the outside that is indistinguishable from
+ * an application that does not work, and it is what a real user reported after ten minutes with it.
+ *
+ * The action is a button rather than a line of instructions for the same reason: telling somebody
+ * where to go is a worse answer than taking them there, and it is one press either way.
+ */
+@Composable
+fun MissingSubject(
+    message: String,
+    action: String,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    onAct: () -> Unit,
+) {
+    Column(modifier.fillMaxWidth()) {
+        SheetHint(message)
+        SheetAction(action, enabled = enabled, onClick = onAct)
     }
 }
 

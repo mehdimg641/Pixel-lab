@@ -80,6 +80,39 @@ class ViewportTest {
     }
 
     @Test
+    fun `fit centres the canvas in what the bars leave visible, not in the whole screen`() {
+        // The bug this exists for: the canvas fills the screen and the fixed bars are drawn over it,
+        // so fitting to the whole screen puts the document's middle behind them. On a phone that is
+        // around 200dp of 900, and the result is artwork sitting low with its bottom edge under the
+        // ribbon — which reads as the app being unable to show a document properly.
+        val top = 150f
+        val bottom = 400f
+        val fitted = Viewport(screenSize = screen).fit(Vec2(1000f, 1000f), insetTop = top, insetBottom = bottom)
+        val centre = fitted.toScreen(Vec2(500f, 500f))
+        centre.x shouldBe (screen.x / 2f plusOrMinus 0.01f)
+        centre.y shouldBe (top + (screen.y - top - bottom) / 2f plusOrMinus 0.01f)
+    }
+
+    @Test
+    fun `a tall canvas is sized to the visible height rather than the screen height`() {
+        // Sizing to the full screen and then centring in the visible strip would be worse than the
+        // bug it replaced: the document would be correctly centred and still run under both bars.
+        val bounds = Viewport(screenSize = screen)
+            .fit(Vec2(1080f, 1920f), insetTop = 150f, insetBottom = 400f)
+            .screenBounds(Vec2(1080f, 1920f))
+        (bounds.top >= 150f) shouldBe true
+        (bounds.bottom <= screen.y - 400f) shouldBe true
+    }
+
+    @Test
+    fun `insets that would swallow the screen are ignored rather than obeyed`() {
+        // A one-pixel-tall working area is not a better answer than the whole screen, and a caller
+        // that reports nonsense should not be able to make the canvas vanish.
+        val absurd = Viewport(screenSize = screen).fit(Vec2(1000f, 1000f), insetTop = 2000f, insetBottom = 2000f)
+        absurd shouldBe Viewport(screenSize = screen).fit(Vec2(1000f, 1000f))
+    }
+
+    @Test
     fun `fit does nothing before the screen is measured`() {
         val unmeasured = Viewport()
         unmeasured.fit(Vec2(1000f, 1000f)) shouldBe unmeasured

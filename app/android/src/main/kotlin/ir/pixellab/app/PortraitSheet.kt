@@ -58,6 +58,7 @@ fun PortraitSheetBody(state: EditorState, model: EditorViewModel, modifier: Modi
                 else -> model.faceOutcome ?: "اول چهره را پیدا کنید"
             },
         )
+        if (!onPixels) SheetAction("افزودن عکس", onClick = LocalEditorActions.current.pickImage)
         SheetAction("پیدا کردن چهره", enabled = onPixels && !model.detecting) {
             scope.launch { model.detectFaces() }
         }

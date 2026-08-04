@@ -50,11 +50,10 @@ fun RetouchSheetBody(state: EditorState, model: EditorViewModel, modifier: Modif
 
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         if (layer == null) {
-            Text(
-                "یک لایهٔ تصویر انتخاب کنید",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Ink.TextMuted,
-                modifier = Modifier.padding(16.dp),
+            MissingSubject(
+                message = "یک لایهٔ تصویر انتخاب کنید",
+                action = "افزودن عکس",
+                onAct = LocalEditorActions.current.pickImage,
             )
             return@Column
         }
