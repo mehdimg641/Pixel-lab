@@ -1,12 +1,16 @@
 package ir.pixellab.app
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,8 +23,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.model.Adjustment
@@ -79,6 +88,11 @@ fun AdjustmentSheetBody(
             FilterSheetBody(state, model)
             return@Column
         }
+
+        // Above the catalogue, because a saved grade is what a returning user came for. Someone
+        // editing the second photograph of a set does not want to rebuild the first one's
+        // correction; they want the row of things they already made.
+        LookRow(model)
 
         AddRow(model)
         // Beside the catalogue rather than buried in the Curves panel: a user with a folder of
@@ -725,3 +739,112 @@ private val CATALOG: List<Pair<String, () -> Adjustment>> = listOf(
 
 /** Photoshop's own 0..255, which is what the histogram counts in and Levels stores as a fraction. */
 private const val MAX_CHANNEL = 255f
+
+/**
+ * The user's own saved grades.
+ *
+ * A chip toggles rather than applies: the first thing anyone does with a row of presets is try one,
+ * dislike it and want it gone, and "press it again" is the only version of that which needs no
+ * explaining. Long-press deletes, which keeps a destructive action off the same gesture as the one
+ * people are about to use twenty times.
+ *
+ * Saving is deliberately at the end of the row rather than the start. The row is read left to right
+ * looking for something to *use*; the button that makes a new one belongs after the ones that exist,
+ * not in front of them.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun LookRow(model: EditorViewModel) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var naming by remember { mutableStateOf(false) }
+
+    SheetSection("لوک‌های من")
+    if (model.lookStore.looks.isEmpty()) {
+        SheetHint("تنظیم‌ها را روی یک عکس بچینید، بعد اینجا ذخیره‌شان کنید تا روی بقیه هم بیفتد")
+    }
+    SheetChips {
+        for (look in model.lookStore.looks) {
+            LookChip(
+                look = look,
+                chosen = model.wearing(look),
+                onToggle = { model.toggleLook(look) },
+                onDelete = { model.deleteLook(context, look) },
+            )
+        }
+    }
+    SheetAction("ذخیرهٔ تنظیم‌های فعلی به‌عنوان لوک", enabled = model.hasGrade) { naming = true }
+    if (!model.hasGrade) {
+        // Said rather than left to be discovered: a dimmed button with no reason beside it reads as
+        // a broken one.
+        SheetHint("اول چند تنظیم اضافه کنید — لوکِ خالی چیزی را جابه‌جا نمی‌کند")
+    }
+
+    if (naming) {
+        LookNameDialog(onDismiss = { naming = false }) { name ->
+            naming = false
+            model.saveLook(context, name)
+        }
+    }
+}
+
+/** Asks for the name, because a preset called "Look 3" is one nobody can find again. */
+@Composable
+private fun LookNameDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .clip(Corners.sheet)
+                .background(Ink.Chrome)
+                .padding(Space.wide),
+            verticalArrangement = Arrangement.spacedBy(Space.medium),
+        ) {
+            Text("نام لوک", style = MaterialTheme.typography.titleMedium, color = Ink.Text)
+            SheetTextField("نام", name) { name = it }
+            SheetAction("ذخیره", enabled = name.isNotBlank()) { onConfirm(name.trim()) }
+            SheetAction("انصراف", tint = Ink.TextMuted, onClick = onDismiss)
+        }
+    }
+}
+
+/**
+ * One saved grade.
+ *
+ * Tap toggles, long press deletes. Deleting behind a long press rather than an ✕ on every chip: the
+ * ✕ is a permanent invitation to lose work sitting one finger-width from the control people use
+ * twenty times an hour, and a row of them turns a palette into a field of tiny targets.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun LookChip(
+    look: ir.pixellab.core.editor.Look,
+    chosen: Boolean,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Box(
+        Modifier
+            .heightIn(min = 40.dp)
+            .clip(Corners.chip)
+            .background(if (chosen) Ink.Accent.copy(alpha = 0.16f) else androidx.compose.ui.graphics.Color.Transparent)
+            .border(
+                width = if (chosen) 1.5.dp else 1.dp,
+                color = if (chosen) Ink.Accent else Ink.Outline,
+                shape = Corners.chip,
+            )
+            .combinedClickable(onClick = onToggle, onLongClick = onDelete)
+            .padding(horizontal = Space.large, vertical = Space.small)
+            .semantics {
+                role = Role.RadioButton
+                selected = chosen
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            look.name,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (chosen) Ink.Accent else Ink.Text,
+            maxLines = 1,
+        )
+    }
+}

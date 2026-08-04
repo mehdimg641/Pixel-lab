@@ -180,6 +180,22 @@ fun SheetNumberField(
     value: String,
     modifier: Modifier = Modifier,
     onValueChange: (String) -> Unit,
+) = SheetTextField(label, value, KeyboardType.Number, modifier, onValueChange)
+
+/**
+ * Words the user types — a Look's name, a layer's.
+ *
+ * The same field as [SheetNumberField] with a different keyboard, rather than a second one styled to
+ * match: two fields that only look alike drift apart within a week, and this one is Persian text
+ * where that one is digits, so the keyboard is the entire difference.
+ */
+@Composable
+fun SheetTextField(
+    label: String,
+    value: String,
+    keyboard: KeyboardType = KeyboardType.Text,
+    modifier: Modifier = Modifier,
+    onValueChange: (String) -> Unit,
 ) {
     Column(
         modifier.padding(horizontal = Space.tight),
@@ -195,7 +211,7 @@ fun SheetNumberField(
                 fontSize = MaterialTheme.typography.bodyLarge.fontSize,
             ),
             cursorBrush = SolidColor(Ink.Accent),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions = KeyboardOptions(keyboardType = keyboard),
             // The visible label is a separate Text, so the field itself would otherwise be
             // announced as an unnamed edit box.
             modifier = Modifier

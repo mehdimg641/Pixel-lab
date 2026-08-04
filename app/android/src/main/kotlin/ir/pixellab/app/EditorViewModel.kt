@@ -11,6 +11,10 @@ import ir.pixellab.core.canvas.Handle
 import ir.pixellab.core.editor.Collage
 import ir.pixellab.core.editor.Editor
 import ir.pixellab.core.editor.EditorState
+import ir.pixellab.core.editor.Look
+import ir.pixellab.core.editor.wearing
+import ir.pixellab.core.editor.withLook
+import ir.pixellab.core.editor.withoutLook
 import ir.pixellab.core.editor.Tool
 import ir.pixellab.core.fonts.Typeface
 import ir.pixellab.core.model.Color
@@ -64,6 +68,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      */
     /** Decoded masks and placed images, shared by the renderer and the measurer. */
     val assetStore = AssetStore()
+
+    /** The user's own saved grades. Read by the adjustment panel; written when they save one. */
+    val lookStore = LookStore()
 
     val assets: AssetSource get() = assetStore.source
 
@@ -135,6 +142,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             // placeholder box the text was measured with before the scan landed. The screen
             // recomposes off [fonts] changing identity, which redraws them.
             bounds.fonts = fontStore.resolver
+
+            // After the fonts because nobody reaches for a saved grade in the first second, and a
+            // few small files should not sit in front of the thing the canvas needs to draw.
+            lookStore.load(application)
         }
     }
 
@@ -2172,6 +2183,47 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun isCollageLayer(id: LayerId) =
         id.value.startsWith("collage-cell-") || id.value.startsWith("collage-photo-")
+
+    // ---- looks -------------------------------------------------------------------------------------
+
+    /**
+     * Saves the document's current grade under a name.
+     *
+     * The whole point of the feature is the *second* photograph, so what is captured is deliberately
+     * only the adjustments — see [Look] for why a Look that carried layers or a crop would be worse
+     * than useless. The frozen measurements are stripped there too, so a grade saved from a dark
+     * photograph does not equalise a bright one by the dark one's histogram.
+     */
+    fun saveLook(context: android.content.Context, name: String) {
+        viewModelScope.launch { lookStore.save(context, state.document, name) }
+    }
+
+    /**
+     * Puts a saved grade on, or takes it back off if it is already on.
+     *
+     * A toggle rather than an apply, because the first thing anyone does with a row of presets is
+     * try one, dislike it, and want it gone — and "press it again" is the only version of that which
+     * needs no explaining. Applying a second Look does not remove the first: stacking a warm grade
+     * under a grain preset is a real thing to want.
+     */
+    fun toggleLook(look: Look) = edit {
+        val document = state.document
+        replaceDocument(
+            if (document.wearing(look)) document.withoutLook(look) else document.withLook(look),
+        )
+    }
+
+    fun deleteLook(context: android.content.Context, look: Look) {
+        viewModelScope.launch { lookStore.delete(context, look) }
+        edit { replaceDocument(state.document.withoutLook(look)) }
+    }
+
+    /** Whether the document is currently wearing a Look, so its chip can read as chosen. */
+    fun wearing(look: Look) = state.document.wearing(look)
+
+    /** Whether there is a grade worth saving — a save that produced an empty Look is a trap. */
+    val hasGrade: Boolean
+        get() = state.document.walk().any { it is Layer.AdjustmentLayer && it.visible }
 
     private companion object {
         /** Regular. A picker that inserted at black weight would be lying about what it showed. */
