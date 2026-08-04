@@ -915,6 +915,12 @@ rule([1277, 1278], DONE, "`SnapEngine.Kind.GRID`")
 rule([951], DONE, "`Material.unlit` — سطحی که رنگ خودش را نگه می‌دارد، یعنی حاشیه روی حجم سه‌بعدی")
 rule([965], HALF, "بیست‌ودو تنظیم روی لایه هست و `Adjustment.ColorLookup` جدول می‌خواند؛ لایهٔ تنظیم روی کل سند نه")
 
+# ────────────────────────────── Pathfinder, which was there all along and had no test
+#
+# A second claim of mine that was wrong, the same shape as the LensBlur one: `PathOperation` has been
+# wired to Skia's `Path.op` since wave 6 and reachable from the vector sheet. What was missing was a
+# test that the operations return the right *region* — so `core:vector` now carries an independent
+# implementation as the oracle, and the two are cross-checked on coverage.
 # ──────────────────────────────────────── the six brushes that read instead of painting
 rule([16], DONE, "`BrushMode.BLUR` — همان موتور قلم‌مو، با ماسک پوششِ ضربه به‌جای رنگ")
 rule([17], DONE, "`BrushMode.SHARPEN`")
