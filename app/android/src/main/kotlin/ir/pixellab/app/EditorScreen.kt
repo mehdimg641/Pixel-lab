@@ -179,6 +179,33 @@ fun EditorScreen(
         }
     }
 
+    // Which saved grade the batch picker was opened for. Held beside the launcher because the
+    // choice is made before the picker opens and the result arrives long afterwards.
+    var batchLook by remember { mutableStateOf<ir.pixellab.core.editor.Look?>(null) }
+    val batch = remember { BatchRun() }
+
+    val pickingBatch = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents(),
+    ) { uris ->
+        val look = batchLook
+        batchLook = null
+        if (look != null && uris.isNotEmpty()) {
+            scope.launch {
+                val result = batch.run(context, handle, look, uris, IMAGE_EXPORT_FORMAT, model.assets)
+                outcome = if (result.failed.isEmpty()) {
+                    FileOutcome.Exported("${result.written} عکس با «${look.name}»", 0, 0)
+                } else {
+                    // Named rather than counted: "three failed" leaves the user to work out which
+                    // three, and the answer is not in the gallery because they are not there.
+                    FileOutcome.Refused(
+                        "${result.written} از ${result.total} نوشته شد — این‌ها نشد: " +
+                            result.failed.joinToString("، "),
+                    )
+                }
+            }
+        }
+    }
+
     // Its own launcher rather than a mode flag on the image one: the two want different MIME
     // filters, and a picker that offers a photo when the user asked for a curve preset is the kind
     // of thing that makes people give up on a feature rather than report it.
@@ -259,6 +286,10 @@ fun EditorScreen(
     val actions = EditorActions(
         pickImage = { picking.launch(IMAGE_MIME) },
         addText = { model.addTextLayer()?.let { editingText = it } },
+        applyLookToPhotos = { look ->
+            batchLook = look
+            pickingBatch.launch(IMAGE_MIME)
+        },
     )
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink.Ground)) {
@@ -299,6 +330,13 @@ fun EditorScreen(
 
         Column(Modifier.align(Alignment.TopCenter)) {
             TopBar(state = state, model = model, onHome = onHome)
+            batch.progress?.let {
+                Text(
+                    "در حال اعمال روی عکس ${it.done + 1} از ${it.total} — ${it.current}",
+                    color = Ink.TextMuted,
+                    modifier = Modifier.padding(horizontal = Space.medium, vertical = Space.small),
+                )
+            }
             outcome?.let {
                 OutcomeBanner(it, Modifier.padding(horizontal = Space.medium, vertical = Space.small)) {
                     outcome = null
@@ -954,6 +992,15 @@ private val MARK_WIDE = 18.dp
 
 /** What the picker accepts. Every still image; video is deliberately not part of this app. */
 private const val IMAGE_MIME = "image/*"
+
+/**
+ * What a batch writes.
+ *
+ * PNG rather than the format the source happened to be in: a batch re-encodes, and re-encoding a
+ * JPEG loses a little every time, which over a folder someone runs twice is visible. The user who
+ * wants JPEG has the export dialog for the one picture they care about.
+ */
+private val IMAGE_EXPORT_FORMAT = ir.pixellab.core.codec.Format.PNG
 
 /**
  * Everything, because a `.acv` has no registered MIME type.

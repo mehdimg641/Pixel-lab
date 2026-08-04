@@ -773,6 +773,22 @@ private fun LookRow(model: EditorViewModel) {
         }
     }
     SheetAction("ذخیرهٔ تنظیم‌های فعلی به‌عنوان لوک", enabled = model.hasGrade) { naming = true }
+
+    // The batch runs whatever Look is *on* right now, which is the order the job is actually done
+    // in: try it on this photograph, see it, then commit the other thirty. A picker that asked
+    // which preset before showing what it does would be asking the user to choose blind.
+    val worn = model.lookStore.looks.firstOrNull { model.wearing(it) }
+    val actions = LocalEditorActions.current
+    SheetAction("اعمال روی چند عکس دیگر", enabled = worn != null) {
+        worn?.let(actions.applyLookToPhotos)
+    }
+    SheetHint(
+        if (worn == null) {
+            "اول یک لوک را روشن کنید تا ببینید چه می‌کند، بعد روی بقیهٔ عکس‌ها اعمالش کنید"
+        } else {
+            "«${worn.name}» روی هر عکس انتخابی اجرا و در گالری ذخیره می‌شود — اصل عکس‌ها دست‌نخورده می‌ماند"
+        },
+    )
     if (!model.hasGrade) {
         // Said rather than left to be discovered: a dimmed button with no reason beside it reads as
         // a broken one.

@@ -276,6 +276,8 @@ fun SheetAction(
 data class EditorActions(
     val pickImage: () -> Unit = {},
     val addText: () -> Unit = {},
+    /** Opens the picker and runs a saved grade over everything chosen. */
+    val applyLookToPhotos: (ir.pixellab.core.editor.Look) -> Unit = {},
 )
 
 val LocalEditorActions = staticCompositionLocalOf { EditorActions() }
