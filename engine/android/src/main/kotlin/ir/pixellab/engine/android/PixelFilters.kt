@@ -105,6 +105,29 @@ object PixelFilters {
     private const val SURFACE_RADIUS_CAP = 24f
 
     /**
+     * What the gallery's single strength slider means, per filter.
+     *
+     * The bounds are the whole of the tuning and they are chosen to make the *ends* of the slider
+     * both usable: at zero the filter is off, at one it is unmistakably that medium, and nowhere in
+     * between is it so slow that dragging the slider stops being interactive. Oil paint is the
+     * expensive one — O(radius²) with a histogram per pixel — which is why its radius stops at eight
+     * rather than at the twenty that would still look good on a print.
+     */
+    private const val OIL_MIN_RADIUS = 2
+    private const val OIL_MAX_RADIUS = 8
+    private const val OIL_MIN_LEVELS = 6
+    private const val OIL_MAX_LEVELS = 40
+
+    private const val WASH_MIN_RADIUS = 2
+    private const val WASH_MAX_RADIUS = 7
+
+    private const val PENCIL_MIN_LENGTH = 3
+    private const val PENCIL_MAX_LENGTH = 12
+
+    private const val CRYSTAL_MIN_SIZE = 4
+    private const val CRYSTAL_MAX_SIZE = 40
+
+    /**
      * Surface blur — a bilateral filter, smoothing within regions and stopping at edges.
      *
      * The one blur that can flatten skin texture, paper grain or JPEG mush without taking the eyes,
@@ -283,6 +306,60 @@ object PixelFilters {
         val clear = ir.pixellab.core.imaging.Dehaze.apply(source.toRaster(), strength)
         return blend(source, clear.toImage(), selection)
     }
+
+    /**
+     * The filter gallery: oil paint, watercolour, coloured pencil, crystallize.
+     *
+     * One entry point rather than four, because the panel offers them as one row of choices and the
+     * only thing that differs between them at this layer is which function is called. The strength
+     * is a single 0..1 the panel exposes, mapped per filter to whichever parameter actually changes
+     * that filter's character — a shared "amount" that meant a different thing in each would be the
+     * kind of control nobody can predict.
+     */
+    fun artistic(
+        source: RasterImage,
+        style: ir.pixellab.core.editor.ArtStyle,
+        strength: Float,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        val amount = strength.coerceIn(0f, 1f)
+        if (amount <= 0f) return source
+        val raster = source.toRaster()
+        val painted = when (style) {
+            ir.pixellab.core.editor.ArtStyle.OIL_PAINT ->
+                ir.pixellab.core.imaging.Artistic.oilPaint(
+                    raster,
+                    radius = lerpInt(OIL_MIN_RADIUS, OIL_MAX_RADIUS, amount),
+                    // Fewer levels at higher strength: broader, flatter strokes is what "more oil
+                    // paint" means, and a larger radius alone only makes it blurrier.
+                    levels = lerpInt(OIL_MAX_LEVELS, OIL_MIN_LEVELS, amount),
+                )
+
+            ir.pixellab.core.editor.ArtStyle.WATERCOLOUR ->
+                ir.pixellab.core.imaging.Artistic.waterColour(
+                    raster,
+                    radius = lerpInt(WASH_MIN_RADIUS, WASH_MAX_RADIUS, amount),
+                    detail = 1f - amount,
+                    pooling = amount,
+                )
+
+            ir.pixellab.core.editor.ArtStyle.PENCIL ->
+                ir.pixellab.core.imaging.Artistic.colouredPencil(
+                    raster,
+                    length = lerpInt(PENCIL_MIN_LENGTH, PENCIL_MAX_LENGTH, amount),
+                    pressure = amount,
+                )
+
+            ir.pixellab.core.editor.ArtStyle.CRYSTALLIZE ->
+                ir.pixellab.core.imaging.Artistic.crystallize(
+                    raster,
+                    size = lerpInt(CRYSTAL_MIN_SIZE, CRYSTAL_MAX_SIZE, amount),
+                )
+        }
+        return blend(source, painted.toImage(), selection)
+    }
+
+    private fun lerpInt(from: Int, to: Int, t: Float) = (from + (to - from) * t).toInt().coerceAtLeast(1)
 
     /** Contrast at a chosen size — texture, clarity or whole-scene brilliance. */
     fun localContrast(

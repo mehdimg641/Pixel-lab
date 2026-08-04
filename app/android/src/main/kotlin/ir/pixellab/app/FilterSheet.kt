@@ -77,6 +77,23 @@ fun FilterSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
         )
         if (!onPixels) SheetAction("افزودن عکس", onClick = LocalEditorActions.current.pickImage)
 
+        // First on the tab, because it is the row people came to this panel for. The corrective
+        // filters below are what someone reaches for once they already know what is wrong with a
+        // photograph; these are what someone reaches for when they are still deciding.
+        SheetSection("گالری هنری")
+        var artStrength by remember { mutableStateOf(DEFAULT_ART_STRENGTH) }
+        SheetSlider("شدت", artStrength, 0f..1f, enabled = onPixels, onChange = { value, _ ->
+            artStrength = value
+        })
+        SheetChips {
+            for (style in ir.pixellab.core.editor.ArtStyle.entries) {
+                SheetChip(style.persianLabel, enabled = onPixels) {
+                    scope.launch { model.artistic(style, artStrength) }
+                }
+            }
+        }
+        SheetHint("روی پیکسل‌ها می‌نویسد — با تاریخچه برگشت‌پذیر است، ولی لایهٔ جدا نمی‌سازد")
+
         SheetSection("هیستوگرام")
         SheetChips {
             for (option in HistogramChannel.entries) {
@@ -325,6 +342,8 @@ private const val DEFAULT_HAZE = 0.5f
 private const val DEFAULT_LOCAL_CONTRAST = 0.4f
 
 /** Rays start off; the threshold and length are only meaningful once someone reaches for them. */
+private const val DEFAULT_ART_STRENGTH = 0.6f
+
 private const val DEFAULT_RAY_THRESHOLD = 0.8f
 private const val DEFAULT_RAY_LENGTH = 0.6f
 private const val DEFAULT_RAY_INTENSITY = 0f

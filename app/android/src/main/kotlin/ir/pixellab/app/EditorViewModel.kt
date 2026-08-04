@@ -1438,6 +1438,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         ir.pixellab.engine.android.PixelFilters.dehaze(image, strength, select.selection)
     }
 
+    /**
+     * The filter gallery — oil paint, watercolour, coloured pencil, crystallize.
+     *
+     * Destructive, like every entry on the pixel-filter tab, and honestly so: these rewrite the
+     * picture's structure rather than its colours, and there is no per-pixel function a
+     * non-destructive adjustment layer could hold that would reproduce them.
+     */
+    suspend fun artistic(style: ir.pixellab.core.editor.ArtStyle, strength: Float) = transform { image ->
+        ir.pixellab.engine.android.PixelFilters.artistic(image, style, strength, select.selection)
+    }
+
     /** Texture, clarity or brilliance — one operation at three sizes of detail. */
     suspend fun localContrast(scale: ir.pixellab.core.imaging.LocalContrast.Scale, amount: Float) =
         transform { image ->

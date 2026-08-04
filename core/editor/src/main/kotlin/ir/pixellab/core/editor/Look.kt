@@ -138,3 +138,18 @@ fun Document.withoutLook(look: Look): Document =
 /** Whether this document is currently wearing [look] — what a chip reads to show itself chosen. */
 fun Document.wearing(look: Look): Boolean =
     !look.isEmpty && layers.any { it.id.value.startsWith("look-${look.id}-") }
+
+/**
+ * The filter gallery's four media.
+ *
+ * In `core:editor` rather than in `core:imaging` because it is a *menu*, not an algorithm: the panel
+ * reads the Persian labels off it and the engine switches on it, and neither of those is imaging
+ * work. Keeping it here is also what lets the label and the implementation be changed independently,
+ * which matters because the labels are the part that gets revised.
+ */
+enum class ArtStyle(val persianLabel: String) {
+    OIL_PAINT("رنگ روغن"),
+    WATERCOLOUR("آبرنگ"),
+    PENCIL("مداد رنگی"),
+    CRYSTALLIZE("شیشه‌ای"),
+}
