@@ -198,7 +198,16 @@ class OnnxSegmentation(
                 ?.filter { it.length() >= MIN_MODEL_BYTES }
                 .orEmpty()
             val chosen = candidates.maxByOrNull { it.length() } ?: return null
-            return OnnxSegmentation(chosen)
+            return try {
+                OnnxSegmentation(chosen)
+            } catch (missing: LinkageError) {
+                // The inference runtime is 28 MB of native code that does nothing at all until
+                // someone supplies a model, so the default build leaves it out — see the packaging
+                // block in `app/android/build.gradle.kts`. A user who *has* dropped a model in gets
+                // the classical path and a working app rather than a crash; the build that includes
+                // the runtime is one property away.
+                null
+            }
         }
     }
 }

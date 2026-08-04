@@ -39,9 +39,88 @@ android {
         }
     }
 
+    /**
+     * How a release build gets signed.
+     *
+     * Until now there was none, which meant `assembleRelease` produced an APK Android refuses to
+     * install — so the only build anyone could actually run was the debug one, at three times the
+     * size. That is backwards: the build you hand someone to try should be the small, optimised one.
+     *
+     * A real key comes from Gradle properties (`pixellab.keystore` and friends), set on whatever
+     * machine publishes. When they are absent the debug keystore is used instead, so a release build
+     * is installable for testing on any checkout. It is not a *publishable* build — Play requires a
+     * key only you hold — and nothing here pretends otherwise.
+     */
+    signingConfigs {
+        create("distribution") {
+            val keystore = (project.findProperty("pixellab.keystore") as String?)?.let(::file)
+            if (keystore != null && keystore.exists()) {
+                storeFile = keystore
+                storePassword = project.findProperty("pixellab.storePassword") as String?
+                keyAlias = project.findProperty("pixellab.keyAlias") as String?
+                keyPassword = project.findProperty("pixellab.keyPassword") as String?
+            } else {
+                val debugKey = File(System.getProperty("user.home"), ".android/debug.keystore")
+                storeFile = debugKey
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 on. The debug APK is 179 MB and 62 MB of that is un-minified dex from Compose,
+            // MediaPipe and the Kotlin standard library — none of which a user should be asked to
+            // download to try the app.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("distribution")
+        }
+    }
+
+    /**
+     * One APK per CPU architecture, plus a universal one.
+     *
+     * ONNX Runtime and MediaPipe both ship native libraries for four ABIs, and a single APK carrying
+     * all four came to 179 MB — of which any given phone uses about a quarter. A split build gives
+     * arm64-v8a, which is what every Android phone made in the last several years runs, at a size
+     * someone can actually download over a phone connection.
+     *
+     * The universal APK stays because it is the one to hand to somebody whose device is unknown, and
+     * because an emulator on an x86 desktop needs it.
+     */
+    /**
+     * What is left out of the package, and why.
+     *
+     * ONNX Runtime is 28 MB of native code per architecture and it does **nothing** until a user
+     * supplies their own `.onnx` segmentation model — which the app deliberately does not ship,
+     * because the classical subject-selection path is what makes cut-outs work on the first launch.
+     * Shipping an idle inference engine to everyone so that a handful of people can enable a feature
+     * later is the wrong default: it triples the download for no first-run benefit.
+     *
+     * `OnnxSegmentation.bestIn` degrades to the classical path when the runtime is absent, so a user
+     * who does install a model gets a working app rather than a crash — and a build that includes
+     * the runtime is one property away:
+     *
+     * ```
+     * ./gradlew assembleRelease -Ppixellab.onnx=true
+     * ```
+     */
+    packaging {
+        if (project.findProperty("pixellab.onnx") != "true") {
+            jniLibs.excludes += setOf("**/libonnxruntime.so", "**/libonnxruntime4j_jni.so")
+        }
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
         }
     }
 }
