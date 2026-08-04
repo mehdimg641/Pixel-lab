@@ -32,8 +32,19 @@ import ir.pixellab.core.model.WarpStyle
 fun TypeSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
     val layer = state.primaryLayer as? Layer.Text
     if (layer == null) {
+        // A dead end until now: the panel said "select a text layer" and nothing in the application
+        // could make one except the font picker, which is a different sheet and does not look like
+        // the place you go to write a word. A panel that names a precondition has to offer the way
+        // to meet it.
         Column(modifier.fillMaxWidth()) {
-            SheetHint("یک لایهٔ متن انتخاب کنید")
+            SheetHint(
+                if (model.canAddText) {
+                    "لایهٔ متنی انتخاب نشده — یکی بسازید یا روی متنی روی بوم بزنید"
+                } else {
+                    "هنوز فونتی بارگذاری نشده — از تنظیمات یک پوشهٔ فونت اضافه کنید"
+                },
+            )
+            SheetAction("افزودن متن", enabled = model.canAddText) { model.addTextLayer() }
         }
         return
     }
@@ -44,6 +55,18 @@ fun TypeSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifier
     val typeface = model.typefaceFor(spec)
 
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+
+        // ---- colour ------------------------------------------------------------------------
+
+        // First, and it was missing entirely. The colour of the letters is the thing anyone changes
+        // before anything else, and the only way to change it was to apply a whole saved style —
+        // which also replaced the stroke, the shadow and everything else the user had set.
+        SheetSection("رنگ")
+        FillEditor(
+            fill = layer.style.fill,
+            model = model,
+            onChange = { model.setLayerFill(id, it) },
+        )
 
         // ---- character ---------------------------------------------------------------------
 

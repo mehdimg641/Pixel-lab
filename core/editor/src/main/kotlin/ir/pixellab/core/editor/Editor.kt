@@ -75,7 +75,7 @@ class Editor(
         val viewport = state.viewport.copy(screenSize = size)
         state = state.copy(
             viewport = if (fitIfFirst && state.viewport.screenSize == Vec2.ZERO) {
-                viewport.fit(state.document.canvas.size, padding = FIT_PADDING)
+                fitted(viewport)
             } else {
                 viewport
             },
@@ -83,8 +83,29 @@ class Editor(
     }
 
     fun fitCanvas() {
-        state = state.copy(viewport = state.viewport.fit(state.document.canvas.size, FIT_PADDING))
+        state = state.copy(viewport = fitted(state.viewport))
     }
+
+    /**
+     * How much of the screen the fixed bars cover, top and bottom.
+     *
+     * Told to the editor rather than assumed, because only the screen knows: the bars are laid out
+     * in dp against the device's density, and a constant here would be right on exactly one phone.
+     */
+    fun setChrome(top: Float, bottom: Float) {
+        chromeTop = top
+        chromeBottom = bottom
+    }
+
+    private var chromeTop = TOP_BAR_HEIGHT
+    private var chromeBottom = 0f
+
+    private fun fitted(viewport: Viewport) = viewport.fit(
+        canvasSize = state.document.canvas.size,
+        padding = FIT_PADDING,
+        insetTop = chromeTop,
+        insetBottom = chromeBottom,
+    )
 
     /** Restores a camera — reopening a project should put the user back where they were. */
     fun setViewport(viewport: Viewport) {

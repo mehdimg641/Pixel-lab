@@ -145,9 +145,25 @@ class AndroidGlDevice(private val context: GlContext) : GlDevice {
         GLES30.glDeleteTextures(1, intArrayOf(handle.id), 0)
     }
 
+    /**
+     * Binds a texture to draw into, or the window when null.
+     *
+     * **The window case has to restore the viewport, and for a long time it did not.** Every pass
+     * into a texture sets the viewport to that texture's size, and the viewport is global state:
+     * the final present to the window inherited whatever the last offscreen pass had left. On a
+     * 1080×1920 document that meant the whole editor was drawn into a 1080×1920 rectangle anchored
+     * at the bottom-left corner of the screen, with the rest of the window never written at all —
+     * so the artwork sat low and off-centre and the untouched strip stayed black.
+     *
+     * It is the kind of bug that only shows on a device: every offscreen test passes, because a
+     * test never presents to a window.
+     */
     override fun bindTarget(handle: TextureHandle?) {
         if (handle == null) {
             GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
+            val width = context.width
+            val height = context.height
+            if (width > 0 && height > 0) GLES30.glViewport(0, 0, width, height)
             return
         }
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebuffer)

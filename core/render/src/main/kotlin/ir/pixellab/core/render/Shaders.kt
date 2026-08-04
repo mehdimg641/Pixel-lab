@@ -571,6 +571,7 @@ object Shaders {
         body = """
             uniform mat3 uMap;
             uniform vec4 uSurround;
+            uniform vec2 uCheck;
 
             void main() {
                 vec3 mapped = uMap * vec3(vUv, 1.0);
@@ -581,8 +582,20 @@ object Shaders {
                     fragColor = uSurround;
                     return;
                 }
+                // Inside it, transparency shows a checkerboard. Compositing over the surround grey
+                // instead — which is what this did — makes an empty artboard the same flat colour
+                // as the space around it, so the artboard's own edges disappear and "no background"
+                // looks like a control that does nothing. The pattern is the only thing that says
+                // *transparent* rather than *dark grey*.
+                //
+                // Reckoned in screen space, not canvas space, so the squares stay the same size as
+                // the user zooms. A checkerboard that zoomed with the artwork would read as part of
+                // the artwork.
+                vec2 cell = floor(vUv * uCheck);
+                float odd = mod(cell.x + cell.y, 2.0);
+                vec3 ground = mix(vec3(0.35), vec3(0.45), odd);
                 vec4 c = texture(uSource, uv);
-                fragColor = vec4(mix(uSurround.rgb, c.rgb, c.a), 1.0);
+                fragColor = vec4(mix(ground, c.rgb, c.a), 1.0);
             }
         """,
     )

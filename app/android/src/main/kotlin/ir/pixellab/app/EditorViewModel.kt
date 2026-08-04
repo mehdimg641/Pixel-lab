@@ -26,6 +26,7 @@ import ir.pixellab.core.model.ShapeGeometry
 import ir.pixellab.core.model.TextSpec
 import ir.pixellab.core.model.Transform
 import ir.pixellab.core.model.Vec2
+import ir.pixellab.core.model.withStyle
 import ir.pixellab.engine.android.AssetSource
 import ir.pixellab.engine.android.FontResolver
 import ir.pixellab.engine.android.LayerMeasure
@@ -805,12 +806,19 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 if (handle != null) beginDrag(handle, gesture.position)
             }
             is CanvasGesture.Drag ->
-                if (state.drag != null) dragTo(gesture.position) else panViewport(gesture.delta)
+                if (state.drag != null) {
+                    dragTo(gesture.position)
+                } else {
+                    framedByHand = true
+                    panViewport(gesture.delta)
+                }
             is CanvasGesture.DragEnd -> endDrag()
 
             is CanvasGesture.TransformStart -> Unit
-            is CanvasGesture.Transform ->
+            is CanvasGesture.Transform -> {
+                framedByHand = true
                 transformViewport(gesture.pan, gesture.scaleFactor, gesture.rotationDegrees, gesture.pivot)
+            }
             CanvasGesture.TransformEnd -> endDrag()
 
             // Routed back out rather than handled here: painted pixels are on the same stack.
@@ -820,6 +828,23 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun onScreenSize(size: Vec2) = edit { resizeScreen(size) }
+
+    /**
+     * How tall the fixed bars are, in screen pixels.
+     *
+     * The canvas fills the whole screen and the bars are drawn over it, so without this the artboard
+     * is centred behind them — sitting low, with its bottom edge under the ribbon. Reported from the
+     * screen because the bars are laid out in dp and only the screen knows the density.
+     */
+    fun onChromeInsets(top: Float, bottom: Float) = edit {
+        setChrome(top, bottom)
+        // Only if the user has not framed the document themselves. Re-fitting after they have
+        // zoomed in on a letterform would throw their work away because a bar changed height.
+        if (!framedByHand) fitCanvas()
+    }
+
+    /** Set the moment a gesture moves the camera, so an automatic fit never overrides the user. */
+    private var framedByHand = false
 
     /**
      * Replaces the open document with a loaded one.
@@ -1756,6 +1781,35 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             ),
         )
     }
+
+    /**
+     * Sets a layer's own paint.
+     *
+     * The single most basic control in the application and until now it existed nowhere a user
+     * could reach: a text layer's colour could be changed by applying a whole saved style, or not at
+     * all. Every effect parameter had a fill picker; the letter itself did not.
+     */
+    fun setLayerFill(id: LayerId, fill: Fill) = edit {
+        replaceLayer(id) { it.withStyle(it.style.copy(fill = fill)) }
+    }
+
+    /**
+     * Adds a text layer without making the user choose a typeface first.
+     *
+     * "Add text" has to be one press. It was reachable only by opening the font picker and tapping a
+     * face — so a user who wanted to type had to make a typographic decision before they could write
+     * a word, and the panel actually labelled متن told them to select a text layer that no control
+     * in the application could create.
+     *
+     * @return null only when no typeface has loaded yet, which is the one honest failure here.
+     */
+    fun addTextLayer(text: String = SAMPLE_TEXT): LayerId? {
+        val typeface = fontStore.catalog.typefaces.firstOrNull() ?: return null
+        return addText(typeface, text = text)
+    }
+
+    /** Whether [addTextLayer] would do anything, so a button is dimmed rather than dead. */
+    val canAddText: Boolean get() = fontStore.catalog.typefaces.isNotEmpty()
 
     /** Edits the selected shape's geometry in place, as one undo step. */
     fun updateShape(change: (ShapeGeometry) -> ShapeGeometry) {

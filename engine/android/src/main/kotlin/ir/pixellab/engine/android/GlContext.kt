@@ -44,6 +44,23 @@ class GlContext private constructor(
 
     val renderer: String get() = GLES30.glGetString(GLES30.GL_RENDERER).orEmpty()
 
+    /**
+     * How large the window is, in pixels.
+     *
+     * Asked of EGL rather than passed in from the view, because the two disagree at exactly the
+     * moment it matters: `surfaceChanged` reports the *view's* size, while the drawing surface is
+     * whatever EGL bound, and on a device with a display cutout or a rounded-corner inset those are
+     * not the same number. Drawing at the wrong one leaves a strip of the window never written.
+     */
+    val width: Int get() = query(EGL14.EGL_WIDTH)
+
+    val height: Int get() = query(EGL14.EGL_HEIGHT)
+
+    private fun query(attribute: Int): Int {
+        val out = IntArray(1)
+        return if (EGL14.eglQuerySurface(display, surface, attribute, out, 0)) out[0] else 0
+    }
+
     fun makeCurrent() {
         check(EGL14.eglMakeCurrent(display, surface, surface, context)) {
             "eglMakeCurrent failed: 0x${EGL14.eglGetError().toString(16)}"

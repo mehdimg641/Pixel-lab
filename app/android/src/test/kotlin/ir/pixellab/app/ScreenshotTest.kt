@@ -162,6 +162,7 @@ class ScreenshotTest {
                         state = model.state,
                         model = model,
                         onPickImage = {},
+                        onAddText = {},
                         onExport = {},
                         onSave = {},
                         onOpen = {},

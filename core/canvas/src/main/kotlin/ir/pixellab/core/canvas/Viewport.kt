@@ -65,16 +65,36 @@ data class Viewport(
         zoomBy(scaleFactor, pivot).rotateBy(rotationDegrees, pivot).panBy(pan)
 
     /** Centres [canvasSize] on screen at the largest zoom that leaves [padding] screen pixels around it. */
-    fun fit(canvasSize: Vec2, padding: Float = 0f): Viewport {
+    /**
+     * Sizes and centres the artboard in the part of the screen the user can actually see.
+     *
+     * [insetTop] and [insetBottom] are the fixed bars — the history strip above, the ribbon and dock
+     * below. Fitting to the whole screen instead, which is what this did, centres the artboard
+     * behind them: on a phone the bars are around 200dp of a 900dp screen, so the artwork sits low,
+     * its bottom edge is under the ribbon, and the whole document looks off-centre and too large.
+     * Nothing about it is wrong except that the program measured a rectangle nobody is looking at.
+     */
+    fun fit(
+        canvasSize: Vec2,
+        padding: Float = 0f,
+        insetTop: Float = 0f,
+        insetBottom: Float = 0f,
+    ): Viewport {
         if (screenSize.x <= 0f || screenSize.y <= 0f || canvasSize.x <= 0f || canvasSize.y <= 0f) return this
+        // Insets that would swallow the screen are ignored rather than clamped to a sliver: a
+        // one-pixel-tall working area is not a better answer than the whole screen.
+        val visibleHeight = screenSize.y - insetTop - insetBottom
+        val top = if (visibleHeight > MIN_VISIBLE) insetTop else 0f
+        val height = if (visibleHeight > MIN_VISIBLE) visibleHeight else screenSize.y
         val available = Vec2(
             max(1f, screenSize.x - padding * 2f),
-            max(1f, screenSize.y - padding * 2f),
+            max(1f, height - padding * 2f),
         )
         val scale = min(available.x / canvasSize.x, available.y / canvasSize.y).coerceIn(MIN_ZOOM, MAX_ZOOM)
         val centred = Viewport(zoom = scale, rotation = 0f, screenSize = screenSize)
         val canvasCentre = centred.toScreen(canvasSize * 0.5f)
-        return centred.copy(offset = screenSize * 0.5f - canvasCentre)
+        val target = Vec2(screenSize.x * 0.5f, top + height * 0.5f)
+        return centred.copy(offset = target - canvasCentre)
     }
 
     /** Zoom expressed the way it is shown to the user, where 100 means one canvas pixel per screen pixel. */
@@ -146,6 +166,9 @@ data class Viewport(
          */
         const val MIN_ZOOM = 0.02f
         const val MAX_ZOOM = 32f
+
+        /** Below this the chrome is claiming the whole screen, which is a caller's mistake to ignore. */
+        const val MIN_VISIBLE = 64f
     }
 }
 

@@ -69,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -255,6 +256,20 @@ fun EditorScreen(
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink.Ground)) {
         val screenHeight = maxHeight
 
+        // The canvas fills the screen and the bars are drawn over it, so the editor has to be told
+        // how much of it they cover — otherwise the artboard is centred behind them and sits low,
+        // with its bottom edge under the ribbon. In dp here and in pixels there, because only this
+        // side knows the density.
+        val density = LocalDensity.current
+        LaunchedEffect(density) {
+            with(density) {
+                model.onChromeInsets(
+                    top = Frame.history.toPx(),
+                    bottom = (Frame.ribbon + Frame.dock).toPx(),
+                )
+            }
+        }
+
         EditorCanvas(
             state = state,
             bounds = bounds,
@@ -313,6 +328,9 @@ fun EditorScreen(
                 state = state,
                 model = model,
                 onPickImage = { picking.launch(IMAGE_MIME) },
+                // Straight into the keyboard. A text layer that arrives carrying "متن نمونه" and
+                // no way to replace it without hunting for an edit button is not a text tool.
+                onAddText = { model.addTextLayer()?.let { editingText = it } },
                 onExport = { exporting = true },
                 onSave = { scope.launch { outcome = saveProject(context, model.currentProject()) } },
                 onOpen = { scope.launch { opening = Storage.listProjects(context) } },
@@ -556,6 +574,7 @@ internal fun Ribbon(
     state: EditorState,
     model: EditorViewModel,
     onPickImage: () -> Unit,
+    onAddText: () -> Unit,
     onExport: () -> Unit,
     onSave: () -> Unit,
     onOpen: () -> Unit,
@@ -589,6 +608,10 @@ internal fun Ribbon(
             }
 
             Dock.TEXT -> {
+                // First, and it did not exist. Writing a word required opening the font picker and
+                // tapping a face — a typographic decision demanded before a single letter could be
+                // typed, in the one dock named after typing.
+                RibbonAction(Icons.Outlined.TextFields, "افزودن متن", Tool.TEXT, state, model, onAddText)
                 RibbonSheet(Icons.Outlined.FontDownload, "فونت", Tool.TEXT, SheetContent.FontPicker, state, model)
                 RibbonSheet(Icons.Outlined.TextFields, "تایپوگرافی", Tool.TEXT, SheetContent.Typography, state, model)
                 RibbonSheet(Icons.Outlined.Category, "شکل", Tool.SHAPE, SheetContent.ShapeTools, state, model)

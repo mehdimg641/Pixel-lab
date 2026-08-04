@@ -269,6 +269,15 @@ class DocumentRenderer(
         // Neutral grey around the artboard, matching the interface chrome; a tint here would shift
         // how the artwork's own colours read.
         device.setVec4("uSurround", SURROUND_GREY, SURROUND_GREY, SURROUND_GREY, 1f)
+        // How many checks fit across the target, so the squares come out [CHECK_PIXELS] wide on
+        // screen whatever the zoom. An export has no screen, and no transparency to show either —
+        // it writes alpha — so a single check covers it and never appears.
+        val screen = viewport?.screenSize?.takeIf { it.x > 0f && it.y > 0f }
+        device.setVec2(
+            "uCheck",
+            screen?.let { it.x / CHECK_PIXELS } ?: 1f,
+            screen?.let { it.y / CHECK_PIXELS } ?: 1f,
+        )
         device.draw(1)
     }
 
@@ -1341,6 +1350,15 @@ class DocumentRenderer(
 
         /** 0x2A as a linear fraction — the same neutral grey the Compose chrome uses. */
         const val SURROUND_GREY = 42f / 255f
+
+        /**
+         * How wide a transparency check is on screen.
+         *
+         * Sixteen device pixels: small enough to read as a texture rather than as artwork, large
+         * enough not to shimmer into flat grey on a 400-dpi phone, which is what an 8-pixel check
+         * does and is why the pattern has to be sized in device pixels rather than in canvas ones.
+         */
+        const val CHECK_PIXELS = 16f
 
         /** A surface is a ping-pong pair, plus the clip source a clipping group copies aside. */
         const val SURFACE_BUFFERS = 3
