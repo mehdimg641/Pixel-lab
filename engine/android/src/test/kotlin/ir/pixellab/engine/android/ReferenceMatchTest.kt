@@ -41,6 +41,16 @@ class ReferenceMatchTest {
 
     private val output = File("build/renders").apply { mkdirs() }
 
+    /**
+     * The heavy display face the reference is actually set in.
+     *
+     * Vazirmatn is a *text* family — its Latin is far lighter and more open than any poster face —
+     * so every comparison against a commercial title spent most of its difference on letterforms
+     * rather than on the renderer. Anton is the closest openly-licensed equivalent to what these
+     * PSDs use, and it is bundled with its OFL text under `docs/licenses/fonts`.
+     */
+    private fun anton(): FontFile = load("anton.ttf", "Anton", Script.LATIN)
+
     private fun vazirmatn(): FontFile {
         val file = File.createTempFile("vazirmatn", ".ttf")
         file.deleteOnExit()
@@ -66,6 +76,28 @@ class ReferenceMatchTest {
         )
     }
 
+    private fun load(resource: String, family: String, script: Script): FontFile {
+        val file = File.createTempFile(family, ".ttf")
+        file.deleteOnExit()
+        checkNotNull(javaClass.classLoader?.getResourceAsStream(resource)) {
+            "$resource is missing from engine/android/src/test/resources"
+        }.use { input -> file.outputStream().use { input.copyTo(it) } }
+        return FontFile(
+            path = file.absolutePath,
+            family = family,
+            subfamily = "Regular",
+            postScriptName = "$family-Regular",
+            fullName = "$family Regular",
+            weight = 400,
+            italic = false,
+            axes = emptyMap(),
+            features = emptySet(),
+            script = script,
+            hasPersianDigits = false,
+            hasTatweel = false,
+        )
+    }
+
     /**
      * The reference's own recipe, in this engine's terms.
      *
@@ -88,6 +120,108 @@ class ReferenceMatchTest {
         rotation = Vec3(-3f, 4f, 0f),
         fieldOfView = 22f,
     )
+
+    /**
+     * The two paths, joined: a painted face inside real extruded metal.
+     *
+     * Everything before this had to pick one. The effect path could put a painterly texture inside
+     * the letters and faked its depth with offset copies — no perspective, every letter seen from
+     * the same angle. The mesh path had true geometry and could only ramp between two colours on
+     * the face. The reference is both at once, and that gap was the largest single reason our
+     * version read as an imitation.
+     *
+     * Set in Anton rather than Vazirmatn, for the second-largest reason: no renderer fixes a
+     * letterform, and a text family's Latin against a poster face is most of what the eye was
+     * seeing.
+     */
+    @Test
+    fun `a painted face inside real extruded metal`() {
+        val fonts = FontResolver { anton() }
+        val size = 240f
+        val texture = brushedPaint()
+        val assets = AssetSource { id -> if (id.value == PAINT) texture else null }
+
+        val rendered = TextTo3D.render(
+            layer = Layer.Text(
+                id = LayerId("trend"),
+                spec = TextSpec(text = "TREND", font = FontRef(family = "Anton"), size = size),
+                name = "trend",
+                transform = Transform(),
+                style = Style.PLAIN_BLACK,
+            ),
+            geometry = trendLook(size).copy(
+                // The join. A gradient stays declared underneath so the recipe still reads, and the
+                // pattern wins — a caller who supplies a picture asked for the picture.
+                facePattern = Fill.Pattern(
+                    asset = ir.pixellab.core.model.AssetId(PAINT),
+                    // Larger than one tile across the word: a tile is authored square and a word is
+                    // wide, so one tile stretched over it smears every stroke into a streak.
+                    scale = Vec2(PAINT_SCALE, PAINT_SCALE),
+                ),
+            ),
+            fonts = fonts,
+            width = 1800,
+            height = 900,
+            supersample = 3,
+            assets = assets,
+        )
+        checkNotNull(rendered) { "the joined path produced no render" }
+        write("merged-trend", rendered.width, rendered.height, rendered.pixels)
+
+        // It has to be *painted*, not ramped: a gradient face would have no two neighbouring pixels
+        // of unrelated colour, and the paint does. Counting distinct tones inside the word is the
+        // cheapest thing that tells those apart.
+        val tones = HashSet<Int>()
+        for (pixel in rendered.pixels) {
+            if ((pixel ushr 24) < 128) continue
+            tones += (pixel and 0xF0F0F0)
+        }
+        check(tones.size > MIN_PAINTED_TONES) {
+            "the face carries only ${tones.size} tones — the texture did not reach the mesh"
+        }
+    }
+
+    /** The same painterly tile the effect path uses, so the two produce the same material. */
+    private fun brushedPaint(): ir.pixellab.core.codec.RasterImage {
+        val coverage = ir.pixellab.core.imaging.Procedural.pattern(
+            ir.pixellab.core.imaging.Procedural.Pattern.MARBLE,
+            size = 512,
+            repeats = 6,
+            seed = 7,
+        )
+        val grey = ir.pixellab.core.imaging.Raster(coverage.width, coverage.height, 3)
+        for (i in 0 until coverage.width * coverage.height) {
+            val v = coverage[i % coverage.width, i / coverage.width, 0].coerceIn(0f, 1f)
+            grey.data[i * 3] = v
+            grey.data[i * 3 + 1] = v
+            grey.data[i * 3 + 2] = v
+        }
+        // Brushed before tinting, so the mode filter cannot vote the minority colour out — the same
+        // ordering the effect path had to learn.
+        val brushed = ir.pixellab.core.imaging.Artistic.oilPaint(grey, radius = 6, levels = 10)
+
+        var low = Float.MAX_VALUE
+        var high = -Float.MAX_VALUE
+        for (i in 0 until brushed.pixelCount) {
+            val v = brushed.data[i * 3]
+            if (v < low) low = v
+            if (v > high) high = v
+        }
+        val span = (high - low).coerceAtLeast(1e-4f)
+
+        val pixels = IntArray(coverage.width * coverage.height)
+        for (i in pixels.indices) {
+            val n = ((brushed.data[i * 3] - low) / span).coerceIn(0f, 1f)
+            val t = Math.pow(n.toDouble(), 2.2).toFloat()
+            val r = (0.03f + (0.99f - 0.03f) * t)
+            val g = (0.42f + (0.72f - 0.42f) * t)
+            val b = (0.40f + (0.52f - 0.40f) * t)
+            pixels[i] = (0xFF shl 24) or (byteOf(r) shl 16) or (byteOf(g) shl 8) or byteOf(b)
+        }
+        return ir.pixellab.core.codec.RasterImage(coverage.width, coverage.height, pixels)
+    }
+
+    private fun byteOf(v: Float) = (v.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
 
     @Test
     fun `the reference effect, with what the engine has today`() {
@@ -169,6 +303,14 @@ class ReferenceMatchTest {
     }
 
     private companion object {
+        const val PAINT = "paint"
+
+        /** A third of a tile per letter-width, so the brushwork stays at its own scale. */
+        const val PAINT_SCALE = 0.33f
+
+        /** A ramp would give far fewer; this separates painted from gradient without a fixture. */
+        const val MIN_PAINTED_TONES = 40
+
         /**
          * The block, ramped front to back.
          *

@@ -262,6 +262,22 @@ data class Geometry3D(
     val markMaterial: Material? = null,
 
     /**
+     * A picture painted across the letter's face, in place of [faceFill].
+     *
+     * The pattern the layer-effect path already understands, now reaching the mesh renderer too.
+     * Before this, a face could carry a photograph *or* real extruded geometry and not both — the
+     * effect path fakes its depth with offset copies, so a painted face came with no perspective and
+     * no lit walls, and the mesh path could only ramp between colours. Every commercial title of
+     * this kind is a painted face inside real metal, and having to choose between the two halves was
+     * the largest single reason our renders read as imitations of one.
+     *
+     * A pattern rather than any [Fill] because that is the case the mesh cannot already express: a
+     * solid is a material's base colour and a gradient is [faceFill]. Wins over [faceFill] when both
+     * are set — a caller who supplies a picture asked for the picture.
+     */
+    val facePattern: Fill.Pattern? = null,
+
+    /**
      * A gradient painted across the letter's face, in place of [faceMaterial]'s flat base colour.
      *
      * Only the face, and that is the whole reason it exists here rather than as a layer effect. A

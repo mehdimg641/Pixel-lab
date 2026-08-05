@@ -44,6 +44,13 @@ object Rasteriser {
          * `LightRig.environment` to pixels passes a [LatLong] instead.
          */
         environment: EnvironmentMap = Studio,
+        /**
+         * A picture painted across the letter's face, replacing [Geometry3D.faceFill].
+         *
+         * Same arrangement as [environment], and for the same reason: this module resolves no
+         * assets, so a caller that has turned a `Fill.Pattern` into pixels passes them in.
+         */
+        faceTexture: FaceTexture? = null,
     ): Rendered {
         require(width > 0 && height > 0) { "the target must be positive, got ${width}x$height" }
         if (mesh.triangleCount == 0) return Rendered(width, height, IntArray(width * height))
@@ -86,7 +93,10 @@ object Rasteriser {
         // Built once. The stops are sorted and the object-space bounds measured here rather than
         // per fragment, because both are constant across the whole letter and sorting a stop list
         // inside the inner loop would cost more than the shading does.
-        val facePaint = geometry.faceFill?.let { FacePaint.of(it, mesh) }
+        // A texture wins over a gradient when both are given: the caller asked for a picture, and
+        // silently preferring the ramp would be the panel ignoring the more specific instruction.
+        val facePaint = faceTexture?.let { TexturePaint.of(it, mesh) }
+            ?: geometry.faceFill?.let { FacePaint.of(it, mesh) }
         val sidePaint = geometry.sideFill?.let { SidePaint.of(it, mesh) }
 
         for (t in 0 until mesh.triangleCount) {
@@ -409,6 +419,40 @@ object Rasteriser {
 /** A gradient sampled per fragment from the letter's own coordinates. */
 internal interface SurfacePaint {
     fun at(x: Float, y: Float, z: Float): Color
+}
+
+/**
+ * The face wearing a picture rather than a ramp.
+ *
+ * Mapped across the letter's own object-space bounds, exactly as [FacePaint] maps its gradient, so
+ * the paint travels with the word and reads the same whether it sits in a corner or fills the page.
+ * Mapping in screen space instead would slide the texture across the letters as the camera moved,
+ * which reads as the paint being projected onto them rather than being their surface.
+ */
+internal class TexturePaint private constructor(
+    private val texture: FaceTexture,
+    private val minX: Float,
+    private val minY: Float,
+    private val spanX: Float,
+    private val spanY: Float,
+) : SurfacePaint {
+    // Flipped vertically: object space runs up, an image runs down, and getting this wrong is
+    // invisible on a symmetric tile and obvious on anything with a direction to it.
+    override fun at(x: Float, y: Float, z: Float): Color =
+        texture.at((x - minX) / spanX, 1f - (y - minY) / spanY)
+
+    companion object {
+        fun of(texture: FaceTexture, mesh: Mesh): TexturePaint {
+            val (min, max) = mesh.bounds()
+            return TexturePaint(
+                texture = texture,
+                minX = min.x,
+                minY = min.y,
+                spanX = (max.x - min.x).takeIf { it > 0f } ?: 1f,
+                spanY = (max.y - min.y).takeIf { it > 0f } ?: 1f,
+            )
+        }
+    }
 }
 
 internal class FacePaint private constructor(

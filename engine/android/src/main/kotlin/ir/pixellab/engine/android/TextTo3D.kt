@@ -3,6 +3,7 @@ package ir.pixellab.engine.android
 import ir.pixellab.core.codec.RasterImage
 import ir.pixellab.core.mesh.Extruder
 import ir.pixellab.core.mesh.MarkStyle
+import ir.pixellab.core.mesh.FaceTexture
 import ir.pixellab.core.mesh.Mesh
 import ir.pixellab.core.mesh.Rasteriser
 import ir.pixellab.core.model.Geometry3D
@@ -29,6 +30,33 @@ object TextTo3D {
 
     fun canRender(layer: Layer, fonts: FontResolver): Boolean =
         layer is Layer.Text && layer.spec.text.isNotBlank() && fonts.resolve(layer.spec.font) != null
+
+    /**
+     * Turns the face's pattern into pixels, if it has one.
+     *
+     * **This is where the two ways of building a title finally meet.** Until now a mesh face could
+     * only take a gradient, so a painted or photographed face meant giving up real geometry — no
+     * perspective, no lit walls — and real geometry meant giving up the paint. Every commercial
+     * title of this kind has both, and having to choose was the largest single reason a render came
+     * out looking like an imitation of one.
+     *
+     * Null when the face names no pattern, which is the common case, so nothing is decoded for a
+     * document that did not ask.
+     */
+    private fun faceTextureFor(geometry: Geometry3D, assets: AssetSource): FaceTexture? {
+        val pattern = geometry.facePattern ?: return null
+        val image = assets.load(pattern.asset) ?: return null
+        return FaceTexture(
+            pixels = image.pixels,
+            width = image.width,
+            height = image.height,
+            // The pattern's own scale is a multiplier on the tile, so a larger number means a larger
+            // tile and therefore *fewer* repeats across the letter. Inverting it here keeps the
+            // control meaning the same thing it means everywhere else in the application.
+            repeats = (1f / pattern.scale.x.coerceAtLeast(MIN_PATTERN_SCALE)),
+            rotation = pattern.rotation,
+        )
+    }
 
     /**
      * Renders [layer] as 3D, at [width] × [height] pixels.
@@ -62,6 +90,7 @@ object TextTo3D {
         val rendered = Rasteriser.render(
             mesh, geometry, width, height, supersample,
             environment = environmentFor(geometry.lighting, assets),
+            faceTexture = faceTextureFor(geometry, assets),
         )
         if (rendered.isEmpty) return null
         return RasterImage(rendered.width, rendered.height, rendered.pixels)
@@ -135,4 +164,7 @@ object TextTo3D {
 
     private const val SMALL_BEVEL = 3f
     private const val LARGE_BEVEL = 12f
+
+    /** Below this a pattern's scale would ask for thousands of repeats across one letter. */
+    private const val MIN_PATTERN_SCALE = 0.01f
 }
