@@ -187,4 +187,73 @@ class GestureTest {
         move(7, 100f, 100f, at = 1000) shouldBe emptyList()
         up(7, 100f, 100f, at = 1010) shouldBe emptyList()
     }
+
+    /** Every degree the canvas was told to turn during a two-finger gesture. */
+    private fun turnOf(events: List<CanvasGesture>) =
+        events.filterIsInstance<CanvasGesture.Transform>().sumOf { it.rotationDegrees.toDouble() }
+
+    @Test
+    fun `an ordinary pinch does not rotate the canvas`() {
+        // The bug this exists for: two fingers never pinch along a perfectly fixed line, so an
+        // unguarded angle delta turns the canvas a fraction of a degree on every zoom. The
+        // fractions accumulate, and after a minute of ordinary work the artboard sits visibly
+        // crooked with nothing the user did having asked for that.
+        down(0, 100f, 500f, at = 1000)
+        down(1, 300f, 500f, at = 1010)
+
+        var turn = 0.0
+        for (step in 1..20) {
+            val wobble = if (step % 2 == 0) 3f else -2f
+            turn += turnOf(move(0, 100f - step * 4f, 500f + wobble, at = 1010L + step * 10))
+            turn += turnOf(move(1, 300f + step * 4f, 500f - wobble, at = 1012L + step * 10))
+        }
+        turn.toFloat() shouldBe (0f plusOrMinus 0.001f)
+    }
+
+    @Test
+    fun `a deliberate turn rotates, and keeps every degree of it`() {
+        // A per-frame threshold would swallow this, because a slow deliberate turn is a sequence of
+        // small deltas too. The *total* since the gesture began is what crosses, and once it has the
+        // latch stays open — so the guard costs no precision after the first moment.
+        down(0, 200f, 400f, at = 1000)
+        down(1, 200f, 600f, at = 1010)
+
+        var turn = 0.0
+        for (step in 1..40) {
+            val radians = Math.toRadians(step.toDouble())
+            val dx = (100.0 * kotlin.math.sin(radians)).toFloat()
+            val dy = (100.0 * kotlin.math.cos(radians)).toFloat()
+            turn += turnOf(move(0, 200f - dx, 500f - dy, at = 1010L + step * 10))
+            turn += turnOf(move(1, 200f + dx, 500f + dy, at = 1012L + step * 10))
+        }
+        // The whole forty degrees arrives, including the eight spent reaching the threshold.
+        kotlin.math.abs(turn).toFloat() shouldBe (40f plusOrMinus 2f)
+    }
+
+    @Test
+    fun `lifting the fingers closes the latch again`() {
+        // Otherwise the second pinch of a session inherits the first one's permission to rotate and
+        // the guard protects only the very first gesture anybody makes.
+        down(0, 200f, 400f, at = 1000)
+        down(1, 200f, 600f, at = 1010)
+        for (step in 1..40) {
+            val radians = Math.toRadians(step.toDouble())
+            val dx = (100.0 * kotlin.math.sin(radians)).toFloat()
+            val dy = (100.0 * kotlin.math.cos(radians)).toFloat()
+            move(0, 200f - dx, 500f - dy, at = 1010L + step * 10)
+            move(1, 200f + dx, 500f + dy, at = 1012L + step * 10)
+        }
+        up(0, 200f, 400f, at = 2000)
+        up(1, 200f, 600f, at = 2010)
+
+        down(0, 100f, 500f, at = 3000)
+        down(1, 300f, 500f, at = 3010)
+        var turn = 0.0
+        for (step in 1..20) {
+            val wobble = if (step % 2 == 0) 3f else -2f
+            turn += turnOf(move(0, 100f - step * 4f, 500f + wobble, at = 3010L + step * 10))
+            turn += turnOf(move(1, 300f + step * 4f, 500f - wobble, at = 3012L + step * 10))
+        }
+        turn.toFloat() shouldBe (0f plusOrMinus 0.001f)
+    }
 }

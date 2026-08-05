@@ -273,6 +273,9 @@ class DocumentRenderer(
         // screen whatever the zoom. An export has no screen, and no transparency to show either —
         // it writes alpha — so a single check covers it and never appears.
         val screen = viewport?.screenSize?.takeIf { it.x > 0f && it.y > 0f }
+        // Only when the destination is the window. A blit into a texture keeps the convention the
+        // rest of the pipeline uses, and flipping there would invert every export.
+        device.setFloat("uFlipY", if (target == null) 1f else 0f)
         device.setVec2(
             "uCheck",
             screen?.let { it.x / CHECK_PIXELS } ?: 1f,

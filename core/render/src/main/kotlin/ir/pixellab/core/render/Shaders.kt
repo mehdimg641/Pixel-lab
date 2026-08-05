@@ -572,9 +572,22 @@ object Shaders {
             uniform mat3 uMap;
             uniform vec4 uSurround;
             uniform vec2 uCheck;
+            uniform float uFlipY;
 
             void main() {
-                vec3 mapped = uMap * vec3(vUv, 1.0);
+                // **The window's y runs the other way, and every offscreen pass hid it.**
+                //
+                // The shared vertex stage writes vUv straight from the clip-space position, so
+                // vUv.y = 0 sits at the bottom of the target. Rendering texture-to-texture that is
+                // self-consistent: row 0 of a texture is also written at the bottom, and the two
+                // conventions cancel. Presenting to the *window* they do not — the display's bottom
+                // is fixed — so the document's first row was drawn along the bottom of the screen
+                // and every photograph, every letter and the whole artboard appeared upside down.
+                //
+                // One uniform rather than flipping the vertex stage, because the vertex stage is
+                // shared by forty passes that are all correct as they are.
+                vec2 uv0 = vec2(vUv.x, mix(vUv.y, 1.0 - vUv.y, uFlipY));
+                vec3 mapped = uMap * vec3(uv0, 1.0);
                 vec2 uv = mapped.xy / (abs(mapped.z) < 0.000001 ? 1.0 : mapped.z);
                 // Outside the artboard is the neutral surround, not black and not the edge pixel
                 // smeared outwards by clamping.
@@ -591,7 +604,7 @@ object Shaders {
                 // Reckoned in screen space, not canvas space, so the squares stay the same size as
                 // the user zooms. A checkerboard that zoomed with the artwork would read as part of
                 // the artwork.
-                vec2 cell = floor(vUv * uCheck);
+                vec2 cell = floor(uv0 * uCheck);
                 float odd = mod(cell.x + cell.y, 2.0);
                 vec3 ground = mix(vec3(0.35), vec3(0.45), odd);
                 vec4 c = texture(uSource, uv);

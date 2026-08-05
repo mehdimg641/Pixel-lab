@@ -86,6 +86,10 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
 
     private var mode = Mode.IDLE
     private var reference: Contacts? = null
+
+    /** How far the two fingers have turned since this gesture began, and whether that has counted. */
+    private var turned = 0f
+    private var rotating = false
     private var peakPointerCount = 0
     private var longPressFired = false
     private var lastTapAt = 0L
@@ -127,6 +131,8 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
         reference = null
         peakPointerCount = 0
         longPressFired = false
+        turned = 0f
+        rotating = false
     }
 
     private fun onDown(event: PointerEvent): List<CanvasGesture> {
@@ -138,6 +144,10 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
             if (mode == Mode.DRAGGING) emitted += CanvasGesture.DragEnd(reference?.centroid ?: event.position)
             if (mode != Mode.TRANSFORMING) {
                 mode = Mode.TRANSFORMING
+                // Fresh per gesture: the latch has to close again when the fingers lift, or the
+                // second pinch of a session inherits the first one's permission to rotate.
+                turned = 0f
+                rotating = false
                 emitted += CanvasGesture.TransformStart(contacts().centroid)
             }
         } else {
@@ -183,8 +193,33 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
                         // A degenerate span happens when two fingers land on the same pixel;
                         // dividing by it would send the zoom to infinity.
                         scaleFactor = if (previous.span > MIN_SPAN) now.span / previous.span else 1f,
+                        // **Nothing until the user has clearly meant to turn, then everything.**
+                        //
+                        // Two fingers never pinch along a perfectly fixed line, so an unguarded
+                        // angle delta rotates the canvas a fraction of a degree on every zoom, and
+                        // those fractions accumulate: after a minute of ordinary work the artboard
+                        // sits visibly crooked and nothing the user did looks like it asked for
+                        // that. It reads as the application being unable to hold anything straight.
+                        //
+                        // A per-frame threshold would not fix it — a slow deliberate turn is a
+                        // sequence of small deltas too, and it would be swallowed. So the *total*
+                        // turn since the gesture began is what has to cross the threshold, and once
+                        // it has, the latch stays open for the rest of the gesture and every delta
+                        // passes through.
                         rotationDegrees = if (previous.span > MIN_SPAN) {
-                            deltaDegrees(previous.angle, now.angle)
+                            val delta = deltaDegrees(previous.angle, now.angle)
+                            turned += delta
+                            if (!rotating && kotlin.math.abs(turned) >= ROTATION_THRESHOLD) {
+                                rotating = true
+                                // The turn already made is applied in one step rather than thrown
+                                // away, so the canvas does not jump back to zero at the moment the
+                                // latch opens.
+                                turned
+                            } else if (rotating) {
+                                delta
+                            } else {
+                                0f
+                            }
                         } else {
                             0f
                         },
@@ -276,6 +311,15 @@ class GestureRecognizer(private val config: GestureConfig = GestureConfig()) {
     private data class Contacts(val centroid: Vec2, val span: Float, val angle: Float)
 
     private companion object {
+        /**
+         * How far two fingers must turn before the canvas follows them.
+         *
+         * Eight degrees: comfortably above the wobble of an ordinary pinch and well below any turn
+         * somebody meant. The number matters less than the latch — once crossed, the gesture rotates
+         * freely, so this costs no precision at all after the first moment.
+         */
+        const val ROTATION_THRESHOLD = 8f
+
         const val MIN_SPAN = 1f
     }
 }
