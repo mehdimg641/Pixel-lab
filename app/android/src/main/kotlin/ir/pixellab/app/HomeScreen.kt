@@ -87,9 +87,14 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(Space.small),
     ) {
         item { Masthead(onSettings) }
-        item { QuickActionRow(onQuickAction) }
-        item { SectionHeader("شروع تازه") }
+        // Size first, then jobs. The first decision anybody actually makes is *how big* or *from
+        // which photograph*, and everything else is a thing to do once that is settled. Leading
+        // with the jobs put "3D text" ahead of the canvas it needs, so the first press in the
+        // application landed on a document nobody had chosen the shape of.
+        item { SectionHeader("اندازه را انتخاب کنید") }
         item { TemplateStrip(onNew) }
+        item { SectionHeader("یا از این‌ها شروع کنید") }
+        item { QuickActionRow(onQuickAction) }
         item { SectionHeader("کارهای اخیر") }
 
         if (projects.isEmpty()) {

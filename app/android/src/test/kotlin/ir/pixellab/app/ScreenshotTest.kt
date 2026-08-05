@@ -163,6 +163,7 @@ class ScreenshotTest {
                         model = model,
                         onPickImage = {},
                         onAddText = {},
+                        onEditText = {},
                         onExport = {},
                         onSave = {},
                         onOpen = {},

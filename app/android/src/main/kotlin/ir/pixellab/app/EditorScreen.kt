@@ -43,6 +43,10 @@ import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.FitScreen
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.FormatColorFill
+import androidx.compose.material.icons.outlined.BorderColor
+import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.Deblur
 import androidx.compose.material.icons.outlined.FontDownload
 import androidx.compose.material.icons.outlined.Grid4x4
 import androidx.compose.material.icons.outlined.GridView
@@ -377,11 +381,22 @@ fun EditorScreen(
                 // Straight into the keyboard. A text layer that arrives carrying "متن نمونه" and
                 // no way to replace it without hunting for an edit button is not a text tool.
                 onAddText = { model.addTextLayer()?.let { editingText = it } },
+                onEditText = { editingText = it },
                 onExport = { exporting = true },
                 onSave = { scope.launch { outcome = saveProject(context, model.currentProject()) } },
                 onOpen = { scope.launch { opening = Storage.listProjects(context) } },
             )
-            MainDock(dock, state, model) { dock = it }
+            MainDock(dock, state, model) { chosen ->
+                dock = chosen
+                // Choosing the text tool *makes* text, the way it does in every editor: a caret
+                // appears and the keyboard opens. Before this it only changed which row of buttons
+                // was showing, so the tool named after typing was the one tool that could not be
+                // used to type — the user had to find the font picker and tap a typeface first,
+                // which is a typographic decision demanded before a single letter.
+                if (chosen == Dock.TEXT && state.primaryLayer !is Layer.Text) {
+                    model.addTextLayer()?.let { editingText = it }
+                }
+            }
         }
 
         opening?.let { projects ->
@@ -623,6 +638,7 @@ internal fun Ribbon(
     model: EditorViewModel,
     onPickImage: () -> Unit,
     onAddText: () -> Unit,
+    onEditText: (LayerId) -> Unit,
     onExport: () -> Unit,
     onSave: () -> Unit,
     onOpen: () -> Unit,
@@ -637,6 +653,20 @@ internal fun Ribbon(
         horizontalArrangement = Arrangement.spacedBy(Space.small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // **What is selected wins over what the dock says.**
+        //
+        // The dock names a *kind of work* and that is the right thing for it to name — until
+        // something is selected, at which point the only question anybody has is "what can I do to
+        // this?". Keying the whole ribbon to the dock meant tapping a piece of text and being shown
+        // the photograph tools, with its own font, colour and shadow three panels away behind a
+        // menu that gave no sign of holding them. That is the difference between an editor and a
+        // puzzle, and it is what made the simplest job in the application the hardest one.
+        val selected = state.primaryLayer
+        if (selected is Layer.Text) {
+            TextRibbon(selected.id, state, model, onEditText)
+            return@Row
+        }
+
         when (dock) {
             Dock.PHOTO -> {
                 RibbonAction(Icons.Outlined.Image, "افزودن", Tool.IMAGE, state, model, onPickImage)
@@ -686,6 +716,58 @@ internal fun Ribbon(
             }
         }
     }
+}
+
+/**
+ * Everything you can do to a piece of text, in the order you reach for it.
+ *
+ * Ordered by how often a hand goes there rather than by how the model is shaped: the words first,
+ * then the face, then the colour, then the things that make it a title. Each effect is **one press**
+ * that applies a usable version and opens its own numbers — a chip that only opened a panel would
+ * make the user press twice to find out what it even does, and a chip that applied without opening
+ * anything would leave them with no way to change it.
+ *
+ * The defaults are chosen to be *visible at a glance and immediately adjustable*, not to be subtle.
+ * A drop shadow at two per cent is indistinguishable from a broken button.
+ */
+@Composable
+private fun TextRibbon(
+    id: LayerId,
+    state: EditorState,
+    model: EditorViewModel,
+    onEditText: (LayerId) -> Unit,
+) {
+    BarAction(Icons.Outlined.TextFields, "ویرایش") { onEditText(id) }
+    RibbonSheet(Icons.Outlined.FontDownload, "فونت", Tool.TEXT, SheetContent.FontPicker, state, model)
+    RibbonSheet(Icons.Outlined.Tune, "رنگ و اندازه", Tool.TEXT, SheetContent.Typography, state, model)
+
+    val white = ir.pixellab.core.model.Color.WHITE
+    val black = ir.pixellab.core.model.Color.BLACK
+
+    BarAction(Icons.Outlined.Layers, "سایه") {
+        model.act {
+            addEffect(id, Effect.DropShadow(color = black, angle = 135f, distance = 12f, blur = 18f))
+        }
+    }
+    BarAction(Icons.Outlined.FormatColorFill, "پوشش رنگ") {
+        model.act { addEffect(id, Effect.Overlay(fill = Fill.Solid(ir.pixellab.core.model.Color(0.98f, 0.72f, 0.15f)))) }
+    }
+    BarAction(Icons.Outlined.BorderColor, "خط دور") {
+        model.act { addEffect(id, Effect.Stroke(width = 10f, fill = Fill.Solid(white))) }
+    }
+    BarAction(Icons.Outlined.Lightbulb, "درخشش") {
+        model.act {
+            addEffect(
+                id,
+                Effect.OuterGlow(fill = Fill.Solid(ir.pixellab.core.model.Color(1f, 0.85f, 0.4f)), blur = 28f),
+            )
+        }
+    }
+    BarAction(Icons.Outlined.Deblur, "برجسته") {
+        model.act { addEffect(id, Effect.Bevel(depth = 120f, size = 14f)) }
+    }
+    RibbonSheet(Icons.Outlined.ViewInAr, "سه‌بعدی", Tool.TEXT, SheetContent.Dimensional, state, model)
+    RibbonSheet(Icons.Outlined.Star, "سبک آماده", Tool.TEXT, SheetContent.StyleLibrary, state, model)
 }
 
 /** A ribbon entry that opens a panel and takes its tool. */
