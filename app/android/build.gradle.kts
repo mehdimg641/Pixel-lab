@@ -100,8 +100,7 @@ android {
      * arm64-v8a, which is what every Android phone made in the last several years runs, at a size
      * someone can actually download over a phone connection.
      *
-     * The universal APK stays because it is the one to hand to somebody whose device is unknown, and
-     * because an emulator on an x86 desktop needs it.
+     * The universal APK is off by default and one property away — see [splits] below for why.
      */
     /**
      * What is left out of the package, and why.
@@ -131,7 +130,16 @@ android {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a", "x86_64")
-            isUniversalApk = true
+            // The universal APK is the largest single packaging job in the build — every ABI's
+            // native libraries in one file — and it is wanted only when handing a build to somebody
+            // whose device is unknown. Building it on every commit spends the peak memory of the
+            // whole build on an artifact nobody downloads, and that peak is what ran a CI runner
+            // out of heap inside PackageAndroidArtifact.
+            //
+            // ```
+            // ./gradlew assembleRelease -Ppixellab.universalApk=true
+            // ```
+            isUniversalApk = project.findProperty("pixellab.universalApk") == "true"
         }
     }
 }
