@@ -74,23 +74,81 @@ class CoverStyleTest {
      */
     private fun paintTexture(): Raster {
         val coverage = Procedural.pattern(Procedural.Pattern.MARBLE, size = 512, repeats = 16, seed = 7)
+
+        // **Brushed first, tinted second**, and the order is the whole lesson. Painting the *tinted*
+        // field instead — which is the obvious way round — hands the mode filter a picture that is
+        // mostly green with a minority of apricot, and a mode filter's entire job is to vote out the
+        // minority. The peach disappeared from every letter and the face came back a flat teal.
+        //
+        // Brushing the coverage puts the facets in the *shape* of the paint and leaves the palette
+        // to decide the colours afterwards, so both ends survive at full strength. That is also what
+        // a painter does: the brush makes the marks, the palette says what colour they are.
+        val grey = ir.pixellab.core.imaging.Raster(coverage.width, coverage.height, 3)
+        for (i in 0 until coverage.width * coverage.height) {
+            val v = coverage[i % coverage.width, i / coverage.width, 0].coerceIn(0f, 1f)
+            grey.data[i * 3] = v
+            grey.data[i * 3 + 1] = v
+            grey.data[i * 3 + 2] = v
+        }
+        val brushed = ir.pixellab.core.imaging.Artistic.oilPaint(
+            grey,
+            radius = BRUSH_RADIUS,
+            // Few levels, because a brush facet is one loaded colour rather than a ramp. This is the
+            // number that decides whether it reads as paint at all.
+            levels = BRUSH_LEVELS,
+        )
+
+        // **Normalised to what the field actually contains, not stretched by a constant.** A fixed
+        // contrast number is a guess about a distribution, and the guess was wrong twice here:
+        // fractal noise clusters around a half, and the mode filter then narrows it further, so a
+        // ×2.6 stretch about 0.5 never reached the warm end and every letter came back flat teal.
+        // Measuring the range costs one pass and cannot be wrong about it.
+        var low = Float.MAX_VALUE
+        var high = -Float.MAX_VALUE
+        for (i in 0 until brushed.pixelCount) {
+            val v = brushed.data[i * 3]
+            if (v < low) low = v
+            if (v > high) high = v
+        }
+        val span = (high - low).coerceAtLeast(1e-4f)
+
         val pixels = IntArray(coverage.width * coverage.height)
-        for (y in 0 until coverage.height) {
-            for (x in 0 until coverage.width) {
-                // Stretched away from the middle before it is used. Fractal noise clusters hard
-                // around a half — that is what it is — so mapped straight onto two colours it gives
-                // a wash of the average and neither end ever shows. The reference's face is streaks
-                // of green *and* apricot, not a blend of them.
-                val raw = coverage[x, y, 0].coerceIn(0f, 1f)
-                val t = ((raw - 0.5f) * CONTRAST + 0.5f).coerceIn(0f, 1f)
-                val r = lerp(0.03f, 0.98f, t)
-                val g = lerp(0.42f, 0.80f, t)
-                val b = lerp(0.40f, 0.62f, t)
-                pixels[y * coverage.width + x] = (0xFF shl 24) or
-                    (byteOf(r) shl 16) or (byteOf(g) shl 8) or byteOf(b)
-            }
+        for (i in pixels.indices) {
+            val normalised = ((brushed.data[i * 3] - low) / span).coerceIn(0f, 1f)
+            // Then biased toward the cool end, because the reference's apricot is *streaks* through
+            // a green face rather than half of it. A straight ramp gives an even mix, which reads as
+            // a different material entirely — mottled stone rather than painted metal.
+            val t = Math.pow(normalised.toDouble(), WARM_BIAS.toDouble()).toFloat()
+            val r = lerp(0.03f, 0.99f, t)
+            val g = lerp(0.42f, 0.72f, t)
+            val b = lerp(0.40f, 0.52f, t)
+            pixels[i] = (0xFF shl 24) or (byteOf(r) shl 16) or (byteOf(g) shl 8) or byteOf(b)
         }
         return Raster(coverage.width, coverage.height, pixels)
+    }
+
+    /** ARGB ints to the float raster the imaging filters work in. */
+    private fun toImaging(width: Int, height: Int, pixels: IntArray): ir.pixellab.core.imaging.Raster {
+        val out = ir.pixellab.core.imaging.Raster(width, height, 3)
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            out.data[i * 3] = ((p shr 16) and 0xFF) / 255f
+            out.data[i * 3 + 1] = ((p shr 8) and 0xFF) / 255f
+            out.data[i * 3 + 2] = (p and 0xFF) / 255f
+        }
+        return out
+    }
+
+    private fun fromImaging(source: ir.pixellab.core.imaging.Raster): Raster {
+        val pixels = IntArray(source.pixelCount)
+        for (i in pixels.indices) {
+            val o = i * source.channels
+            pixels[i] = (0xFF shl 24) or
+                (byteOf(source.data[o]) shl 16) or
+                (byteOf(source.data[o + 1]) shl 8) or
+                byteOf(source.data[o + 2])
+        }
+        return Raster(source.width, source.height, pixels)
     }
 
     private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
@@ -318,6 +376,15 @@ class CoverStyleTest {
         const val CHANNEL_MARGIN = 40
 
         /** Pushes fractal noise off its mean so both ends of the ramp actually appear. */
+        /** Short facets: a brush end has to be visible at the size the face is seen at. */
+        const val BRUSH_RADIUS = 5
+
+        /** A loaded brush lays down one colour, not a ramp; this is what makes it read as paint. */
+        const val BRUSH_LEVELS = 10
+
+        /** Above one, so the warm colour stays a minority of streaks rather than half the face. */
+        const val WARM_BIAS = 2.2f
+
         const val CONTRAST = 2.6f
 
         /** A step between neighbours larger than a ramp of this size could produce on its own. */
@@ -392,13 +459,20 @@ class CoverStyleTest {
                         angle = 45f,
                     ),
                 ),
-                // The texture, over the ramp and blended rather than replacing it — the recipe asks
-                // for Overlay at a third to a half, which keeps the gradient's light and dark and
-                // lets the pattern only disturb them.
+                // The texture, over the ramp — and blended **Normal**, not Overlay.
+                //
+                // Overlay was the obvious choice and it is why the face came back flat teal three
+                // renders running: Overlay transfers *contrast*, not colour. A peach texture laid
+                // over a teal base with Overlay gives lighter and darker teal, because the blend
+                // reads the texture as a luminance mask and keeps the base's hue. The apricot
+                // streaks are the most recognisable thing about this reference, and no opacity of
+                // Overlay could ever have produced them.
+                //
+                // Normal at a bit over half lets the paint's own colour arrive while the gradient
+                // underneath still supplies the overall run from dark corner to lit corner.
                 Effect.Overlay(
                     fill = Fill.Pattern(asset = ir.pixellab.core.model.AssetId("paint")),
-                    blendMode = ir.pixellab.core.model.BlendMode.OVERLAY,
-                    opacity = 0.6f,
+                    opacity = 0.72f,
                 ),
                 // The inset face: a soft dark edge just inside the outline, which is what stops
                 // the face reading as a flat sticker laid on top of the block.
