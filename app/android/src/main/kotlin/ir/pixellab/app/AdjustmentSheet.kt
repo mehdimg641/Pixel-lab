@@ -92,7 +92,7 @@ fun AdjustmentSheetBody(
         // Above the catalogue, because a saved grade is what a returning user came for. Someone
         // editing the second photograph of a set does not want to rebuild the first one's
         // correction; they want the row of things they already made.
-        LookRow(model)
+        LookRow(state, model, render)
 
         AddRow(model)
         // Beside the catalogue rather than buried in the Curves panel: a user with a folder of
@@ -754,7 +754,11 @@ private const val MAX_CHANNEL = 255f
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun LookRow(model: EditorViewModel) {
+private fun LookRow(
+    state: EditorState,
+    model: EditorViewModel,
+    render: suspend (ir.pixellab.core.model.Document) -> ir.pixellab.core.codec.RasterImage?,
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var naming by remember { mutableStateOf(false) }
 
@@ -762,16 +766,16 @@ private fun LookRow(model: EditorViewModel) {
     if (model.lookStore.looks.isEmpty()) {
         SheetHint("تنظیم‌ها را روی یک عکس بچینید، بعد اینجا ذخیره‌شان کنید تا روی بقیه هم بیفتد")
     }
-    SheetChips {
-        for (look in model.lookStore.looks) {
-            LookChip(
-                look = look,
-                chosen = model.wearing(look),
-                onToggle = { model.toggleLook(look) },
-                onDelete = { model.deleteLook(context, look) },
-            )
-        }
-    }
+    // Live thumbnails rather than a row of names. Nobody remembers what "گرم ۲" did to a picture
+    // they graded last week, so a named row could only be used by applying each in turn and undoing.
+    LookStrip(
+        looks = model.lookStore.looks,
+        document = state.document,
+        wearing = model::wearing,
+        render = render,
+        onChoose = { model.toggleLook(it) },
+        onDelete = { model.deleteLook(context, it) },
+    )
     SheetAction("ذخیرهٔ تنظیم‌های فعلی به‌عنوان لوک", enabled = model.hasGrade) { naming = true }
 
     // The batch runs whatever Look is *on* right now, which is the order the job is actually done
