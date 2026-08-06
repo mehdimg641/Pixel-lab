@@ -29,6 +29,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.editor.SliderDrag
 import ir.pixellab.core.editor.format
@@ -60,6 +62,11 @@ fun PrecisionSlider(
     var editing by remember { mutableStateOf(false) }
     var entry by remember { mutableStateOf("") }
     var gain by remember { mutableStateOf(1f) }
+
+    // The gesture below now survives recomposition, so it must not close over `value` — the one it
+    // captured when the finger went down is stale by the second event. This is the same object
+    // every recomposition, holding the newest value.
+    val liveValue = rememberUpdatedState(value)
 
     Column(modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = Space.small)) {
         Row(
@@ -101,23 +108,44 @@ fun PrecisionSlider(
             }
         }
 
+        // The two precision constants, converted here because this is where a density exists. They
+        // are authored in dp for the reason set out on `SliderDrag.deadZone`.
+        val density = LocalDensity.current
+        val deadZonePx = with(density) { SliderDrag.DEAD_ZONE_DP.dp.toPx() }
+        val falloffPx = with(density) { SliderDrag.FALLOFF_DP.dp.toPx() }
+
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(TOUCH_STRIP)
                 .onSizeChanged { trackWidth = it.width.toFloat() }
-                .pointerInput(spec.key, value, trackWidth) {
+                // **Keyed on the parameter alone.** `value` used to be in this list, and that one
+                // word was why the slider could not be dragged: every value the drag emitted
+                // recomposed this control, which changed the key, which made Compose *cancel the
+                // running gesture coroutine* and start a fresh one. The fresh one opens with
+                // `awaitFirstDown`, and a finger already on the glass never produces a down — so
+                // nothing more happened until the user lifted and pressed again. Each press
+                // re-anchored at the new value, so the value did creep along, one stab at a time.
+                //
+                // It took `onCommit` with it. A cancelled coroutine never reaches the line below,
+                // so the "one drag is one undo step" this file promises had never once held.
+                .pointerInput(spec.key) {
                     awaitEachGesture {
                         val down = awaitFirstDown()
                         val drag = SliderDrag(
                             spec = spec,
-                            startValue = value,
+                            // Read through the latest snapshot rather than captured: the gesture
+                            // now outlives many recompositions, so the `value` closed over when it
+                            // started is stale by the second event.
+                            startValue = liveValue.value,
                             startScreen = down.position.x to down.position.y,
                             trackWidth = trackWidth,
                             trackY = size.height / 2f,
                             // The interface is mirrored, so dragging towards the leading edge —
                             // which is the left — has to raise the value.
                             rightToLeft = true,
+                            deadZone = deadZonePx,
+                            falloff = falloffPx,
                         )
                         var moved = false
                         while (true) {
@@ -129,13 +157,18 @@ fun PrecisionSlider(
                             change.consume()
                             val at = change.position
                             moved = true
-                            gain = drag.gainAt(at.y)
-                            onChange(drag.valueAt(at.x, at.y), true)
+                            val next = drag.advance(at.x, at.y)
+                            gain = drag.gain
+                            onChange(next, true)
                         }
                         gain = 1f
                         // A press that never moved is a request to type the value, which is the
                         // only way to reach an exact number on a three-hundred-pixel track.
-                        if (moved) onCommit() else entry = spec.format(value).also { editing = true }
+                        if (moved) {
+                            onCommit()
+                        } else {
+                            entry = spec.format(liveValue.value).also { editing = true }
+                        }
                     }
                 },
             contentAlignment = Alignment.CenterStart,

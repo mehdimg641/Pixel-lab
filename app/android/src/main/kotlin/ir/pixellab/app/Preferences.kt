@@ -44,7 +44,15 @@ data class Preferences(
      * the eye adapts to the surround — so someone grading for print wants light at midnight, and
      * someone laying out a cover wants dark at noon. Following the system alone offers neither.
      */
-    val theme: ThemeChoice = ThemeChoice.SYSTEM,
+    /**
+     * Light by default.
+     *
+     * It followed the phone before, which sounds like the polite choice and is not one: this
+     * application is for laying out covers, its user asked for a light interface twice, and a
+     * phone left in dark mode silently overruled them both times. Following the system is still
+     * offered — it is simply no longer assumed.
+     */
+    val theme: ThemeChoice = ThemeChoice.LIGHT,
 ) {
     val snap: SnapConfig
         get() = SnapConfig(

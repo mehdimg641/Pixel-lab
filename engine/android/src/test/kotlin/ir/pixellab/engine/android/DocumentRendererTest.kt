@@ -35,7 +35,12 @@ private open class GlDeviceRecorder : ir.pixellab.core.render.GlDevice {
     val programs = ArrayList<String>()
     private var next = 1
 
-    override fun createTexture(width: Int, height: Int, bytesPerPixel: Int): TextureHandle {
+    override fun createTexture(
+        width: Int,
+        height: Int,
+        bytesPerPixel: Int,
+        filter: ir.pixellab.core.render.TextureFilter,
+    ): TextureHandle {
         created++
         return TextureHandle(next++)
     }

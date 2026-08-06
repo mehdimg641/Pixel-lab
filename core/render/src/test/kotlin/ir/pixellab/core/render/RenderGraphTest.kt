@@ -355,3 +355,65 @@ class MemoryBudgetTest {
         Shaders[Shaders.BLUR.id].shouldNotBeNull()
     }
 }
+
+/**
+ * How the distance field is sampled.
+ *
+ * A whole class of defect lived in a texture parameter nobody had reason to look at. Jump flooding
+ * stores the *offset to the nearest seed* in each texel and reads it back at integer strides;
+ * interpolating between two of those produces a vector pointing at no seed at all. And filtering a
+ * half-float texture needs `OES_texture_half_float_linear`, a different extension from the one this
+ * engine checks for — a driver with one and not the other returns undefined values, which collapses
+ * the field to a constant. With a constant field the stroke shader's coverage is `1.0` everywhere
+ * outside the letters: an opaque rectangle over the artwork, which is what shipped.
+ *
+ * None of that is visible from a plan, a pass list, or any picture a build machine can render. It is
+ * visible from one enum, so that is what this pins.
+ */
+class DistanceFieldSamplingTest {
+
+    private fun graphWithOutlines() = RenderGraphBuilder.build(
+        RenderPlanner.plan(
+            Style(
+                effects = listOf(
+                    Effect.Stroke(6f, Fill.Solid(Color.BLACK)),
+                    Effect.DropShadow(blur = 20f),
+                    Effect.Bevel(),
+                ),
+            ),
+        ),
+        Rect(0f, 0f, 400f, 200f),
+    )
+
+    @Test
+    fun `a distance field is read at exact texels`() {
+        val fields = graphWithOutlines().buffers.filter {
+            it.role == BufferRole.SDF || it.role == BufferRole.SDF_FLOOD
+        }
+        fields.isNotEmpty() shouldBe true
+        fields.forEach { it.filter shouldBe TextureFilter.NEAREST }
+    }
+
+    @Test
+    fun `everything else still interpolates`() {
+        // Not a blanket switch to nearest: a blur and the layer itself are sampled at fractional
+        // positions on purpose, and reading those at the nearest texel is a visible staircase.
+        graphWithOutlines().buffers
+            .filter { it.role != BufferRole.SDF && it.role != BufferRole.SDF_FLOOD }
+            .forEach { it.filter shouldBe TextureFilter.LINEAR }
+    }
+
+    @Test
+    fun `the buffer pool cannot hand a filtered texture back as a field`() {
+        // The pool recycles by shape. Before the filter was part of its key, a blur buffer of the
+        // same size and depth could be handed straight back as the distance field — which
+        // reintroduces the defect at the one place nobody would look for it.
+        val device = FakeGlDevice()
+        val pool = TexturePool(device)
+
+        pool.release(pool.acquire(BufferSpec("blur", BufferRole.BLUR, 64, 64, 8)))
+        pool.acquire(BufferSpec("sdf", BufferRole.SDF, 64, 64, 8))
+
+        device.filters shouldBe listOf(TextureFilter.LINEAR, TextureFilter.NEAREST)
+    }
+}

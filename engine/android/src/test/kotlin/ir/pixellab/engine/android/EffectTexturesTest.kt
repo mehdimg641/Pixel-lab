@@ -20,7 +20,12 @@ private class CountingDevice : GlDevice {
     val uploaded = ArrayList<Triple<Int, Int, Int>>()
     private var next = 1
 
-    override fun createTexture(width: Int, height: Int, bytesPerPixel: Int): TextureHandle {
+    override fun createTexture(
+        width: Int,
+        height: Int,
+        bytesPerPixel: Int,
+        filter: ir.pixellab.core.render.TextureFilter,
+    ): TextureHandle {
         created++
         return TextureHandle(next++)
     }

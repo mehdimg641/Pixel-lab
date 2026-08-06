@@ -38,46 +38,77 @@ fun ParameterSpec.Slider.fractionOf(value: Float): Float {
  * - **A double tap restores the default**, which is the only cheap way back after exploring.
  * - **The whole drag is one undo step.** [Editor.setEffectParameter] takes `continuous` for this;
  *   without it a one-second scrub buries everything before it under several hundred entries.
+ *
+ * ### Why this accumulates instead of measuring from the anchor
+ *
+ * It used to compute the value from the finger's *total* displacement since the press, multiplied
+ * by the gain at wherever the finger currently was. That is subtly wrong and it feels wrong: moving
+ * down mid-drag re-scaled the whole journey retroactively, so the value slid **backwards** towards
+ * where it started while the finger was still going forwards. Gain belongs to the step, not to the
+ * history — leaving the slider anywhere the user let go of it, and slowing rather than reversing
+ * when they reach for precision.
+ *
+ * The state that makes that possible is the reason this is a class with a cursor in it rather than
+ * a pure function of the finger's position. One drag, one instance.
  */
-data class SliderDrag(
+class SliderDrag(
     val spec: ParameterSpec.Slider,
     /** Where the value was when the finger went down. */
-    val startValue: Float,
-    val startScreen: Pair<Float, Float>,
+    startValue: Float,
+    startScreen: Pair<Float, Float>,
     val trackWidth: Float,
     /** Screen y of the track itself, from which vertical distance is measured. */
     val trackY: Float,
     /** True for a right-to-left interface, where dragging left must raise the value. */
     val rightToLeft: Boolean = false,
-) {
     /**
-     * Value for a finger now at [x], [y].
+     * Vertical travel, **in pixels**, before precision engages — and the caller converts it.
      *
-     * Gain is 1 at the track and falls towards zero as the finger moves away, so the same finger
-     * travel covers less of the range the further out it goes.
+     * These were constants in this file and they were in raw pixels, which made the feature's onset
+     * depend on the screen. Half of a 48dp touch strip is 72px on a three-times phone, so a finger
+     * that never even left the control was already down to 0.71 gain and falling; on a one-times
+     * screen the same gesture stayed at 1.0. The precision behaviour was effectively always on for
+     * anybody with a modern display, which is most of the reason the sliders felt like glue.
      */
-    fun valueAt(x: Float, y: Float): Float {
-        if (trackWidth <= 0f) return startValue
-        val travelled = (x - startScreen.first) * (if (rightToLeft) -1f else 1f)
-        val gain = gainAt(y)
-        val startFraction = spec.fractionOf(startValue)
-        return spec.valueAt(startFraction + travelled / trackWidth * gain)
+    val deadZone: Float,
+    val falloff: Float,
+) {
+    /** Where the finger was last seen, so each event contributes only its own step. */
+    private var lastX = startScreen.first
+
+    /** The position along the track, kept as a fraction so the skew is applied once, at the end. */
+    private var fraction = spec.fractionOf(startValue)
+
+    /** What the last step was scaled by, for the readout that shows precision is engaged. */
+    var gain: Float = 1f
+        private set
+
+    /** Advances the drag to a finger now at [x], [y], and returns the value it lands on. */
+    fun advance(x: Float, y: Float): Float {
+        if (trackWidth <= 0f) return spec.valueAt(fraction)
+        val step = (x - lastX) * (if (rightToLeft) -1f else 1f)
+        lastX = x
+        gain = gainAt(y)
+        // Clamped here rather than at the ends: without it, dragging past the end banks up travel
+        // that has to be paid back before the value moves again, which reads as the slider sticking.
+        fraction = (fraction + step / trackWidth * gain).coerceIn(0f, 1f)
+        return spec.valueAt(fraction)
     }
 
     /** 1 on the track, approaching [MINIMUM_GAIN] far from it. */
     fun gainAt(y: Float): Float {
         val distance = abs(y - trackY)
-        if (distance <= DEAD_ZONE) return 1f
-        val gain = 1f / (1f + (distance - DEAD_ZONE) / FALLOFF)
+        if (distance <= deadZone) return 1f
+        val gain = 1f / (1f + (distance - deadZone) / falloff)
         return gain.coerceAtLeast(MINIMUM_GAIN)
     }
 
     companion object {
-        /** Fingers wander; below this the drag is still full speed. */
-        const val DEAD_ZONE = 24f
+        /** Fingers wander; below this the drag is still full speed. In **dp**. */
+        const val DEAD_ZONE_DP = 24f
 
-        /** Screen pixels of vertical travel that halve the sensitivity. */
-        const val FALLOFF = 120f
+        /** Vertical travel that halves the sensitivity. In **dp**. */
+        const val FALLOFF_DP = 120f
 
         /** Even at arm's length the slider still moves, or it reads as broken. */
         const val MINIMUM_GAIN = 0.02f

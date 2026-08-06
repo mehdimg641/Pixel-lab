@@ -18,10 +18,11 @@ import ir.pixellab.core.editor.EditorState
  * pressed undo twenty times to recover a shape would be appalled to find snapping had switched
  * itself back on along the way.
  *
- * What is deliberately absent is a light theme. The editor is dark and only dark: a light interface
- * around a design makes its colours read darker than they are, which is why every professional tool
- * is dark, and offering it as a preference would be offering the user a way to misjudge their own
- * work.
+ * The first control is the theme, and it is first because it is the one anybody looks for. There is
+ * a real argument for a dark editor — a light surround makes the colours inside a design read darker
+ * than they are — and this file used to state that argument as a *reason to offer no choice at all*.
+ * That was wrong twice over: the choice is the user's, and the paragraph outlived the light palette
+ * it denied by several weeks, sitting directly above the code that renders its chips.
  */
 @Composable
 fun SettingsSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {

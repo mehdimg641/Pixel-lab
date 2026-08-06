@@ -6,6 +6,7 @@ import ir.pixellab.core.model.Color
 import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.FontRef
 import ir.pixellab.core.model.Geometry3D
+import ir.pixellab.core.model.InnerShadow
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.LayerId
 import ir.pixellab.core.model.Material
@@ -116,6 +117,11 @@ class ReferenceMatchTest {
         sideMaterial = Material(unlit = true),
         sideFill = ORANGE_BLOCK,
         // Down and to the right, which is where the reference throws its block.
+        // The face set slightly *inside* its rim, which is the detail every cover of this kind has
+        // and a plain extrusion never produces: the face is the front-most surface, so nothing on
+        // the letter stands above it to cast. It is a decision, so it is asked for here rather than
+        // arriving by default.
+        innerShadow = InnerShadow(angle = 120f, distance = 0.03f, size = 0.045f, opacity = 0.5f),
         extrusionTilt = Vec2(0.34f, -0.30f),
         rotation = Vec3(-3f, 4f, 0f),
         fieldOfView = 22f,

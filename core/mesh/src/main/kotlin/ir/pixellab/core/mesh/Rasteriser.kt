@@ -80,6 +80,11 @@ object Rasteriser {
 
         val colour = IntArray(w * h)
         val depth = FloatArray(w * h) { Float.MAX_VALUE }
+        // Which pixels ended up showing a *face*, for the inner shadow. Recorded during the pass
+        // rather than worked out afterwards from the colours: two surfaces can resolve to the same
+        // colour, and a mask reconstructed by guessing at pixels would pick up the wall wherever a
+        // gradient happened to meet the face's tone.
+        val face = geometry.innerShadow?.let { BooleanArray(w * h) }
 
         // Before the letters, never after: a shadow is what the surface behind them looks like, so
         // anything the mesh covers should simply overwrite it. Drawing it afterwards would need the
@@ -148,9 +153,17 @@ object Rasteriser {
                 environment = environment,
                 colour = colour,
                 depth = depth,
+                face = face,
                 width = w,
                 height = h,
             )
+        }
+
+        // After the mesh, because it darkens what the mesh drew — and before the downsample, so the
+        // shadow is anti-aliased along with everything else instead of stepping across the pixels
+        // the letter's own edge softened.
+        if (face != null) {
+            InnerShadowPass.draw(colour, face, geometry.innerShadow!!, w, h)
         }
 
         return Rendered(width, height, downsample(colour, w, h, scale))
@@ -169,6 +182,7 @@ object Rasteriser {
         environment: EnvironmentMap,
         colour: IntArray,
         depth: FloatArray,
+        face: BooleanArray?,
         width: Int,
         height: Int,
     ) {
@@ -249,6 +263,9 @@ object Rasteriser {
                 val at = y * width + x
                 if (z >= depth[at]) continue
                 depth[at] = z
+                // Assigned rather than or-ed: a face fragment losing to a wall in front of it must
+                // clear the flag, or the inner shadow paints over a wall the face is behind.
+                face?.set(at, mesh.surfaces[triangle] == Surface.FACE)
 
                 val world = Vec3(
                     (l0 * worldA.x * wa + l1 * worldB.x * wb + l2 * worldC.x * wc) / invW,

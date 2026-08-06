@@ -5,6 +5,7 @@ import android.util.Log
 import ir.pixellab.core.render.GlDevice
 import ir.pixellab.core.render.ShaderProgram
 import ir.pixellab.core.render.Shaders
+import ir.pixellab.core.render.TextureFilter
 import ir.pixellab.core.render.TextureHandle
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -59,16 +60,23 @@ class AndroidGlDevice(private val context: GlContext) : GlDevice {
         )
     }
 
-    override fun createTexture(width: Int, height: Int, bytesPerPixel: Int): TextureHandle {
+    override fun createTexture(
+        width: Int,
+        height: Int,
+        bytesPerPixel: Int,
+        filter: TextureFilter,
+    ): TextureHandle {
         val ids = IntArray(1)
         GLES30.glGenTextures(1, ids, 0)
         val id = ids[0]
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, id)
         GLES30.glTexStorage2D(GLES30.GL_TEXTURE_2D, 1, internalFormat(bytesPerPixel), width, height)
-        // Clamped and linear: every pass samples with an offset, and repeating would wrap a
-        // shadow around to the opposite edge.
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
-        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        // Clamped always: every pass samples with an offset, and repeating would wrap a shadow
+        // around to the opposite edge. Filtering is the caller's, because a distance field has to
+        // be read at exact texels — see `BufferSpec.filter`.
+        val mode = if (filter == TextureFilter.NEAREST) GLES30.GL_NEAREST else GLES30.GL_LINEAR
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, mode)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, mode)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
         GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
         textureSizes[id] = width to height
@@ -79,14 +87,34 @@ class AndroidGlDevice(private val context: GlContext) : GlDevice {
      * Picks a sized internal format, degrading when the driver cannot render into it.
      *
      * Half float is what keeps a wide gradient from banding and what lets the distance field hold
-     * offsets larger than 255. Falling back to eight bits is worse but visible; failing to create
-     * the texture is a black canvas.
+     * offsets larger than 255.
+     *
+     * **Eight bits is not a graceful degradation for a distance field, and the ladder now tries
+     * full float before reaching it.** The field stores a signed distance and a raw pixel offset
+     * to the nearest edge, with `8192` standing for "no seed found"; on `RGBA8` every one of those
+     * clamps to 1.0, so the field collapses to a binary mask. Fed that, the stroke shader's
+     * coverage comes out `1.0` at every pixel outside the letters — an opaque rectangle painted
+     * across the whole layer, which is what a user saw behind their text. `RGBA32F` costs twice
+     * the memory and is renderable wherever `EXT_color_buffer_float` is, which is most places that
+     * lack the half-float target.
+     *
+     * If neither is available the warning below is the only warning there is, and the fix it points
+     * at — normalising the field into 0..1 so eight bits holds a coarse but usable version — is not
+     * written yet. Saying so here is better than a fallback that silently ruins the picture.
      */
     private fun internalFormat(bytesPerPixel: Int): Int = when {
         bytesPerPixel >= 16 -> GLES30.GL_RGBA32F
         bytesPerPixel >= 8 && context.supportsHalfFloatTargets -> GLES30.GL_RGBA16F
+        bytesPerPixel >= 8 && context.supportsFloatTargets -> {
+            Log.w(TAG, "no renderable half float on ${context.renderer}; using 32 bit float")
+            GLES30.GL_RGBA32F
+        }
         bytesPerPixel >= 8 -> {
-            Log.w(TAG, "no renderable half float on ${context.renderer}; falling back to 8 bit")
+            Log.w(
+                TAG,
+                "no renderable float target on ${context.renderer}; distance fields will be " +
+                    "wrong and outline effects will draw as filled rectangles",
+            )
             GLES30.GL_RGBA8
         }
         else -> GLES30.GL_RGBA8

@@ -17,7 +17,11 @@ import org.junit.jupiter.api.Test
  * rather than an error: a shadow sampling the distance field still renders, it just renders wrong.
  * Recording the calls is what makes those mistakes assertable without a GPU.
  */
-private class FakeGlDevice(override val maxTextureSize: Int = 4096) : GlDevice {
+/**
+ * Internal rather than private: [DistanceFieldSamplingTest] needs the same fake, and a second copy
+ * of a stub this size is a second thing to keep in step with the interface.
+ */
+internal class FakeGlDevice(override val maxTextureSize: Int = 4096) : GlDevice {
 
     class Pass(val shaderId: String) {
         var target: TextureHandle? = null
@@ -47,8 +51,17 @@ private class FakeGlDevice(override val maxTextureSize: Int = 4096) : GlDevice {
     private var nextId = 1
     private var current: Pass? = null
 
-    override fun createTexture(width: Int, height: Int, bytesPerPixel: Int): TextureHandle {
+    /** Recorded in order, so a test can see which buffers were asked for at which filtering. */
+    val filters = mutableListOf<TextureFilter>()
+
+    override fun createTexture(
+        width: Int,
+        height: Int,
+        bytesPerPixel: Int,
+        filter: TextureFilter,
+    ): TextureHandle {
         created++
+        filters += filter
         return TextureHandle(nextId++).also { issued += it }
     }
 

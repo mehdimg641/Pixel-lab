@@ -43,7 +43,31 @@ data class BufferSpec(
     val bytesPerPixel: Int,
 ) {
     val bytes: Long get() = width.toLong() * height.toLong() * bytesPerPixel
+
+    /**
+     * How the buffer is sampled.
+     *
+     * **A distance field must be read at exact texels, and was not.** Jump flooding stores the
+     * *offset to the nearest seed* in a texel and reads it back at integer strides; interpolating
+     * between two such offsets produces a vector that points at no seed at all. Linear filtering
+     * on that data is not a quality choice made badly, it is a category error.
+     *
+     * It also removes a dependency nobody had checked. Filtering a half-float texture needs
+     * `OES_texture_half_float_linear`, which is a *separate* extension from the
+     * `EXT_color_buffer_half_float` this engine tests for; a driver that has the second and not the
+     * first returns undefined values for every sample. That collapses the field to a constant, and
+     * a constant field makes the stroke shader's coverage `1.0` everywhere outside the letters —
+     * an opaque rectangle painted over the artwork, which is exactly what a user reported.
+     */
+    val filter: TextureFilter
+        get() = when (role) {
+            BufferRole.SDF, BufferRole.SDF_FLOOD -> TextureFilter.NEAREST
+            else -> TextureFilter.LINEAR
+        }
 }
+
+/** How a sampler reads between texels. */
+enum class TextureFilter { LINEAR, NEAREST }
 
 /**
  * One executable step: a shader, its inputs, and where it writes.

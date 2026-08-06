@@ -490,7 +490,12 @@ private open class MaskRecordingDevice : ir.pixellab.core.render.GlDevice {
     val programs = ArrayList<String>()
     private var next = 1
 
-    override fun createTexture(width: Int, height: Int, bytesPerPixel: Int): ir.pixellab.core.render.TextureHandle {
+    override fun createTexture(
+        width: Int,
+        height: Int,
+        bytesPerPixel: Int,
+        filter: ir.pixellab.core.render.TextureFilter,
+    ): ir.pixellab.core.render.TextureHandle {
         created++
         return ir.pixellab.core.render.TextureHandle(next++)
     }

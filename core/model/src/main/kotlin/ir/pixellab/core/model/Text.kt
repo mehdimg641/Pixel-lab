@@ -342,7 +342,56 @@ data class Geometry3D(
      * pieces of design, and the difference has to survive being saved.
      */
     val shadow: ShadowCast? = ShadowCast(),
+
+    /**
+     * The shadow the letter's own edge throws *inward*, across its face.
+     *
+     * The one thing every reference cover of this kind has that a plain extrusion does not. It reads
+     * as the face being set slightly *inside* a raised rim, and it is what stops a coloured face
+     * looking like paint applied to the front of a block. Without it the face is uniformly lit right
+     * up to the edge, which is the single clearest tell between our render and a designed one.
+     *
+     * **Off by default**, unlike the cast shadow, and the difference is worth stating. Every solid
+     * object in the world throws a shadow onto what is behind it, so a render without one is wrong;
+     * an inner shadow is a *decision* a designer makes about how the face should sit. Photoshop
+     * defaults its own Inner Shadow off for the same reason. Switching it on for everybody would
+     * silently darken the face of every 3D letter in every document that already exists.
+     */
+    val innerShadow: InnerShadow? = null,
 )
+
+/**
+ * A shadow cast onto a surface by its own boundary.
+ *
+ * Photoshop's Inner Shadow, and computed the same way, because the same way is the right one: the
+ * face is flat, so the occluder is its own outline and the answer is the outline offset, blurred,
+ * and kept where the face is. Nothing about the mesh produces this on its own — the face is the
+ * front-most surface and nothing on the letter stands above it to cast — so it is a piece of design
+ * expressed in the model rather than a consequence of the geometry, and it is described here as such
+ * rather than dressed up as physics.
+ *
+ * Both lengths are fractions of the **letter's own height on screen**, not of the frame and not in
+ * pixels. That is what makes a look survive being re-rendered for export: a nine-pixel inner shadow
+ * that was right on a preview is invisible at print size, and one measured against the frame changes
+ * the moment the type is reframed.
+ */
+@Serializable
+data class InnerShadow(
+    /** Where the light comes from, in degrees anticlockwise from the right. */
+    val angle: Float = 120f,
+    /** How far the edge's shadow reaches in, as a fraction of the letters' height. */
+    val distance: Float = 0.035f,
+    /** How far it fades, same units. Zero is a hard band, which is a legitimate poster look. */
+    val size: Float = 0.05f,
+    val opacity: Float = 0.45f,
+    val color: Color = Color.BLACK,
+) {
+    init {
+        require(distance >= 0f) { "distance is a fraction of the letters' height, got $distance" }
+        require(size >= 0f) { "size is a fraction of the letters' height, got $size" }
+        require(opacity in 0f..1f) { "opacity is 0..1, got $opacity" }
+    }
+}
 
 /**
  * How far behind the type its shadow falls, and how soft it is when it lands.

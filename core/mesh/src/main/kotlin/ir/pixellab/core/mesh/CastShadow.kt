@@ -193,7 +193,7 @@ internal object CastShadow {
         // of triangles covering the same ground, and blurring each would pile penumbra on top of
         // penumbra until the shadow's interior was darker than its own edge.
         val radius = (cast.softness * min(width, height) * SOFTNESS_SCALE).roundToInt()
-        if (radius > 0) blur(cover, width, height, radius)
+        Blur.box(cover, width, height, radius)
         return cover
     }
 
@@ -254,50 +254,6 @@ internal object CastShadow {
         }
     }
 
-    /**
-     * Three box passes, which is a Gaussian to within a percent and costs four adds per pixel.
-     *
-     * A true Gaussian here would be a kernel hundreds of samples wide — the penumbra on a cover-size
-     * shadow is a large fraction of the letter — and the difference is invisible under a shadow that
-     * is by definition soft.
-     */
-    private fun blur(cover: FloatArray, width: Int, height: Int, radius: Int) {
-        val scratch = FloatArray(cover.size)
-        repeat(BOX_PASSES) {
-            boxHorizontal(cover, scratch, width, height, radius)
-            boxVertical(scratch, cover, width, height, radius)
-        }
-    }
-
-    private fun boxHorizontal(src: FloatArray, dst: FloatArray, width: Int, height: Int, radius: Int) {
-        val span = radius * 2 + 1
-        for (y in 0 until height) {
-            val row = y * width
-            // Edges clamp rather than wrap or darken: a shadow running off the frame continues off
-            // the frame, and treating the outside as unlit would draw a dark band down the border.
-            var sum = 0f
-            for (i in -radius..radius) sum += src[row + i.coerceIn(0, width - 1)]
-            for (x in 0 until width) {
-                dst[row + x] = sum / span
-                sum -= src[row + (x - radius).coerceIn(0, width - 1)]
-                sum += src[row + (x + radius + 1).coerceIn(0, width - 1)]
-            }
-        }
-    }
-
-    private fun boxVertical(src: FloatArray, dst: FloatArray, width: Int, height: Int, radius: Int) {
-        val span = radius * 2 + 1
-        for (x in 0 until width) {
-            var sum = 0f
-            for (i in -radius..radius) sum += src[i.coerceIn(0, height - 1) * width + x]
-            for (y in 0 until height) {
-                dst[y * width + x] = sum / span
-                sum -= src[(y - radius).coerceIn(0, height - 1) * width + x]
-                sum += src[(y + radius + 1).coerceIn(0, height - 1) * width + x]
-            }
-        }
-    }
-
     private fun screen(clip: FloatArray, width: Int, height: Int) = floatArrayOf(
         (clip[0] / clip[3] * HALF + HALF) * width,
         (HALF - clip[1] / clip[3] * HALF) * height,
@@ -318,7 +274,6 @@ internal object CastShadow {
 
     private const val MIN_EXTENT = 1e-3f
 
-    private const val BOX_PASSES = 3
     private const val NEAR_W = 1e-4f
     private const val HALF = 0.5f
 }

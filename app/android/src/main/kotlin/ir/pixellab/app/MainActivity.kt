@@ -2,6 +2,8 @@ package ir.pixellab.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.compose.runtime.LaunchedEffect
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.activity.enableEdgeToEdge
@@ -26,7 +28,6 @@ class MainActivity : ComponentActivity() {
         // file manager is documentation that cannot get out of date — and a user told to "put the
         // model somewhere" with no folder to put it in has been told nothing.
         AssetKind.entries.forEach { it.directoryIn(this) }
-        enableEdgeToEdge()
         setContent {
             // The view model is resolved *before* the theme, because the theme reads a preference
             // off it. Resolving it inside the theme instead — which is where it used to sit — meant
@@ -35,13 +36,27 @@ class MainActivity : ComponentActivity() {
             val editor: EditorViewModel = viewModel()
             model = editor
 
-            PixelLabTheme(
-                dark = when (editor.preferences.theme) {
-                    ThemeChoice.LIGHT -> false
-                    ThemeChoice.DARK -> true
-                    ThemeChoice.SYSTEM -> isSystemInDarkTheme()
-                },
-            ) {
+            val dark = when (editor.preferences.theme) {
+                ThemeChoice.LIGHT -> false
+                ThemeChoice.DARK -> true
+                ThemeChoice.SYSTEM -> isSystemInDarkTheme()
+            }
+
+            // The system bars follow the choice too, and that is not a detail. `enableEdgeToEdge()`
+            // with no arguments derives the bars' polarity from the *phone's* dark setting, so a
+            // user who asked for a light interface on a dark phone got white icons on the light
+            // chrome — unreadable — and dark bars top and bottom whatever they picked. Called here
+            // rather than before `setContent` because it has to re-run when the preference changes.
+            LaunchedEffect(dark) {
+                val bars = if (dark) {
+                    SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                } else {
+                    SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                }
+                enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+            }
+
+            PixelLabTheme(dark = dark) {
                 // The interface is right-to-left throughout. The canvas is not, and cannot be: a
                 // design's coordinates have nothing to do with the language of the tool editing it,
                 // and mirroring them is the mistake that makes Persianised editors unusable for

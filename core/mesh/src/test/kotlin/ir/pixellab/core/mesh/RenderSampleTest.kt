@@ -202,6 +202,13 @@ class RenderSampleTest {
             bevelSize = 3f,
             faceMaterial = Material.GLOSSY_WHITE,
             rotation = Vec3(-14f, 24f, 0f),
+            // No cast shadow, and it has to be said rather than left to a default. This test reads
+            // three separate heuristics off the two pictures — how much of the frame differs, and
+            // how much neutral mid-grey each contains — and a shadow perturbs all three at once:
+            // it is neutral and mid-grey by nature, and the floating mesh is deeper than the flush
+            // one so the two shadows differ in size as well. The subject here is the *mark*, and
+            // holding everything else still is what lets a number stand in for a picture.
+            shadow = null,
         )
         fun render(mesh: Mesh, geometry: Geometry3D) = Rasteriser.render(mesh, geometry, 420, 360, 3)
 
@@ -242,8 +249,11 @@ class RenderSampleTest {
         // Mid-grey does. The palette here is gold and near-white, and neither produces a neutral
         // pixel at middling brightness; chrome produces almost nothing else. So this counts a colour
         // that can only have come from the mark material.
+        // Fully opaque only, which is now load-bearing: the cast shadow is a neutral grey at
+        // middling brightness and just over half alpha, so it satisfies every other clause here.
+        // A surface is opaque and a shadow is not, and that is the whole distinction.
         fun chrome(r: Rendered) = r.pixels.count { pixel ->
-            (pixel ushr 24) > 128 &&
+            (pixel ushr 24) == 0xFF &&
                 kotlin.math.abs(((pixel shr 16) and 0xFF) - (pixel and 0xFF)) < 12 &&
                 luma(pixel) in 60f..200f
         }

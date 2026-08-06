@@ -20,7 +20,12 @@ value class TextureHandle(val id: Int)
 interface GlDevice {
     val maxTextureSize: Int
 
-    fun createTexture(width: Int, height: Int, bytesPerPixel: Int): TextureHandle
+    fun createTexture(
+        width: Int,
+        height: Int,
+        bytesPerPixel: Int,
+        filter: TextureFilter = TextureFilter.LINEAR,
+    ): TextureHandle
 
     /**
      * Replaces a texture's contents with straight (non-premultiplied) ARGB pixels.
@@ -79,7 +84,12 @@ interface GlDevice {
  */
 class TexturePool(private val device: GlDevice) {
 
-    private data class Key(val width: Int, val height: Int, val bytesPerPixel: Int)
+    private data class Key(
+        val width: Int,
+        val height: Int,
+        val bytesPerPixel: Int,
+        val filter: TextureFilter,
+    )
 
     private val free = HashMap<Key, ArrayDeque<TextureHandle>>()
     private val live = HashMap<TextureHandle, Key>()
@@ -95,14 +105,16 @@ class TexturePool(private val device: GlDevice) {
     val freeCount: Int get() = free.values.sumOf { it.size }
 
     fun acquire(spec: BufferSpec): TextureHandle {
-        val key = Key(spec.width, spec.height, spec.bytesPerPixel)
+        // Filtering is part of the key. Recycling a linear buffer as a distance field is how a
+        // pool quietly reintroduces the very defect the filter exists to prevent.
+        val key = Key(spec.width, spec.height, spec.bytesPerPixel, spec.filter)
         val recycled = free[key]?.removeLastOrNull()
         if (recycled != null) {
             reuses++
             live[recycled] = key
             return recycled
         }
-        val handle = device.createTexture(spec.width, spec.height, spec.bytesPerPixel)
+        val handle = device.createTexture(spec.width, spec.height, spec.bytesPerPixel, spec.filter)
         allocations++
         live[handle] = key
         return handle

@@ -32,9 +32,21 @@ class GlContext private constructor(
      * guaranteed by the specification.
      */
     val supportsHalfFloatTargets: Boolean by lazy {
-        val extensions = GLES30.glGetString(GLES30.GL_EXTENSIONS).orEmpty()
         "EXT_color_buffer_half_float" in extensions || "EXT_color_buffer_float" in extensions
     }
+
+    /**
+     * Whether the driver can render into full-float textures.
+     *
+     * Asked separately because it is the *better* fallback for a distance field than eight bits —
+     * see `AndroidGlDevice.internalFormat`. Half float and full float are different extensions and
+     * a driver can have either without the other.
+     */
+    val supportsFloatTargets: Boolean by lazy {
+        "EXT_color_buffer_float" in extensions
+    }
+
+    private val extensions: String by lazy { GLES30.glGetString(GLES30.GL_EXTENSIONS).orEmpty() }
 
     val maxTextureSize: Int by lazy {
         val out = IntArray(1)

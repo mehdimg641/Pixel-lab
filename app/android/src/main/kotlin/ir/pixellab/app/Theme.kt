@@ -7,6 +7,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ProvidableCompositionLocal
@@ -130,8 +133,20 @@ object Ink {
      */
     val Guide = Color(0xFFFF3FB4)
 
-    /** The palette currently in force. Swapped wholesale by [PixelLabTheme]. */
-    internal var tokens: Palette = Palette.Dark
+    /**
+     * The palette currently in force. Swapped wholesale by [PixelLabTheme].
+     *
+     * **Compose state, and that is the whole point.** This was a plain `var`, and every screen in
+     * the application paints from the accessors above — so every one of those reads was invisible
+     * to the snapshot system. Choosing «روشن» swapped the palette and then repainted only whatever
+     * happened to recompose for some *other* reason: the setting appeared to be ignored, and the
+     * light theme looked like it did not exist. It did exist; nothing carried it to the screen.
+     *
+     * That is the thirteenth time this repository has found the same shape — a value that is
+     * expressible, a control that sets it, and no wire between them — and the first time the wire
+     * was a single missing delegate.
+     */
+    internal var tokens: Palette by mutableStateOf(Palette.Dark)
         private set
 
     internal fun use(palette: Palette) {

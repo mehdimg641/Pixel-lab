@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      A plain dark shell. The real colours are set in Compose; this only stops the system from
-      flashing a light background before the first frame, which is jarring in a dark editor.
+      The shell the system draws before Compose has its first frame.
+
+      Light, because the application is light by default. It used to be #121212 here and in both
+      system bars, which meant the launch flash and the status and navigation bars stayed dark
+      whatever the user had chosen — the preference could not reach them, since these are resources
+      and it is a runtime value. The bars are now handled in MainActivity, which *can* read the
+      choice; this only has to match the ordinary case so the first frame does not flash.
     -->
-    <style name="Theme.PixelLab" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#FF121212</item>
-        <item name="android:statusBarColor">#FF121212</item>
-        <item name="android:navigationBarColor">#FF121212</item>
+    <style name="Theme.PixelLab" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FFF4F5F7</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 </resources>
