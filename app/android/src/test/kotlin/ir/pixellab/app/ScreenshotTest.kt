@@ -143,6 +143,39 @@ class ScreenshotTest {
     }
 
     @Test
+    fun `the editor chrome draws in the light theme`() {
+        // The light theme's own picture of the *editor*, not just the home screen. The home screen
+        // is nearly all text on cards and looks fine in any palette; the editor is where a theme
+        // succeeds or fails, because it has the four surfaces stacked against each other and a
+        // mid-grey surround between them and the artwork.
+        val model = EditorViewModel(ApplicationProvider.getApplicationContext())
+        model.act { select(state.document.layers.first().id) }
+        page("editor-chrome-light", dark = false) {
+            Column(
+                Modifier.fillMaxSize().background(Ink.Surround),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                TopBar(state = model.state, model = model, onHome = {})
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    SelectionCard(model.state, model, onEditText = {})
+                    Ribbon(
+                        dock = Dock.PHOTO,
+                        state = model.state,
+                        model = model,
+                        onPickImage = {},
+                        onAddText = {},
+                        onEditText = {},
+                        onExport = {},
+                        onSave = {},
+                        onOpen = {},
+                    )
+                    MainDock(Dock.PHOTO, model.state, model) {}
+                }
+            }
+        }
+    }
+
+    @Test
     fun `the editor chrome draws`() {
         // The real bars, driven by a real view model, because the thing worth looking at is how the
         // top bar, the selection card and the toolbar sit *together*. Each one alone always looked

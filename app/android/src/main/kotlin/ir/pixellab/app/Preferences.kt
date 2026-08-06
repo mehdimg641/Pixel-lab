@@ -36,6 +36,15 @@ data class Preferences(
      */
     val placedMegapixels: Int = 16,
     val hapticFeedback: Boolean = true,
+    /**
+     * Which palette to draw in.
+     *
+     * A setting rather than only the system's preference, because the two themes are not the same
+     * tool. A light ground is the only one in which the *colour* of a photograph can be judged —
+     * the eye adapts to the surround — so someone grading for print wants light at midnight, and
+     * someone laying out a cover wants dark at noon. Following the system alone offers neither.
+     */
+    val theme: ThemeChoice = ThemeChoice.SYSTEM,
 ) {
     val snap: SnapConfig
         get() = SnapConfig(
@@ -67,11 +76,15 @@ data class Preferences(
                 autoSaveMinutes = store.getInt("autoSaveMinutes", defaults.autoSaveMinutes),
                 placedMegapixels = store.getInt("placedMegapixels", defaults.placedMegapixels),
                 hapticFeedback = store.getBoolean("haptics", defaults.hapticFeedback),
+                theme = runCatching {
+                    ThemeChoice.valueOf(store.getString("theme", defaults.theme.name) ?: defaults.theme.name)
+                }.getOrDefault(defaults.theme),
             ).sane()
         }
 
         fun save(context: Context, preferences: Preferences) {
             context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().apply {
+                putString("theme", preferences.theme.name)
                 putBoolean("snapEnabled", preferences.snapEnabled)
                 putBoolean("snapToCanvas", preferences.snapToCanvas)
                 putBoolean("snapToLayers", preferences.snapToLayers)
@@ -113,3 +126,10 @@ fun Preferences.sane(): Preferences = copy(
     autoSaveMinutes = autoSaveMinutes.coerceIn(0, Preferences.MAX_AUTO_SAVE),
     placedMegapixels = placedMegapixels.coerceIn(Preferences.MIN_MEGAPIXELS, Preferences.MAX_MEGAPIXELS),
 )
+
+/** Light, dark, or whatever the phone is doing. */
+enum class ThemeChoice(val persianLabel: String) {
+    SYSTEM("مثل گوشی"),
+    LIGHT("روشن"),
+    DARK("تیره"),
+}

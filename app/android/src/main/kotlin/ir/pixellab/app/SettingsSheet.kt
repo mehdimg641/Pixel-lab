@@ -34,6 +34,18 @@ fun SettingsSheetBody(state: EditorState, model: EditorViewModel, modifier: Modi
 
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
 
+        // First, because it is the setting people look for first and the one that decides whether
+        // the rest of the panel is comfortable to read at all.
+        SheetSection("ظاهر")
+        SheetChips {
+            for (choice in ThemeChoice.entries) {
+                SheetChip(choice.persianLabel, chosen = preferences.theme == choice) {
+                    update { it.copy(theme = choice) }
+                }
+            }
+        }
+        SheetHint("تم روشن تنها حالتی است که رنگِ عکس را همان‌طور نشان می‌دهد که چاپ می‌شود")
+
         SheetSection("چفت‌شدن")
         SheetChips {
             SheetChip("چفت‌شدن روشن", chosen = state.snapEnabled) {

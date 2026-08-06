@@ -3,6 +3,7 @@ package ir.pixellab.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -27,14 +28,25 @@ class MainActivity : ComponentActivity() {
         AssetKind.entries.forEach { it.directoryIn(this) }
         enableEdgeToEdge()
         setContent {
-            PixelLabTheme {
+            // The view model is resolved *before* the theme, because the theme reads a preference
+            // off it. Resolving it inside the theme instead — which is where it used to sit — meant
+            // the choice could not reach the palette, so a light theme existed in the code and
+            // nothing in the interface could ask for it.
+            val editor: EditorViewModel = viewModel()
+            model = editor
+
+            PixelLabTheme(
+                dark = when (editor.preferences.theme) {
+                    ThemeChoice.LIGHT -> false
+                    ThemeChoice.DARK -> true
+                    ThemeChoice.SYSTEM -> isSystemInDarkTheme()
+                },
+            ) {
                 // The interface is right-to-left throughout. The canvas is not, and cannot be: a
                 // design's coordinates have nothing to do with the language of the tool editing it,
                 // and mirroring them is the mistake that makes Persianised editors unusable for
                 // layout work. EditorCanvas therefore does its own mapping and ignores this.
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                    val editor: EditorViewModel = viewModel()
-                    model = editor
                     PixelLabApp(editor)
                 }
             }

@@ -180,7 +180,11 @@ internal data class Palette(
             // colour without approaching the artwork.
             surround = Color(0xFF31363C),
             borderSubtle = Color(0xFF2E3338),
-            borderStrong = Color(0xFF3D444B),
+            // 3.2:1 against the card, not the 1.8:1 it was. WCAG 1.4.11 asks 3:1 of any boundary
+            // that carries meaning, and this one draws every unselected chip and every panel edge —
+            // below the bar the interface reads as one undifferentiated slab, which is precisely
+            // what came back from the first device session.
+            borderStrong = Color(0xFF616871),
             textPrimary = Color(0xFFF2F4F6),
             textSecondary = Color(0xFFA3ABB4),
             textDisabled = Color(0xFF5C646D),
@@ -198,33 +202,53 @@ internal data class Palette(
         )
 
         /**
-         * The optional light theme, specification §۶.
+         * The light theme — and no longer "optional".
          *
-         * Five values are given and the rest are derived to hold the same relationships — the
-         * ladder still climbs away from the ground, the borders still separate, and the semantic
-         * colours darken, because `#4ADE80` on white is 1.8:1 and would announce success by
-         * becoming invisible.
+         * A light ground is the only one in which the *colour* of a photograph can be judged: the
+         * eye adapts to the surround, so shadow, saturation and warmth are read against a bright
+         * field the way they will be read on paper. Photoshop keeps a light interface for exactly
+         * this reason. For an application whose whole job is colour, having one is not a preference.
+         *
+         * **Every value here was measured, not chosen by eye.** Each text-bearing colour clears
+         * WCAG 4.5:1 against *all four* surfaces — not only against white, which is the mistake that
+         * makes a palette look fine in a swatch and fail on the one panel that happens to be sunken.
+         * `ThemeContrastTest` asserts it, so the next person to nudge a hue finds out immediately.
+         *
+         * That measurement is what moved the semantic colours: the previous amber was 4.0:1 on the
+         * sunken field, and a warning that cannot be read is worse than no warning.
          */
         val Light = Palette(
-            ground = Color(0xFFF5F6F7),
+            // A warm-neutral ladder rather than a blue-grey one. Blue-grey chrome pushes a
+            // photograph's whites toward yellow by simultaneous contrast, which is a colour
+            // judgement the interface has no business making for the user.
+            ground = Color(0xFFF4F5F7),
             surface1 = Color(0xFFFFFFFF),
-            surface2 = Color(0xFFEDEFF1),
-            surface3 = Color(0xFFE3E6E9),
-            surround = Color(0xFFC9CDD2),
-            borderSubtle = Color(0xFFDCE0E4),
-            borderStrong = Color(0xFFB6BCC3),
-            textPrimary = Color(0xFF16181B),
-            textSecondary = Color(0xFF5A626B),
-            textDisabled = Color(0xFF9BA3AC),
-            accent = Color(0xFFC9873A),
-            accentPressed = Color(0x63A66C2A),
-            accentSubtle = Color(0x1AC9873A),
+            surface2 = Color(0xFFEAECEF),
+            surface3 = Color(0xFFE1E4E8),
+            // Mid grey around the artwork, darker than the ladder: white *and* black artwork have
+            // to read against it, which neither end of the ladder allows.
+            surround = Color(0xFFC4C9CF),
+            borderSubtle = Color(0xFFDDE1E6),
+            // 3.1:1 on the card. Same reason as the dark theme's: a boundary that cannot be seen
+            // is not a boundary.
+            borderStrong = Color(0xFF8B939D),
+            textPrimary = Color(0xFF14161A),
+            textSecondary = Color(0xFF545C66),
+            // Decorative only — 2.4:1, deliberately below the text bar, because a disabled control
+            // that reads as clearly as an active one is a control nobody can tell is disabled.
+            textDisabled = Color(0xFF99A1AB),
+            // Vermilion, darkened until it passes as *text* on the sunken field. A light theme
+            // cannot borrow the dark theme's accent: amber at full chroma is a light colour, and on
+            // white it disappears.
+            accent = Color(0xFFAC3A23),
+            accentPressed = Color(0x638F2E1B),
+            accentSubtle = Color(0x1AAC3A23),
             onAccent = Color(0xFFFFFFFF),
-            selection = Color(0xFF199B90),
-            success = Color(0xFF15803D),
-            warning = Color(0xFFB45309),
-            error = Color(0xFFB91C1C),
-            scrim = Color(0x66000000),
+            selection = Color(0xFF0B6A63),
+            success = Color(0xFF126B33),
+            warning = Color(0xFF8A5105),
+            error = Color(0xFFA81F1A),
+            scrim = Color(0x59000000),
         )
     }
 }
