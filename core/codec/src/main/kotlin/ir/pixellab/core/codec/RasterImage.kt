@@ -44,5 +44,31 @@ interface ImageDecoder {
 interface ImageEncoder {
     val format: Format
 
-    fun encode(image: RasterImage): ByteArray
+    /**
+     * @param quality 1–100 for the lossy formats, ignored by the lossless ones.
+     *
+     * A parameter rather than a property of the encoder, because it is a decision the *user* makes
+     * per export and not a property of the build. It had been fixed at 92 since the encoder was
+     * written: a JPEG for a chat app and a JPEG for print came out the same size, and the only way
+     * to make a smaller file was to make a smaller image. Defaulted so the lossless encoders and
+     * every existing call site are unaffected.
+     */
+    fun encode(image: RasterImage, quality: Int = DEFAULT_QUALITY): ByteArray
+
+    companion object {
+        /**
+         * High but not lossless.
+         *
+         * A design export is flat colour and hard type edges, where JPEG artefacts are far more
+         * visible than in a photograph; anything below this shows ringing around text. Photoshop's
+         * "Maximum" sits about here, and its ×12 is around 96 — roughly double the file for a
+         * difference nobody can see without a difference blend.
+         */
+        const val DEFAULT_QUALITY = 95
+
+        /** Below this, chroma subsampling artefacts are visible on flat colour, which text is. */
+        const val MIN_QUALITY = 1
+
+        const val MAX_QUALITY = 100
+    }
 }

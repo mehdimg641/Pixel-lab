@@ -14,6 +14,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -23,6 +28,7 @@ import ir.pixellab.core.codec.Codecs
 import ir.pixellab.core.codec.PdfWriter
 import ir.pixellab.core.model.with
 import ir.pixellab.core.codec.Format
+import ir.pixellab.core.codec.ImageEncoder
 import ir.pixellab.core.codec.Project
 import ir.pixellab.core.model.Document
 import ir.pixellab.engine.android.CanvasSurface
@@ -80,10 +86,11 @@ suspend fun exportImage(
     document: Document,
     format: Format,
     scale: Float = 1f,
+    quality: Int = ImageEncoder.DEFAULT_QUALITY,
 ): FileOutcome {
     val surface = handle.surface ?: return FileOutcome.Refused("بوم هنوز آماده نیست")
     val result = suspendCoroutine { continuation ->
-        surface.export(document, format, scale, availableBytes(context)) { continuation.resume(it) }
+        surface.export(document, format, scale, availableBytes(context), quality) { continuation.resume(it) }
     }
     return when (result) {
         is ExportResult.Success -> withContext(Dispatchers.IO) {
@@ -400,14 +407,31 @@ suspend fun exportPsd(
 }
 
 /**
- * The export dialog.
+ * The export sheet.
  *
- * Offers exactly the formats this build can write on this device, taken from the registry rather
- * than from a fixed list. A menu that offers HEIF on a phone that cannot encode it is worse than
- * one that offers less.
+ * ### What it replaces
+ *
+ * A dialog listing every writable format with three scale chips under each — twenty-one buttons,
+ * each of which exported immediately on the first tap. There was no way to see what you were about
+ * to get, no way to change your mind, and **no quality control at all**: JPEG was written at a
+ * constant, so the only way to make a smaller file was to make a smaller picture. Photoshop has had
+ * that slider since 1990 and the reason is not subtle — a cover for print and the same cover for a
+ * chat app are the same pixels and very different files.
+ *
+ * Now it is one decision at a time — format, then size, then quality — with the two numbers that
+ * actually decide it shown before anything is written: the pixel dimensions the export will have,
+ * and roughly what it will weigh.
+ *
+ * @param onExport format, scale multiplier, and JPEG/WebP quality. Quality is passed for every
+ *   format; the lossless encoders ignore it, which is cheaper than making the caller know which.
  */
 @Composable
-fun ExportDialog(onDismiss: () -> Unit, onExport: (Format, Float) -> Unit) {
+fun ExportSheet(
+    canvasWidth: Int,
+    canvasHeight: Int,
+    onDismiss: () -> Unit,
+    onExport: (Format, Float, Int) -> Unit,
+) {
     val formats = remember {
         // Ordered by what a cover design is actually exported as, not alphabetically.
         val preferred = listOf(Format.PNG, Format.JPEG, Format.WEBP, Format.TIFF, Format.BMP, Format.TGA, Format.ICO)
@@ -415,36 +439,112 @@ fun ExportDialog(onDismiss: () -> Unit, onExport: (Format, Float) -> Unit) {
         // never will be, because its page carries a physical size that a pixel buffer cannot.
         preferred.filter { it in Codecs.writable } + (Codecs.writable - preferred.toSet()) + Format.PDF
     }
+    var format by remember { mutableStateOf(formats.firstOrNull() ?: Format.PNG) }
+    var scale by remember { mutableFloatStateOf(1f) }
+    var quality by remember { mutableIntStateOf(ImageEncoder.DEFAULT_QUALITY) }
+
+    val width = kotlin.math.ceil(canvasWidth * scale).toInt().coerceAtLeast(1)
+    val height = kotlin.math.ceil(canvasHeight * scale).toInt().coerceAtLeast(1)
 
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("انصراف", color = Ink.TextMuted) } },
-        containerColor = Ink.ChromeRaised,
+        containerColor = Ink.Chrome,
         title = { Text("خروجی گرفتن", color = Ink.Text) },
         text = {
-            Column {
-                for (format in formats) {
-                    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                        Text(
-                            format.label,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = Ink.Text,
-                            modifier = Modifier.padding(bottom = 2.dp),
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            // Multipliers rather than pixel sizes: the canvas can be any size, and
-                            // "×2" is the thing the user is actually deciding.
-                            for (scale in SCALES) {
-                                ScaleChip(scale) { onExport(format, scale) }
-                            }
-                        }
+            Column(Modifier.fillMaxWidth()) {
+                SheetSection("قالب")
+                SheetChips {
+                    for (option in formats) {
+                        SheetChip(option.label, chosen = option == format) { format = option }
                     }
                 }
+
+                SheetSection("اندازه")
+                SheetChips {
+                    for (option in SCALES) {
+                        ScaleChip(option, chosen = option == scale) { scale = option }
+                    }
+                }
+
+                // Only where it does something. A quality slider above a PNG is a control that
+                // moves and changes nothing, which teaches the user that the controls are decorative.
+                if (format.isLossy) {
+                    SheetSection("کیفیت")
+                    SheetSlider(
+                        "کیفیت",
+                        quality.toFloat(),
+                        ImageEncoder.MIN_QUALITY.toFloat()..ImageEncoder.MAX_QUALITY.toFloat(),
+                        onChange = { value, _ -> quality = value.toInt() },
+                    )
+                    SheetHint("زیر ۸۰ دورِ حروف موج می‌افتد — طرح گرافیکی لبهٔ تیز دارد و JPEG آن را دوست ندارد")
+                }
+
+                SheetSection("نتیجه")
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = Space.gutter),
+                    horizontalArrangement = Arrangement.spacedBy(Space.small),
+                ) {
+                    Readout("ابعاد", "${Digits.technical(width)} × ${Digits.technical(height)}", Modifier.weight(1f))
+                    Readout("حجم تقریبی", approximateSize(width, height, format, quality), Modifier.weight(1f))
+                }
+
+                SheetAction("خروجی گرفتن") { onExport(format, scale, quality) }
             }
         },
     )
 }
+
+/** One labelled number, as a plate. The pair of them is what makes the sheet worth opening. */
+@Composable
+private fun Readout(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .clip(Corners.card)
+            .background(Ink.ChromeRaised)
+            .padding(horizontal = Space.medium, vertical = Space.small),
+    ) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Ink.TextMuted)
+        Text(value, style = NumericStyle, color = Ink.Text, modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
+/**
+ * Roughly what the file will weigh.
+ *
+ * Estimated rather than measured, and the sheet says «تقریبی» for that reason: measuring means
+ * rendering and encoding the whole export, which is the several-second job the user is deciding
+ * whether to start. The point is not to be exact — it is to make the difference between ×۱ and ×۴,
+ * or between quality 60 and 95, visible *before* it costs a minute and a full storage warning.
+ *
+ * The lossy figure comes from bits-per-pixel at quality, which is the standard rule of thumb for
+ * JPEG on photographic content and errs high on flat colour — an over-estimate is the safe
+ * direction when the failure it guards against is running out of space.
+ */
+private fun approximateSize(width: Int, height: Int, format: Format, quality: Int): String {
+    val pixels = width.toLong() * height.toLong()
+    val bytes = when {
+        format.isLossy -> {
+            // ~0.15 bpp at quality 20 rising to ~2.4 bpp at 100, which tracks measured JPEG well
+            // enough for a chip that says "about".
+            val bitsPerPixel = 0.1 + (quality / 100.0).let { it * it * 2.6 }
+            (pixels * bitsPerPixel / 8).toLong()
+        }
+        // PNG on flat design artwork compresses hard; on a photograph it barely does. Halfway.
+        format == Format.PNG -> (pixels * 1.8).toLong()
+        else -> pixels * 4
+    }
+    return when {
+        bytes >= MEGABYTE -> "${Digits.technical((bytes / MEGABYTE).toInt())}٫" +
+            "${Digits.technical(((bytes % MEGABYTE) * 10 / MEGABYTE).toInt())} مگابایت"
+        else -> "${Digits.technical((bytes / 1024).toInt().coerceAtLeast(1))} کیلوبایت"
+    }
+}
+
+/** Whether a quality setting means anything for this format. */
+private val Format.isLossy: Boolean
+    get() = this == Format.JPEG || this == Format.WEBP || this == Format.HEIF
 
 /**
  * Delegates to [SheetChip].
@@ -453,12 +553,18 @@ fun ExportDialog(onDismiss: () -> Unit, onExport: (Format, Float) -> Unit) {
  * minimum, and one of four private chips across the sheets that had each drifted into the same
  * defect independently. `SheetChip`'s own documentation warned about exactly this: "two sheets with
  * their own private chip drift apart within a week". They did.
- *
- * Kept as a local name rather than deleted so the call sites stay short.
  */
 @Composable
-private fun ScaleChip(scale: Float, onClick: () -> Unit) =
-    SheetChip(if (scale == 1f) "×۱" else if (scale == 2f) "×۲" else "×۴", onClick = onClick)
+private fun ScaleChip(scale: Float, chosen: Boolean, onClick: () -> Unit) =
+    SheetChip(
+        when (scale) {
+            1f -> "×۱"
+            2f -> "×۲"
+            else -> "×۴"
+        },
+        chosen = chosen,
+        onClick = onClick,
+    )
 
 private val SCALES = listOf(1f, 2f, 4f)
 

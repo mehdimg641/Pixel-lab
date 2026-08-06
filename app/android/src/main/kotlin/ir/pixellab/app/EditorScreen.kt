@@ -438,15 +438,21 @@ fun EditorScreen(
         }
 
         if (exporting) {
-            ExportDialog(onDismiss = { exporting = false }) { format, scale ->
+            ExportSheet(
+                canvasWidth = state.document.canvas.width,
+                canvasHeight = state.document.canvas.height,
+                onDismiss = { exporting = false },
+            ) { format, scale, quality ->
                 exporting = false
                 if (format == ir.pixellab.core.codec.Format.PDF) {
                     scope.launch {
                         outcome = exportPdf(context, handle, state.document, scale)
                     }
-                    return@ExportDialog
+                    return@ExportSheet
                 }
-                scope.launch { outcome = exportImage(context, handle, state.document, format, scale) }
+                scope.launch {
+                    outcome = exportImage(context, handle, state.document, format, scale, quality)
+                }
             }
         }
 

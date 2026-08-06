@@ -66,7 +66,6 @@ object PlatformCodecs {
 class PlatformCodec(
     override val format: Format,
     private val compress: Bitmap.CompressFormat,
-    private val quality: Int = DEFAULT_QUALITY,
 ) : ImageDecoder, ImageEncoder {
 
     /**
@@ -103,11 +102,11 @@ class PlatformCodec(
         }
     }
 
-    override fun encode(image: RasterImage): ByteArray {
+    override fun encode(image: RasterImage, quality: Int): ByteArray {
         val bitmap = Bitmap.createBitmap(image.pixels, image.width, image.height, Bitmap.Config.ARGB_8888)
         return try {
             ByteArrayOutputStream(image.pixels.size).also { out ->
-                if (!bitmap.compress(compress, quality, out)) {
+                if (!bitmap.compress(compress, quality.coerceIn(ImageEncoder.MIN_QUALITY, ImageEncoder.MAX_QUALITY), out)) {
                     throw CodecException("${format.label} encoding failed on this device")
                 }
             }.toByteArray()
@@ -116,15 +115,6 @@ class PlatformCodec(
         }
     }
 
-    private companion object {
-        /**
-         * High but not lossless.
-         *
-         * A design export is flat colour and hard type edges, where JPEG artefacts are far more
-         * visible than in a photograph; anything below this shows ringing around text.
-         */
-        const val DEFAULT_QUALITY = 95
-    }
 }
 
 /**

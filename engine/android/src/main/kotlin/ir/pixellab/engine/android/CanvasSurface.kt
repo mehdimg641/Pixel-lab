@@ -98,9 +98,10 @@ class CanvasSurface @JvmOverloads constructor(
         format: ir.pixellab.core.codec.Format,
         scale: Float = 1f,
         availableBytes: Long = Long.MAX_VALUE,
+        quality: Int = ir.pixellab.core.codec.ImageEncoder.DEFAULT_QUALITY,
         onResult: (ExportResult) -> Unit,
     ) {
-        exports.add(ExportRequest(document, format, scale, availableBytes, onResult))
+        exports.add(ExportRequest(document, format, scale, availableBytes, quality, onResult))
         synchronized(this) { (this as Object).notifyAll() }
     }
 
@@ -109,6 +110,7 @@ class CanvasSurface @JvmOverloads constructor(
         val format: ir.pixellab.core.codec.Format,
         val scale: Float,
         val availableBytes: Long,
+        val quality: Int,
         val onResult: (ExportResult) -> Unit,
     )
 
@@ -245,7 +247,13 @@ class CanvasSurface @JvmOverloads constructor(
         while (true) {
             val request = exports.poll() ?: return
             val result = runCatching {
-                exporter.export(request.document, request.format, request.scale, request.availableBytes)
+                exporter.export(
+                    request.document,
+                    request.format,
+                    request.scale,
+                    request.availableBytes,
+                    request.quality,
+                )
             }.getOrElse { ExportResult.Failed(it.message ?: it::class.java.simpleName) }
             request.onResult(result)
         }

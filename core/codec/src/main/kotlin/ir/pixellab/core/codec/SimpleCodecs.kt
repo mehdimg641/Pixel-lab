@@ -72,7 +72,8 @@ object TgaCodec : ImageDecoder, ImageEncoder {
         return RasterImage(width, height, out)
     }
 
-    override fun encode(image: RasterImage): ByteArray {
+    // Lossless: there is nothing for a quality setting to trade away.
+    override fun encode(image: RasterImage, quality: Int): ByteArray {
         val out = ByteArrayOutputStream(HEADER + image.pixels.size * 4)
         out.write(0) // no id field
         out.write(0) // no colour map
@@ -162,7 +163,8 @@ object BmpCodec : ImageDecoder, ImageEncoder {
         return RasterImage(width, height, out)
     }
 
-    override fun encode(image: RasterImage): ByteArray {
+    // Lossless: there is nothing for a quality setting to trade away.
+    override fun encode(image: RasterImage, quality: Int): ByteArray {
         val stride = image.width * 4
         val size = HEADER_SIZE + stride * image.height
         val out = ByteArrayOutputStream(size)

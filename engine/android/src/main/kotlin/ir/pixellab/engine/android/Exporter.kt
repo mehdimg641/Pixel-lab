@@ -3,6 +3,7 @@ package ir.pixellab.engine.android
 import ir.pixellab.core.codec.CodecException
 import ir.pixellab.core.codec.Codecs
 import ir.pixellab.core.codec.Format
+import ir.pixellab.core.codec.ImageEncoder
 import ir.pixellab.core.codec.RasterImage
 import ir.pixellab.core.model.Document
 import ir.pixellab.core.render.MemoryBudget
@@ -45,6 +46,8 @@ class Exporter(
         format: Format,
         scale: Float = 1f,
         availableBytes: Long = Long.MAX_VALUE,
+        /** 1–100, and only the lossy formats read it. See [ImageEncoder.encode]. */
+        quality: Int = ImageEncoder.DEFAULT_QUALITY,
     ): ExportResult {
         val encoder = Codecs.encoderFor(format)
             ?: return ExportResult.Failed("${format.label} cannot be written in this build")
@@ -83,7 +86,7 @@ class Exporter(
             if (errors.isNotEmpty()) {
                 ExportResult.Failed(errors.first().let { "${it.shaderId}: ${it.reason}" })
             } else {
-                ExportResult.Success(encoder.encode(image), width, height)
+                ExportResult.Success(encoder.encode(image, quality), width, height)
             }
         } catch (e: CodecException) {
             ExportResult.Failed(e.message ?: "encoding failed")
