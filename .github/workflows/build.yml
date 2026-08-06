@@ -19,6 +19,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Read to check out, write to publish the preview release. Stated here rather than left to the
+# repository default, because the default is read-only and the release step would fail with a 403
+# that looks like a bug in the step rather than a missing permission.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -79,3 +85,29 @@ jobs:
           path: app/android/build/outputs/apk/debug/*.apk
           retention-days: 14
           if-no-files-found: ignore
+
+      # A tap-to-install link, which the artifact above is not.
+      #
+      # A workflow artifact is always a zip — of all three ABIs, 86 MB — and it is only reachable
+      # from the Actions page while signed in. Neither of those works on the device the app is
+      # actually for: a phone browser will not unpack a zip, and the person testing the build should
+      # not have to go looking for a run ID. A release asset is a single file at a stable address.
+      #
+      # Only the debug APKs. A release build on a runner is unsigned — there is no keystore here and
+      # deliberately so, since the key must be one only its owner holds — and Android refuses to
+      # install an unsigned package. Publishing one would be handing over a file that cannot work.
+      #
+      # `preview` is a rolling tag: deleted and recreated so it always points at the commit that
+      # produced the binaries. A tag left behind on an old commit describing new files is worse than
+      # no tag, because it is wrong rather than missing.
+      - name: Publish the preview build
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete preview --cleanup-tag --yes || true
+          gh release create preview \
+            --prerelease \
+            --title "پیش‌نمایش — ${GITHUB_SHA:0:7}" \
+            --notes "بیلد دیباگ از \`${GITHUB_SHA:0:7}\`. برای گوشی معمولی فایل **arm64-v8a** را بگیرید؛ اگر نصب نشد، **armeabi-v7a**." \
+            app/android/build/outputs/apk/debug/*.apk
