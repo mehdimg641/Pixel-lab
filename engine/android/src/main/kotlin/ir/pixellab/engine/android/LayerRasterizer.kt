@@ -86,7 +86,12 @@ class LayerRasterizer(private val text: TextRasterizer = TextRasterizer()) {
         when (layer) {
             is Layer.Shape -> canvas.drawPath(ShapeRasterizer.path(layer.geometry), paint)
             is Layer.Text -> if (font != null) {
-                canvas.drawPath(text.rasterize(layer.spec, font).outline, paint)
+                val shaped = text.rasterize(layer.spec, font)
+                // The panel first and the letters over it, though for coverage the order does not
+                // matter — what matters is that both are in it. A stroke or a shadow belongs around
+                // the panel, not around the words sitting inside it.
+                shaped.background?.let { canvas.drawPath(it, paint) }
+                canvas.drawPath(shaped.outline, paint)
             }
             // A photograph's coverage is its own alpha, which is what makes a stroke or a shadow
             // follow a cut-out subject rather than the rectangle it arrived in.
@@ -138,6 +143,8 @@ class LayerRasterizer(private val text: TextRasterizer = TextRasterizer()) {
         val height = pixels(shape.height, scale)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
+        val shaped = text.rasterize(layer.spec, font)
+        val background = layer.spec.background
 
         // The base paint covers everything, including the gaps between glyphs — harmless, because
         // the silhouette's alpha is what decides where any of it is visible.
@@ -145,7 +152,35 @@ class LayerRasterizer(private val text: TextRasterizer = TextRasterizer()) {
 
         canvas.scale(scale, scale)
         canvas.translate(-shape.left, -shape.top)
-        for (piece in text.rasterize(layer.spec, font).pieces) {
+
+        // The panel is painted *underneath* by painting it first and then the letters back over the
+        // top, because the coverage the silhouette provides covers both and there is no way to tell
+        // them apart at that point. Doing it the other way — panel over letters — is a caption with
+        // its own words hidden behind its background, which is what happens if the order is guessed.
+        if (background != null && shaped.background != null) {
+            canvas.save()
+            canvas.clipPath(shaped.background)
+            canvas.translate(shape.left, shape.top)
+            canvas.scale(1f / scale, 1f / scale)
+            canvas.drawBitmap(
+                fill(background.fill, width, height, patternFor(background.fill, patterns)),
+                0f,
+                0f,
+                alphaPaint(background.opacity),
+            )
+            canvas.restore()
+
+            // And the letters back on top, in the layer's own paint. Skipped when there is nothing
+            // behind them, where the base fill already covers the whole rectangle.
+            canvas.save()
+            canvas.clipPath(shaped.outline)
+            canvas.translate(shape.left, shape.top)
+            canvas.scale(1f / scale, 1f / scale)
+            canvas.drawBitmap(fill(base, width, height, patternFor(base, patterns)), 0f, 0f, null)
+            canvas.restore()
+        }
+
+        for (piece in shaped.pieces) {
             val paint = piece.style.fill ?: base
             val opacity = piece.style.opacity
             if (piece.style.fill == null && opacity >= 1f) continue

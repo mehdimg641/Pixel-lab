@@ -234,7 +234,10 @@ enum class TextSection {
     /** What the letters are made of: how metallic, how rough, how lacquered. */
     MATERIAL,
 
-    /** Warping the letters. */
+    /** A panel behind the words. */
+    BACKGROUND,
+
+    /** Warping the letters, and running the baseline along an arc. */
     CURVE,
 
     /** A mirrored copy beneath the line. */

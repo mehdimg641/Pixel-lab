@@ -2086,6 +2086,38 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         editText(id) { it.copy(warp = warp) }
 
     /**
+     * Runs the baseline along an arc, or straightens it again.
+     *
+     * `TextPath` has been in the model since the first typographic wave and nothing could reach it,
+     * which is the defect shape this repository keeps finding: expressible, rendered, unreachable.
+     * The renderer has bent text onto a guide the whole time.
+     */
+    fun setTextPath(id: LayerId, path: ir.pixellab.core.model.TextPath?) = editText(id) { it.copy(path = path) }
+
+    /** The panel behind the words, or null to take it away. */
+    fun setTextBackground(id: LayerId, background: ir.pixellab.core.model.TextBackground?) =
+        editText(id) { it.copy(background = background) }
+
+    /**
+     * One change to the panel behind the words, coalescing a drag into a single undo entry.
+     *
+     * Separate from [setTextBackground] because these are sliders — padding, radius, opacity — and
+     * `editText` records a step per call, which would leave a hundred entries behind one drag.
+     */
+    fun scrubTextBackground(
+        id: LayerId,
+        continuous: Boolean,
+        change: (ir.pixellab.core.model.TextBackground) -> ir.pixellab.core.model.TextBackground,
+    ) = edit {
+        val layer = state.document.findLayer(id) as? Layer.Text ?: return@edit
+        val background = layer.spec.background ?: return@edit
+        // The panel changes the layer's measured size, so the selection handles have to be redrawn
+        // around the new one — a padding drag with stale bounds leaves the box behind the finger.
+        bounds.invalidate(id)
+        setTextSpec(id, continuous) { it.copy(background = change(background)) }
+    }
+
+    /**
      * Switches between point and area type.
      *
      * Going to area gives the box the size the text already occupies, so the words do not reflow

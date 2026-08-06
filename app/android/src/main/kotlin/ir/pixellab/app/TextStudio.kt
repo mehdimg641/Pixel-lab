@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.FormatLineSpacing
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.Opacity
+import androidx.compose.material.icons.outlined.Rectangle
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Timeline
 import androidx.compose.material.icons.outlined.ViewInAr
@@ -114,7 +115,8 @@ fun TextStudioBody(
             TextSection.GLOW -> Scrolling { GlowSection(state, layer, model) }
             TextSection.DIMENSIONAL -> DimensionalSheetBody(state, model)
             TextSection.MATERIAL -> Scrolling { MaterialSection(layer, model) }
-            TextSection.CURVE -> Scrolling { WarpControls(layer, model) }
+            TextSection.BACKGROUND -> Scrolling { BackgroundSection(layer, model) }
+            TextSection.CURVE -> Scrolling { CurveSection(layer, model) }
             TextSection.REFLECTION -> Scrolling {
                 EffectSection(state, layer, model, REFLECTION_KINDS, ::defaultReflection)
             }
@@ -353,6 +355,132 @@ private fun MaterialSection(layer: Layer.Text, model: EditorViewModel) {
     MaterialControls("بدنه", geometry.sideMaterial) { model.setGeometry3D(layer.id, geometry.copy(sideMaterial = it)) }
 }
 
+/**
+ * The panel behind the words.
+ *
+ * A caption over a photograph is unreadable until something sits behind it, and this application had
+ * no way to say so at all — the only workaround was a second shape layer, positioned by hand and
+ * re-positioned every time the words changed.
+ *
+ * «هر خط جدا» first, because it is the choice that decides what the thing looks like and it is the
+ * one every editor gets wrong. One box around a three-line centred title leaves a wide empty band
+ * beside the short lines; a box per line is the look people are actually copying.
+ */
+@Composable
+private fun BackgroundSection(layer: Layer.Text, model: EditorViewModel) {
+    val background = layer.spec.background
+    if (background == null) {
+        MissingSubject(
+            message = "پشت این متن چیزی نیست — روی عکس، نوشته بدون پس‌زمینه خوانده نمی‌شود",
+            action = "افزودن پس‌زمینه",
+        ) {
+            model.setTextBackground(layer.id, ir.pixellab.core.model.TextBackground())
+        }
+        return
+    }
+
+    SheetSection("شکل")
+    SheetChips {
+        SheetChip("هر خط جدا", chosen = background.perLine) {
+            model.setTextBackground(layer.id, background.copy(perLine = true))
+        }
+        SheetChip("یک کادر", chosen = !background.perLine) {
+            model.setTextBackground(layer.id, background.copy(perLine = false))
+        }
+    }
+    SheetHint("هر خط جدا برای تیتر است؛ یک کادر برای بند متن")
+
+    SheetSlider(
+        label = "حاشیهٔ افقی",
+        value = background.paddingX,
+        range = 0f..MAX_PADDING,
+        onChange = { value, continuous ->
+            model.scrubTextBackground(layer.id, continuous) { it.copy(paddingX = value) }
+        },
+        onCommit = { model.act { endScrub() } },
+    )
+    SheetSlider(
+        label = "حاشیهٔ عمودی",
+        value = background.paddingY,
+        range = 0f..MAX_PADDING,
+        onChange = { value, continuous ->
+            model.scrubTextBackground(layer.id, continuous) { it.copy(paddingY = value) }
+        },
+        onCommit = { model.act { endScrub() } },
+    )
+    SheetSlider(
+        label = "گردی گوشه",
+        value = background.cornerRadius,
+        range = 0f..MAX_RADIUS,
+        onChange = { value, continuous ->
+            model.scrubTextBackground(layer.id, continuous) { it.copy(cornerRadius = value) }
+        },
+        onCommit = { model.act { endScrub() } },
+    )
+    SheetSlider(
+        label = "شفافیت",
+        value = background.opacity * PERCENT,
+        range = 0f..PERCENT,
+        onChange = { value, continuous ->
+            model.scrubTextBackground(layer.id, continuous) { it.copy(opacity = value / PERCENT) }
+        },
+        onCommit = { model.act { endScrub() } },
+    )
+
+    SheetSection("پر")
+    FillEditor(
+        fill = background.fill,
+        model = model,
+        onChange = { model.setTextBackground(layer.id, background.copy(fill = it)) },
+    )
+
+    SheetAction("برداشتن پس‌زمینه", tint = Ink.Danger) { model.setTextBackground(layer.id, null) }
+}
+
+/**
+ * Bending the letters, and bending the line they sit on.
+ *
+ * Two different things and worth keeping in one section, because a user reaching for "curved text"
+ * does not know which one they want and trying both is how they find out. A warp distorts the
+ * letterforms; a path moves them along an arc and leaves each one upright relative to the curve.
+ */
+@Composable
+private fun CurveSection(layer: Layer.Text, model: EditorViewModel) {
+    val path = layer.spec.path as? ir.pixellab.core.model.TextPath.Arc
+
+    SheetSection("خط پایه")
+    SheetChips {
+        SheetChip("مستقیم", chosen = layer.spec.path == null) { model.setTextPath(layer.id, null) }
+        SheetChip("کمان", chosen = path != null) {
+            if (path == null) model.setTextPath(layer.id, ir.pixellab.core.model.TextPath.Arc(radius = DEFAULT_ARC))
+        }
+    }
+    if (path != null) {
+        // Negative radius curves the other way, and the slider crosses zero rather than pairing a
+        // magnitude with a direction switch — one control where the shape actually is continuous.
+        SheetSlider(
+            label = "شعاع کمان",
+            value = path.radius,
+            range = -MAX_ARC..MAX_ARC,
+            onChange = { value, _ -> model.setTextPath(layer.id, path.copy(radius = value)) },
+        )
+        SheetSlider(
+            label = "زاویهٔ شروع",
+            value = path.startAngle,
+            range = -FULL_TURN..FULL_TURN,
+            onChange = { value, _ -> model.setTextPath(layer.id, path.copy(startAngle = value)) },
+        )
+        SheetChips {
+            SheetChip("داخل کمان", chosen = path.flip) { model.setTextPath(layer.id, path.copy(flip = true)) }
+            SheetChip("بیرون کمان", chosen = !path.flip) { model.setTextPath(layer.id, path.copy(flip = false)) }
+        }
+        SheetHint("شعاع منفی کمان را برعکس می‌کند — برای نوشتن روی نیمهٔ پایین دایره")
+    }
+
+    SheetSection("تاب حروف")
+    WarpControls(layer, model)
+}
+
 @Composable
 private fun GlowSection(state: EditorState, layer: Layer.Text, model: EditorViewModel) {
     SheetSection("دستور آماده")
@@ -439,6 +567,7 @@ internal val TextSection.persianLabel: String
         TextSection.GLOW -> "درخشش"
         TextSection.DIMENSIONAL -> "سه‌بعدی"
         TextSection.MATERIAL -> "جنس"
+        TextSection.BACKGROUND -> "پس‌زمینه"
         TextSection.CURVE -> "تاب"
         TextSection.REFLECTION -> "بازتاب"
         TextSection.BLEND -> "ترکیب"
@@ -456,6 +585,7 @@ private val TextSection.icon: ImageVector
         TextSection.GLOW -> Icons.Outlined.Lightbulb
         TextSection.DIMENSIONAL -> Icons.Outlined.ViewInAr
         TextSection.MATERIAL -> Icons.Outlined.Diamond
+        TextSection.BACKGROUND -> Icons.Outlined.Rectangle
         TextSection.CURVE -> Icons.Outlined.Timeline
         TextSection.REFLECTION -> Icons.Outlined.Flip
         TextSection.BLEND -> Icons.Outlined.Opacity
@@ -515,6 +645,15 @@ private const val MAX_SCALE = 2.5f
 
 /** A fraction of the type size, each way. Half an em is already further than any real setting. */
 private const val BASELINE = 0.5f
+
+/** Padding wide enough to make a card of a short word, in the same units as the type size. */
+private const val MAX_PADDING = 200f
+private const val MAX_RADIUS = 200f
+
+/** Where an arc starts life: wide enough to read as a gentle curve on a headline, not a ring. */
+private const val DEFAULT_ARC = 900f
+private const val MAX_ARC = 3000f
+private const val FULL_TURN = 360f
 
 private const val TRACKING = 0.25f
 private const val MIN_LEADING = 0.6f

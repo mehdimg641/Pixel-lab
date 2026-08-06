@@ -163,6 +163,40 @@ sealed interface TextPath {
     data class Custom(val points: List<Vec2>, val closed: Boolean = false) : TextPath
 }
 
+/**
+ * A panel drawn behind the words.
+ *
+ * The single most-used device in social typography and the one thing this application had no way to
+ * express: a caption is unreadable over a photograph until something sits behind it. Every reference
+ * editor offers it and none of them offers it well, because they all draw one rectangle around the
+ * whole paragraph.
+ *
+ * [perLine] is why this is not just a rectangle. A three-line title with one box around it leaves a
+ * wide empty band beside the short lines and reads as a placeholder; a box per line, each only as
+ * wide as its own text, is the look people are actually copying. It defaults to true for that
+ * reason, and the single-box version stays available for the cases that want a card.
+ *
+ * The padding is in the same units as the type size, so a background set on a 64pt headline does not
+ * have to be redone when the headline is scaled.
+ */
+@Serializable
+data class TextBackground(
+    val fill: Fill = Fill.Solid(Color.WHITE),
+    /** Out to the sides, in the same units as [TextSpec.size]. */
+    val paddingX: Float = 24f,
+    /** Above and below, likewise. */
+    val paddingY: Float = 10f,
+    val cornerRadius: Float = 12f,
+    val perLine: Boolean = true,
+    val opacity: Float = 1f,
+) {
+    init {
+        require(paddingX >= 0f && paddingY >= 0f) { "padding cannot be negative, got $paddingX × $paddingY" }
+        require(cornerRadius >= 0f) { "a corner radius cannot be negative, got $cornerRadius" }
+        require(opacity in 0f..1f) { "opacity is 0..1, got $opacity" }
+    }
+}
+
 /** Physically-based material for a 3D text or shape layer. */
 @Serializable
 data class Material(
@@ -562,7 +596,19 @@ data class TextSpec(
      * list directly.
      */
     val runs: List<StyleRun> = emptyList(),
+    /** A panel behind the words, or null for none — which is the default and the common case. */
+    val background: TextBackground? = null,
 ) {
     /** Whether anything here needs the per-run path at all. */
     val hasRuns: Boolean get() = runs.isNotEmpty()
+
+    /**
+     * Whether the layer's paint varies across it, so the renderer has to draw the paint rather than
+     * hand over a flat fill.
+     *
+     * One question rather than two conditions at the call site, because both callers have to agree:
+     * a renderer that painted the ranges but not the background would put the panel behind the
+     * words in the text colour.
+     */
+    val hasPaintedContent: Boolean get() = hasRuns || background != null
 }

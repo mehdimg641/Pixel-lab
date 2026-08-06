@@ -61,6 +61,16 @@ data class RasterizedText(
      * and travels the code path it travelled before ranges were a thing.
      */
     val pieces: List<StyledPiece>,
+    /**
+     * The panel behind the words, or null when the layer has none.
+     *
+     * Kept out of [outline] deliberately. Everything that asks for the *letters* — extruding them
+     * to 3D, converting them to a vector shape — reads [outline], and a caption whose background
+     * quietly became part of its geometry would extrude as a slab with words on it. What does read
+     * both is [bounds], because the layer really is as big as its panel, and the silhouette, because
+     * a stroke or a shadow belongs around the panel and not around the words inside it.
+     */
+    val background: Path?,
     val bounds: RectF,
     /** Which elongation mechanism was actually used. */
     val kashida: KashidaMode,
@@ -169,14 +179,73 @@ class TextRasterizer(private val loader: TypefaceLoader = TypefaceLoader()) {
         val outline = if (box != null) warp(straight, spec.warp, box) else straight
         val bent = if (box == null) pieces else pieces.map { it.copy(outline = warp(it.outline, spec.warp, box)) }
 
+        // Built from the *unwarped* line metrics and then bent with everything else, so a panel
+        // behind arched text arches with it rather than staying a straight rectangle behind curved
+        // words — which is what building it from the final bounds would give.
+        val panel = spec.background?.let { background ->
+            val straightPanel = buildBackground(background, lines, paint)
+            if (box != null) warp(straightPanel, spec.warp, box) else straightPanel
+        }
+
         return RasterizedText(
             lines = lines,
             outline = outline,
             pieces = bent,
-            bounds = boundsOf(outline),
+            background = panel,
+            // The layer is as big as its panel, which is larger than its letters — measure the two
+            // together or the background is clipped by the selection box it sits inside.
+            bounds = boundsOf(Path().apply { addPath(outline); panel?.let(::addPath) }),
             kashida = plan.mode,
             textPreserved = plan.preservesText,
         )
+    }
+
+    /**
+     * The rounded panels behind the words.
+     *
+     * One per line by default, each only as wide as its own line. A single box around the whole
+     * paragraph — which is what every editor that offers this does — leaves a wide empty band beside
+     * the short lines of a centred title, and that band is the difference between a design and a
+     * placeholder.
+     *
+     * The vertical extent comes from the font's ascent and descent rather than from the ink, so two
+     * consecutive lines get panels of the same height whether or not either happens to contain a
+     * descender. Sizing to the ink is the obvious alternative and it makes a stack of panels ripple.
+     */
+    private fun buildBackground(
+        background: ir.pixellab.core.model.TextBackground,
+        lines: List<TextLine>,
+        paint: Paint,
+    ): Path {
+        val path = Path()
+        val drawn = lines.filter { it.text.isNotBlank() }
+        if (drawn.isEmpty()) return path
+
+        val radius = background.cornerRadius
+        val boxes = if (background.perLine) {
+            drawn.map { line ->
+                RectF(
+                    line.x - background.paddingX,
+                    line.baseline + line.ascent - background.paddingY,
+                    line.x + line.width + background.paddingX,
+                    line.baseline + line.descent + background.paddingY,
+                )
+            }
+        } else {
+            listOf(
+                RectF(
+                    drawn.minOf { it.x } - background.paddingX,
+                    drawn.first().let { it.baseline + it.ascent } - background.paddingY,
+                    drawn.maxOf { it.x + it.width } + background.paddingX,
+                    drawn.last().let { it.baseline + it.descent } + background.paddingY,
+                ),
+            )
+        }
+        for (box in boxes) path.addRoundRect(box, radius, radius, Path.Direction.CW)
+        // Overlapping panels on tight leading would otherwise cancel each other out under the
+        // even-odd rule Skia uses for a path built from several contours.
+        path.fillType = Path.FillType.WINDING
+        return path
     }
 
     private fun boundsOf(path: Path): RectF {

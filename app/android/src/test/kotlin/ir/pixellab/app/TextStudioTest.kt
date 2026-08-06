@@ -171,6 +171,46 @@ class TextStudioTest {
         SheetContent.TextStudio(LayerId("elsewhere"), TextSection.SHADOW).identity shouldBe LayerId("elsewhere")
     }
 
+    // ---- the two the model could express and nothing could reach ----------------------------------
+
+    @Test
+    fun `the baseline can be bent onto an arc from the panel`() {
+        // `TextPath` has been in the model since the first typographic wave and the renderer has
+        // bent text onto a guide the whole time; there was simply no control. That is the defect
+        // shape this repository keeps finding, so it is worth a test that presses the control
+        // rather than one that checks the field exists.
+        val (model, id) = model()
+        model.setTextPath(id, ir.pixellab.core.model.TextPath.Arc(radius = 900f))
+        (model.spec(id).path as ir.pixellab.core.model.TextPath.Arc).radius shouldBe 900f
+        model.setTextPath(id, null)
+        model.spec(id).path shouldBe null
+    }
+
+    @Test
+    fun `a panel behind the words is added, adjusted and taken away`() {
+        val (model, id) = model()
+        model.setTextBackground(id, ir.pixellab.core.model.TextBackground())
+        model.spec(id).background?.perLine shouldBe true
+
+        model.scrubTextBackground(id, continuous = false) { it.copy(paddingX = 60f) }
+        model.spec(id).background?.paddingX shouldBe 60f
+
+        model.setTextBackground(id, null)
+        model.spec(id).background shouldBe null
+    }
+
+    @Test
+    fun `dragging a padding slider is one undo step, not a hundred`() {
+        val (model, id) = model()
+        model.setTextBackground(id, ir.pixellab.core.model.TextBackground())
+        val before = model.historyLength
+
+        repeat(20) { step -> model.scrubTextBackground(id, continuous = true) { it.copy(paddingX = 20f + step) } }
+        model.act { endScrub() }
+
+        (model.historyLength - before) shouldBe 1
+    }
+
     @Test
     fun `the panel keeps the canvas out from under itself`() {
         // Every layer-scoped sheet pans the canvas so the thing being edited is not behind the

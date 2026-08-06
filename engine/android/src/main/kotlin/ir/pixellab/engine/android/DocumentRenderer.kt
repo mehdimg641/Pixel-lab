@@ -853,7 +853,8 @@ class DocumentRenderer(
         // even when one syllable inside it is a different colour.
         effectTextures.layerImage = when {
             layer is Layer.Image -> imageTexture(layer.asset)
-            layer is Layer.Text && layer.spec.hasRuns && font != null -> textFillFor(layer, shape, frame.scale, font)
+            layer is Layer.Text && layer.spec.hasPaintedContent && font != null ->
+                textFillFor(layer, shape, frame.scale, font)
             else -> null
         }
         // Where that paint sits inside the texture. The texture is larger than the layer whenever
