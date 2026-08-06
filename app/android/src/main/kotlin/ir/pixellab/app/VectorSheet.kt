@@ -94,13 +94,14 @@ fun VectorSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
                 Chip(entry.first, chosen = profileIndex == index) { profileIndex = index }
             }
         }
-        Chip(
-            "تبدیل به شکل پرشده",
-            chosen = false,
-            enabled = !pen.isEmpty || (state.primaryLayer as? Layer.Shape)?.geometry is ShapeGeometry.Path,
-            modifier = Modifier.padding(horizontal = 12.dp),
-        ) {
-            model.outlineStroke(strokeWidth, WidthProfile.ALL[profileIndex].second)
+        ChipRow {
+            Chip(
+                "تبدیل به شکل پرشده",
+                chosen = false,
+                enabled = !pen.isEmpty || (state.primaryLayer as? Layer.Shape)?.geometry is ShapeGeometry.Path,
+            ) {
+                model.outlineStroke(strokeWidth, WidthProfile.ALL[profileIndex].second)
+            }
         }
 
         Section("Pathfinder")
@@ -123,18 +124,19 @@ fun VectorSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
 
         Section("افست مسیر")
         Slider("فاصله", offsetAmount, -60f..60f) { offsetAmount = it }
-        Chip(
-            "اعمال افست",
-            chosen = false,
-            enabled = (state.primaryLayer as? Layer.Shape)?.geometry is ShapeGeometry.Path,
-            modifier = Modifier.padding(horizontal = 12.dp),
-        ) {
-            model.offsetPath(offsetAmount)
+        ChipRow {
+            Chip(
+                "اعمال افست",
+                chosen = false,
+                enabled = (state.primaryLayer as? Layer.Shape)?.geometry is ShapeGeometry.Path,
+            ) {
+                model.offsetPath(offsetAmount)
+            }
         }
 
         Section("SVG")
-        Chip("کپی به‌صورت SVG", chosen = false, enabled = !pen.isEmpty, modifier = Modifier.padding(horizontal = 12.dp)) {
-            model.copyPathAsSvg()
+        ChipRow {
+            Chip("کپی به‌صورت SVG", chosen = false, enabled = !pen.isEmpty) { model.copyPathAsSvg() }
         }
     }
 }
@@ -161,29 +163,23 @@ private fun ChipRow(content: @Composable () -> Unit) {
     ) { content() }
 }
 
+/**
+ * Delegates to [SheetChip].
+ *
+ * It used to be a `Text` with a click and eight points of padding — 36.5dp tall, under the touch
+ * minimum, and one of four private chips across the sheets that had each drifted into the same
+ * defect independently. `SheetChip`'s own documentation warned about exactly this: "two sheets with
+ * their own private chip drift apart within a week". They did.
+ *
+ * Kept as a local name rather than deleted so the call sites stay short.
+ */
 @Composable
 private fun Chip(
     label: String,
     chosen: Boolean,
     enabled: Boolean = true,
-    modifier: Modifier = Modifier,
     onClick: () -> Unit,
-) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelLarge,
-        color = when {
-            !enabled -> Ink.Divider
-            chosen -> Ink.Accent
-            else -> Ink.Text
-        },
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (chosen) Ink.Accent.copy(alpha = 0.18f) else Ink.Chrome)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    )
-}
+) = SheetChip(label, chosen = chosen, enabled = enabled, onClick = onClick)
 
 @Composable
 private fun Slider(

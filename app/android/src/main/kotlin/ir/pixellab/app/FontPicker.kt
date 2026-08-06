@@ -26,6 +26,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ir.pixellab.core.editor.EditorState
@@ -121,26 +124,40 @@ fun FontPickerBody(state: EditorState, model: EditorViewModel, modifier: Modifie
 
 @Composable
 private fun SearchField(query: String, onChange: (String) -> Unit) {
-    Box(
-        Modifier
+    BasicTextField(
+        value = query,
+        onValueChange = onChange,
+        singleLine = true,
+        cursorBrush = SolidColor(Ink.Accent),
+        textStyle = MaterialTheme.typography.bodyMedium.copy(color = Ink.Text),
+        modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp)
+            // The field had no name at all: its only label was the placeholder, which disappears
+            // the moment anybody types. A placeholder is not a label — it is the hint that goes
+            // *with* one — and a screen reader announcing an anonymous edit box is what that
+            // shortcut costs.
+            .semantics { contentDescription = "جست‌وجوی فونت" }
             .clip(RoundedCornerShape(12.dp))
-            .background(Ink.Chrome)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-    ) {
-        if (query.isEmpty()) {
-            Text("جست‌وجوی فونت", color = Ink.TextMuted, style = MaterialTheme.typography.bodyMedium)
-        }
-        BasicTextField(
-            value = query,
-            onValueChange = onChange,
-            singleLine = true,
-            cursorBrush = SolidColor(Ink.Accent),
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Ink.Text),
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
+            .background(Ink.Chrome),
+        // Height and inset inside the decoration rather than wrapped around the field. Wrapped, the
+        // well stood 44dp tall and only the 24dp holding the text answered a tap — the pointer
+        // handling of a Compose field sits inside whatever padding you put around it.
+        decorationBox = { field ->
+            Box(
+                Modifier
+                    .heightIn(min = Space.touch)
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (query.isEmpty()) {
+                    Text("جست‌وجوی فونت", color = Ink.TextMuted, style = MaterialTheme.typography.bodyMedium)
+                }
+                field()
+            }
+        },
+    )
 }
 
 /**

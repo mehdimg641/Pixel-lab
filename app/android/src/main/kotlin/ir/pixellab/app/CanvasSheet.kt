@@ -22,6 +22,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.editor.AspectRatio
 import ir.pixellab.core.editor.CanvasAnchor
@@ -221,7 +226,7 @@ private fun AnchorGrid(chosen: CanvasAnchor, onPick: (CanvasAnchor) -> Unit) {
                 for (anchor in row) {
                     Box(
                         Modifier
-                            .size(CELL.dp)
+                            .size(Space.touch)
                             .clip(RoundedCornerShape(6.dp))
                             .background(if (anchor == chosen) Ink.Accent.copy(alpha = 0.28f) else Ink.Chrome)
                             .border(
@@ -229,7 +234,17 @@ private fun AnchorGrid(chosen: CanvasAnchor, onPick: (CanvasAnchor) -> Unit) {
                                 color = if (anchor == chosen) Ink.Accent else Ink.Divider,
                                 shape = RoundedCornerShape(6.dp),
                             )
-                            .clickable { onPick(anchor) },
+                            .clickable { onPick(anchor) }
+                            // Nine cells that were 40dp and anonymous. A grid whose whole point is
+                            // that the choice is *spatial* is the worst possible control to leave
+                            // unnamed: there is no label, no icon and no text anywhere in it, so
+                            // without this a screen reader announces nine identical buttons and the
+                            // spatial meaning — the entire reason it is a grid — is gone.
+                            .semantics {
+                                role = Role.RadioButton
+                                selected = anchor == chosen
+                                contentDescription = anchor.persianLabel
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         if (anchor == chosen) {
@@ -282,7 +297,6 @@ private val ANCHOR_ROWS = listOf(
     listOf(CanvasAnchor.BOTTOM_LEFT, CanvasAnchor.BOTTOM, CanvasAnchor.BOTTOM_RIGHT),
 )
 
-private const val CELL = 40
 private const val DOT = 12
 
 /** A canvas of a hundred thousand pixels a side is not a document, it is a mistake being typed. */

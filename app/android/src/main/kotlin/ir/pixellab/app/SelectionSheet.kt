@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -149,35 +151,36 @@ fun SelectionSheetBody(state: EditorState, model: EditorViewModel, modifier: Mod
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ChipRow(label: String, content: @Composable () -> Unit) {
     Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = Ink.TextMuted)
-        Row(
+        // Wrapping, not a fixed row. Six chips do not fit across a 411dp phone, and a plain Row
+        // hands each child only the width it has left — so «نرم», last in its row, came out 32dp
+        // wide with its label clipped. The row did not overflow visibly; it quietly crushed its
+        // final control, which is the harder version of the bug to notice by eye.
+        FlowRow(
             Modifier.fillMaxWidth().padding(top = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) { content() }
     }
 }
 
+/**
+ * Delegates to [SheetChip].
+ *
+ * It used to be a `Text` with a click and eight points of padding — 36.5dp tall, under the touch
+ * minimum, and one of four private chips across the sheets that had each drifted into the same
+ * defect independently. `SheetChip`'s own documentation warned about exactly this: "two sheets with
+ * their own private chip drift apart within a week". They did.
+ *
+ * Kept as a local name rather than deleted so the call sites stay short.
+ */
 @Composable
-private fun Chip(label: String, chosen: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelLarge,
-        color = when {
-            !enabled -> Ink.Divider
-            chosen -> Ink.Accent
-            else -> Ink.Text
-        },
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (chosen) Ink.Accent.copy(alpha = 0.18f) else Ink.Chrome)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    )
-}
+private fun Chip(label: String, chosen: Boolean, enabled: Boolean = true, onClick: () -> Unit) =
+    SheetChip(label, chosen = chosen, enabled = enabled, onClick = onClick)
 
 @Composable
 private fun Slider(

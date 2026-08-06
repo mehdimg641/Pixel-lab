@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -119,24 +120,14 @@ fun AdjustmentSheetBody(
 
 @Composable
 private fun AddRow(model: EditorViewModel) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
+    // Through the shared chip, and wrapping rather than scrolling sideways. This row used to be
+    // twenty-two `Text`s with a click and eight points of padding — 36.5dp tall, every one of them,
+    // which is every colour adjustment in the application under the touch minimum. It was also a
+    // horizontal scroller, so a user who could not see that there were twenty-two of them never
+    // found the one they wanted; wrapping costs three lines of height and shows the whole set.
+    SheetChips {
         for ((label, factory) in CATALOG) {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelLarge,
-                color = Ink.Text,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Ink.Chrome)
-                    .clickable { model.addAdjustment(factory(), label) }
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-            )
+            SheetChip(label) { model.addAdjustment(factory(), label) }
         }
     }
 }
@@ -653,9 +644,17 @@ private fun Toggle(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
+            .heightIn(min = Space.touch)
             .clickable { onChange(!value) }
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            // A switch in everything but appearance, so it is announced as one — with its state,
+            // which the «روشن/خاموش» word carries visually and nothing carried otherwise.
+            .semantics {
+                role = Role.Switch
+                selected = value
+            },
         horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = Ink.Text)
         Text(
@@ -844,7 +843,7 @@ private fun LookChip(
 ) {
     Box(
         Modifier
-            .heightIn(min = 40.dp)
+            .sizeIn(minWidth = Space.touch, minHeight = Space.touch)
             .clip(Corners.chip)
             .background(if (chosen) Ink.Accent.copy(alpha = 0.16f) else androidx.compose.ui.graphics.Color.Transparent)
             .border(

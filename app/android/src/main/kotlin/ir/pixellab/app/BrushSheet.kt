@@ -22,6 +22,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color as UiColor
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.model.Color
 import ir.pixellab.core.paint.BrushMode
@@ -231,6 +236,9 @@ private fun PresetRow(current: BrushPreset, onPick: (BrushPreset) -> Unit) {
             val chosen = preset.name == current.name
             Column(
                 Modifier
+                    // The label alone sized this — 40.5dp tall, and «نرم» only 44 wide. A target
+                    // that is a consequence of a font size is a target nobody chose.
+                    .sizeIn(minWidth = Space.touch, minHeight = Space.touch)
                     .clip(RoundedCornerShape(12.dp))
                     .background(if (chosen) Ink.Accent.copy(alpha = 0.18f) else Ink.Chrome)
                     .clickable {
@@ -238,8 +246,15 @@ private fun PresetRow(current: BrushPreset, onPick: (BrushPreset) -> Unit) {
                         // own black every time is the fastest way to make a brush picker annoying.
                         onPick(preset.copy(color = current.color, erase = preset.erase))
                     }
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    // A preset row is a choice among several; without this it is a row of buttons
+                    // that never says which brush is loaded.
+                    .semantics {
+                        role = Role.RadioButton
+                        selected = chosen
+                    },
                 horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
                 Text(
                     preset.name,
@@ -261,26 +276,15 @@ private fun PresetRow(current: BrushPreset, onPick: (BrushPreset) -> Unit) {
 private fun ColorRow(current: Color, onPick: (Color) -> Unit) {
     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         Text("رنگ", style = MaterialTheme.typography.labelMedium, color = Ink.TextMuted)
-        Row(
-            Modifier.fillMaxWidth().padding(top = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            for (color in PALETTE) {
-                val chosen = color == current
-                Box(
-                    Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(UiColor(color.r, color.g, color.b, color.a))
-                        .border(
-                            width = if (chosen) 2.dp else 1.dp,
-                            color = if (chosen) Ink.Accent else Ink.Divider,
-                            shape = CircleShape,
-                        )
-                        .clickable { onPick(color) },
-                )
-            }
-        }
+        // Through the shared component. This row used to draw its own 32dp circles with the click
+        // on the circle itself — eight targets under the minimum and eight controls with no name,
+        // the same pair of defects the colour picker's own row had grown independently.
+        ColorSwatches(
+            swatches = BASIC_SWATCHES,
+            current = current,
+            modifier = Modifier.padding(top = Space.tight),
+            onPick = onPick,
+        )
     }
 }
 
@@ -310,15 +314,5 @@ private fun BrushSlider(
 }
 
 /** Black, white and the colours a cover actually uses; a wheel belongs with the colour picker. */
-private val PALETTE = listOf(
-    Color.BLACK,
-    Color.WHITE,
-    Color(0.85f, 0.15f, 0.2f),
-    Color(0.95f, 0.6f, 0.1f),
-    Color(0.95f, 0.85f, 0.2f),
-    Color(0.2f, 0.7f, 0.35f),
-    Color(0.2f, 0.5f, 0.9f),
-    Color(0.55f, 0.25f, 0.8f),
-)
 
 private const val SIZE_SKEW = 0.5f

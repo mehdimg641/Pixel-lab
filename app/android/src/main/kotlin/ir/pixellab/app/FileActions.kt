@@ -446,19 +446,19 @@ fun ExportDialog(onDismiss: () -> Unit, onExport: (Format, Float) -> Unit) {
     )
 }
 
+/**
+ * Delegates to [SheetChip].
+ *
+ * It used to be a `Text` with a click and eight points of padding — 36.5dp tall, under the touch
+ * minimum, and one of four private chips across the sheets that had each drifted into the same
+ * defect independently. `SheetChip`'s own documentation warned about exactly this: "two sheets with
+ * their own private chip drift apart within a week". They did.
+ *
+ * Kept as a local name rather than deleted so the call sites stay short.
+ */
 @Composable
-private fun ScaleChip(scale: Float, onClick: () -> Unit) {
-    Text(
-        if (scale == 1f) "×۱" else if (scale == 2f) "×۲" else "×۴",
-        style = MaterialTheme.typography.labelLarge,
-        color = Ink.Accent,
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(Ink.Chrome)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-    )
-}
+private fun ScaleChip(scale: Float, onClick: () -> Unit) =
+    SheetChip(if (scale == 1f) "×۱" else if (scale == 2f) "×۲" else "×۴", onClick = onClick)
 
 private val SCALES = listOf(1f, 2f, 4f)
 

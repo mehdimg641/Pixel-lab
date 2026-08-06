@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -476,3 +479,90 @@ private val PILL_HEIGHT = Space.touch
 
 private val EDGE = 1.dp
 private val EDGE_CHOSEN = 1.5.dp
+
+/**
+ * A row of colours to choose from.
+ *
+ * Shared because there were two of these — the colour picker's starting hues and the brush sheet's
+ * palette — and they had drifted into carrying the same three defects independently: 28dp and 32dp
+ * circles that took the click themselves, so neither row could be hit reliably; no name on any of
+ * them, so the panel a user reaches for first was silent to a screen reader; and a chosen state
+ * carried only by a border colour, which is colour as the sole indicator.
+ *
+ * Fixing that twice was the wrong answer. A swatch row is a component.
+ *
+ * It wraps rather than scrolling sideways. Eight full-size targets do not fit across a 411dp phone,
+ * and the alternatives are all worse: shrinking them is what caused this, and a horizontal scroller
+ * hides half the palette behind an edge with nothing to say it is there.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ColorSwatches(
+    swatches: List<Pair<String, ir.pixellab.core.model.Color>>,
+    current: ir.pixellab.core.model.Color,
+    modifier: Modifier = Modifier,
+    onPick: (ir.pixellab.core.model.Color) -> Unit,
+) {
+    FlowRow(
+        modifier.fillMaxWidth(),
+        // No gap: the targets sit against each other, and what separates the circles visually is
+        // the ten points of empty target around each one. A gap here would be space the finger can
+        // land in that belongs to no swatch.
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        for ((name, swatch) in swatches) {
+            // Alpha stays out of the comparison: these are hues, and picking one keeps whatever
+            // transparency the work already had.
+            val here = swatch.r == current.r && swatch.g == current.g && swatch.b == current.b
+            Box(
+                Modifier
+                    .size(Space.touch)
+                    .clickable { onPick(swatch) }
+                    .semantics {
+                        role = Role.RadioButton
+                        this.selected = here
+                        contentDescription = name
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier
+                        .size(SWATCH)
+                        .clip(CircleShape)
+                        .background(Color(swatch.r, swatch.g, swatch.b, 1f))
+                        // The edge does two jobs: it keeps a white swatch visible on a light sheet
+                        // and a black one visible on a dark sheet, and at twice the weight in the
+                        // accent it carries the chosen state by more than hue.
+                        .border(
+                            width = if (here) SWATCH_EDGE_CHOSEN else EDGE,
+                            color = if (here) Ink.Accent else Ink.Divider,
+                            shape = CircleShape,
+                        ),
+                )
+            }
+        }
+    }
+}
+
+/** The circle a swatch *draws*. The target around it is [Space.touch]. */
+private val SWATCH = 28.dp
+private val SWATCH_EDGE_CHOSEN = 2.5.dp
+
+/**
+ * The eight colours a row starts from, each with the word a screen reader says for it.
+ *
+ * Named in Persian rather than left as hex, because "‎#D92633" is not an answer to "which one is
+ * this?". Everyday words, not paint-chart ones: a swatch row is for reaching, and somebody scanning
+ * it by ear needs «قرمز», not a shade name they have to decode.
+ */
+val BASIC_SWATCHES: List<Pair<String, ir.pixellab.core.model.Color>> = listOf(
+    "سیاه" to ir.pixellab.core.model.Color.BLACK,
+    "خاکستری" to ir.pixellab.core.model.Color(0.5f, 0.5f, 0.5f),
+    "سفید" to ir.pixellab.core.model.Color.WHITE,
+    "قرمز" to ir.pixellab.core.model.Color(0.85f, 0.15f, 0.2f),
+    "نارنجی" to ir.pixellab.core.model.Color(0.95f, 0.6f, 0.1f),
+    "زرد" to ir.pixellab.core.model.Color(0.95f, 0.85f, 0.2f),
+    "سبز" to ir.pixellab.core.model.Color(0.2f, 0.7f, 0.35f),
+    "آبی" to ir.pixellab.core.model.Color(0.2f, 0.5f, 0.9f),
+    "بنفش" to ir.pixellab.core.model.Color(0.55f, 0.25f, 0.8f),
+)

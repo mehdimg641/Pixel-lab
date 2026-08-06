@@ -29,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.heightIn
@@ -118,40 +119,14 @@ fun ColorPickerBody(color: Color, onChange: (Color) -> Unit, modifier: Modifier 
             )
         }
 
-        // A wrapping row, not a fixed one. Eight 48dp targets do not fit across a 411dp phone, and
-        // the previous arrangement resolved that by making each swatch a 28dp circle carrying its
-        // own click — eight controls the user cannot reliably hit, on the panel they reach for
-        // first. Wrapping costs a second line and keeps every target the full size; a grid of
-        // swatches on two rows is what a swatch panel looks like anyway.
-        FlowRow(
-            Modifier.fillMaxWidth().padding(top = Space.small),
-            // No gap: the targets are adjacent, and the visible separation between the circles is
-            // the twenty points of empty target around each one.
-            horizontalArrangement = Arrangement.spacedBy(0.dp),
-        ) {
-            for (swatch in SWATCHES) {
-                Box(
-                    Modifier
-                        .size(Space.touch)
-                        .clickable {
-                            hsv = swatch.toHsv()
-                            hex = swatch.toHex()
-                            onChange(swatch.copy(a = color.a))
-                        }
-                        .semantics { role = Role.Button },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        Modifier
-                            .size(SWATCH)
-                            .clip(CircleShape)
-                            .background(UiColor(swatch.r, swatch.g, swatch.b, 1f))
-                            // The edge is what makes a white swatch visible on a light sheet and a
-                            // black one visible on a dark sheet.
-                            .border(1.dp, Ink.Divider, CircleShape),
-                    )
-                }
-            }
+        ColorSwatches(
+            swatches = BASIC_SWATCHES,
+            current = color,
+            modifier = Modifier.padding(top = Space.small),
+        ) { swatch ->
+            hsv = swatch.toHsv()
+            hex = swatch.toHex()
+            onChange(swatch.copy(a = color.a))
         }
     }
 }
@@ -287,18 +262,6 @@ internal fun parseHex(text: String): Color? {
     )
 }
 
-/** The circle the swatch *draws*. The target around it is [Space.touch]. */
-private val SWATCH = 28.dp
 
 private const val HUE_STOPS = 12
 
-private val SWATCHES = listOf(
-    Color.BLACK,
-    Color(0.5f, 0.5f, 0.5f),
-    Color.WHITE,
-    Color(0.85f, 0.15f, 0.2f),
-    Color(0.95f, 0.6f, 0.1f),
-    Color(0.2f, 0.7f, 0.35f),
-    Color(0.2f, 0.5f, 0.9f),
-    Color(0.55f, 0.25f, 0.8f),
-)

@@ -16,3 +16,6 @@ local.properties
 .gradle/
 build/
 !gradle/wrapper/gradle-wrapper.jar
+
+# Kotlin compiler scratch, written during a build.
+.kotlin/
