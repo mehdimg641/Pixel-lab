@@ -343,6 +343,14 @@ fun EditorScreen(
 
         Rulers(state, model, Modifier.align(Alignment.TopStart))
 
+        // Console's tool rail: a 44dp column of tools down the leading edge, the way a desktop
+        // editor has had one since 1990. Only this direction gets it — the brief gives Console a
+        // «menu bar + tool rail + inspector» layout while Ember and Iris put their tools in the
+        // ribbon, and a rail on all four would be a fifth thing competing for the same job.
+        if (LocalThemeSkin.current.layout == PanelLayout.DENSE && !state.sheet.isOpen) {
+            ToolRail(state, model, Modifier.align(Alignment.CenterStart))
+        }
+
         Column(Modifier.align(Alignment.TopCenter)) {
             TopBar(state = state, model = model, onHome = onHome)
             // Directly under the header and over the artwork, which is where a zoom read-out
@@ -641,6 +649,81 @@ internal fun TopBar(
         }
     }
 }
+
+/**
+ * The tools, down the leading edge of the canvas. Console only.
+ *
+ * ### Why it is not on every direction
+ *
+ * The brief gives the three directions three different answers to "where do the tools live":
+ * Ember docks a contextual ribbon under the canvas, Iris hides the chrome until it is needed, and
+ * Console lays a rail down the side and an inspector down the other — which is the desktop answer,
+ * and the one that suits somebody who already knows which tool they want. A rail on all four would
+ * not be denser; it would be a fifth control competing with the ribbon for the same job, and the
+ * user would have two places to look for the brush.
+ *
+ * Floating over the artwork rather than taking a column out of it, because on a 411dp phone a
+ * permanent 44dp gutter is eleven percent of the canvas gone. It is [Ink.Overlay] for the same
+ * reason the read-outs are: whatever is behind it is a photograph.
+ */
+@Composable
+private fun ToolRail(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .padding(start = Space.small)
+            .clip(Corners.card)
+            .background(Ink.Overlay)
+            .border(1.dp, Ink.Divider, Corners.card)
+            .padding(vertical = Space.tight),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Space.tight),
+    ) {
+        for (entry in RAIL) {
+            val active = state.tool == entry.tool
+            Box(
+                Modifier
+                    .size(Space.touch)
+                    .clip(Corners.button)
+                    .background(if (active) Ink.Accent else androidx.compose.ui.graphics.Color.Transparent)
+                    .clickable(onClick = { model.act { setTool(entry.tool) } }, onClickLabel = entry.label)
+                    .semantics {
+                        contentDescription = entry.label
+                        role = Role.Button
+                        selected = active
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    entry.icon,
+                    contentDescription = null,
+                    tint = if (active) Ink.OnAccent else Ink.Text,
+                    modifier = Modifier.size(Frame.icon),
+                )
+            }
+        }
+    }
+}
+
+/** One rail entry: the tool it chooses and the word a screen reader says for it. */
+private class RailTool(val tool: Tool, val icon: ImageVector, val label: String)
+
+/**
+ * Eight, in the order the brief's rail has them.
+ *
+ * Deliberately not every tool in the application — a rail that listed all of them would scroll, and
+ * a rail that scrolls is a menu with extra steps. These are the eight that own a drag on the canvas
+ * or change what a drag means, which is the property that makes a tool worth a permanent home.
+ */
+private val RAIL = listOf(
+    RailTool(Tool.BRUSH, Icons.Outlined.Brush, "قلم"),
+    RailTool(Tool.SELECT, Icons.Outlined.Crop, "انتخاب"),
+    RailTool(Tool.PEN, Icons.Outlined.Draw, "قلم مسیر"),
+    RailTool(Tool.RETOUCH, Icons.Outlined.AutoFixHigh, "ترمیم"),
+    RailTool(Tool.TEXT, Icons.Outlined.TextFields, "متن"),
+    RailTool(Tool.SHAPE, Icons.Outlined.Category, "شکل"),
+    RailTool(Tool.IMAGE, Icons.Outlined.Image, "عکس"),
+    RailTool(Tool.ADJUST, Icons.Outlined.Tune, "تنظیم"),
+)
 
 /**
  * The read-outs that float on the canvas: zoom, document size, and the two zoom steps.
