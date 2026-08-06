@@ -342,15 +342,15 @@ private fun QuickActionRow(onQuickAction: (QuickAction) -> Unit) {
  * the ribbon underneath is showing the tools for the job rather than a default the user has to
  * navigate away from.
  */
-enum class QuickAction(val icon: ImageVector, val label: String, val dock: Dock) {
+enum class QuickAction(val icon: ImageVector, val label: String, val panelTab: PanelTab) {
     /** The reason this app exists. First, and it stays first. */
-    DIMENSIONAL(Icons.Outlined.ViewInAr, "متن سه‌بعدی", Dock.DIMENSIONAL),
-    PHOTO(Icons.Outlined.Image, "ویرایش عکس", Dock.PHOTO),
-    CUTOUT(Icons.Outlined.ContentCut, "حذف پس‌زمینه", Dock.PHOTO),
-    RETOUCH(Icons.Outlined.Face, "روتوش چهره", Dock.PHOTO),
-    TEXT(Icons.Outlined.TextFields, "متن", Dock.TEXT),
-    PAINT(Icons.Outlined.Brush, "نقاشی", Dock.PHOTO),
-    EFFECTS(Icons.Outlined.AutoAwesome, "افکت", Dock.PHOTO),
+    DIMENSIONAL(Icons.Outlined.ViewInAr, "متن سه‌بعدی", PanelTab.TEXT),
+    PHOTO(Icons.Outlined.Image, "ویرایش عکس", PanelTab.ADJUST),
+    CUTOUT(Icons.Outlined.ContentCut, "حذف پس‌زمینه", PanelTab.AI),
+    RETOUCH(Icons.Outlined.Face, "روتوش چهره", PanelTab.AI),
+    TEXT(Icons.Outlined.TextFields, "متن", PanelTab.TEXT),
+    PAINT(Icons.Outlined.Brush, "نقاشی", PanelTab.LAYERS),
+    EFFECTS(Icons.Outlined.AutoAwesome, "افکت", PanelTab.LAYERS),
 }
 
 /**

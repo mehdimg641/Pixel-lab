@@ -148,7 +148,9 @@ fun EditorScreen(
     var exporting by remember { mutableStateOf(false) }
     var opening by remember { mutableStateOf<List<java.io.File>?>(null) }
     var editingText by remember { mutableStateOf<LayerId?>(null) }
-    var dock by remember { mutableStateOf(Dock.PHOTO) }
+    // Which of the brief's five places the work panel is showing. Replaces the dock's
+    // "kind of work", which swapped a ribbon of buttons rather than a body.
+    var tab by remember { mutableStateOf(PanelTab.LAYERS) }
 
     // The ribbon's own state: which cluster is chosen and at what granularity. Beside the editor
     // rather than inside the document, because a chosen chip is not part of the artwork.
@@ -262,7 +264,8 @@ fun EditorScreen(
 
     LaunchedEffect(entry) {
         val action = entry ?: return@LaunchedEffect
-        dock = action.dock
+        // The quick action names a place in the panel now, not a kind of work.
+        tab = action.panelTab
         when (action) {
             QuickAction.DIMENSIONAL -> model.act {
                 setTool(Tool.TEXT)
@@ -319,11 +322,15 @@ fun EditorScreen(
         // with its bottom edge under the ribbon. In dp here and in pixels there, because only this
         // side knows the density.
         val density = LocalDensity.current
-        LaunchedEffect(density) {
+        val skin = LocalThemeSkin.current
+        LaunchedEffect(density, skin, screenHeight) {
             with(density) {
                 model.onChromeInsets(
                     top = Frame.history.toPx(),
-                    bottom = (Frame.ribbon + Frame.dock).toPx(),
+                    // The docked panel is always on screen now, so the canvas has to be centred
+                    // above it rather than behind it. Its height is the direction's own fraction
+                    // plus the tab row, which is fixed.
+                    bottom = (screenHeight * skin.panelFraction + Frame.dock).toPx(),
                 )
             }
         }
@@ -360,7 +367,7 @@ fun EditorScreen(
         }
 
         Column(Modifier.align(Alignment.TopCenter)) {
-            TopBar(state = state, model = model, onHome = onHome)
+            TopBar(state = state, model = model, onHome = onHome, onExport = { exporting = true })
             // Directly under the header and over the artwork, which is where a zoom read-out
             // belongs: it is a fact about the *view*, not about the document, and putting it in the
             // header alongside the file name says the opposite. Hidden while a sheet is open,
@@ -399,7 +406,7 @@ fun EditorScreen(
                 SelectionCard(state, model, onEditText = { editingText = it })
             }
             val editing = state.primaryLayer as? Layer.Text
-            if (editing != null && dock in TYPESETTING) {
+            if (editing != null && tab == PanelTab.TEXT && !state.sheet.isOpen) {
                 GlyphRibbonPanel(
                     text = editing.spec.text,
                     state = ribbon,
@@ -408,30 +415,19 @@ fun EditorScreen(
                     },
                 )
             }
-            Ribbon(
-                dock = dock,
+            WorkPanel(
+                tab = tab,
+                onPickTab = { tab = it },
                 state = state,
                 model = model,
-                onPickImage = { picking.launch(IMAGE_MIME) },
-                // Straight into the keyboard. A text layer that arrives carrying "متن نمونه" and
-                // no way to replace it without hunting for an edit button is not a text tool.
-                onAddText = { model.addTextLayer()?.let { editingText = it } },
-                onEditText = { editingText = it },
-                onExport = { exporting = true },
-                onSave = { scope.launch { outcome = saveProject(context, model.currentProject()) } },
-                onOpen = { scope.launch { opening = Storage.listProjects(context) } },
+                height = screenHeight * skin.panelFraction,
+                onOpenTextStudio = { id ->
+                    model.act { openSheet(SheetContent.TextStudio(id), SheetDetent.FULL) }
+                },
+                onImportPreset = { pickingPreset.launch(PRESET_MIME) },
+                onImportLut = { pickingLut.launch(PRESET_MIME) },
+                render = { document -> renderDocument(handle, document) },
             )
-            MainDock(dock, state, model) { chosen ->
-                dock = chosen
-                // Choosing the text tool *makes* text, the way it does in every editor: a caret
-                // appears and the keyboard opens. Before this it only changed which row of buttons
-                // was showing, so the tool named after typing was the one tool that could not be
-                // used to type — the user had to find the font picker and tap a typeface first,
-                // which is a typographic decision demanded before a single letter.
-                if (chosen == Dock.TEXT && state.primaryLayer !is Layer.Text) {
-                    model.addTextLayer()?.let { editingText = it }
-                }
-            }
         }
 
         opening?.let { projects ->
@@ -606,6 +602,7 @@ internal fun TopBar(
     model: EditorViewModel,
     onHome: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    onExport: (() -> Unit)? = null,
 ) {
     Column(
         modifier
@@ -653,6 +650,28 @@ internal fun TopBar(
             BarIcon(Icons.Outlined.FitScreen, "اندازهٔ صفحه") { model.act { fitCanvas() } }
             BarIcon(Icons.Outlined.Settings, "تنظیمات") {
                 model.act { openSheet(SheetContent.Settings, SheetDetent.FULL) }
+            }
+            // The accent button the brief puts at the end of the header. Export is the one thing
+            // you do once, at the end — it earns a filled button and it does not earn a fifth of
+            // the panel, which is where it used to live as a dock entry.
+            onExport?.let { export ->
+                Box(
+                    Modifier
+                        .heightIn(min = Space.touch)
+                        .clip(Corners.button)
+                        .background(Ink.Accent)
+                        .clickable(onClick = export, onClickLabel = "خروجی")
+                        .padding(horizontal = Space.medium)
+                        .semantics { role = Role.Button },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "خروجی",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                        color = Ink.OnAccent,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
@@ -852,6 +871,76 @@ private val RAIL = listOf(
     RailTool(Tool.IMAGE, Icons.Outlined.Image, "عکس"),
     RailTool(Tool.ADJUST, Icons.Outlined.Tune, "تنظیم"),
 )
+
+/**
+ * The work panel: always on screen, the active tab's body above its five tabs.
+ *
+ * ### What this replaces, and why the replacement is not a refactor
+ *
+ * There used to be a contextual ribbon and a dock of five *kinds of work*, with every real panel
+ * behind a modal sheet that covered the canvas when it opened. Three things were wrong with that
+ * and only the third is obvious: the ribbon changed under the user as they switched dock entries;
+ * the sheets were reachable only through it, so most of the application was two taps behind a row
+ * of buttons nobody read; and the sheet covered the artwork it was editing.
+ *
+ * The brief answers all three with one shape. The panel is *there*, at a fixed height. Its body is
+ * whichever of five places you are looking at. Nothing it contains has to open over the canvas,
+ * because it never needed the whole screen — it needed a home.
+ *
+ * ### The three directions meet the canvas differently here
+ *
+ * Ember and Console dock it: flat, full width, one hairline along the top. Iris floats it — inset
+ * on three sides, every corner rounded, translucent — so the artwork runs *behind* the panel
+ * rather than stopping at it. That single decision is most of what makes the directions feel like
+ * different applications, which is why it is expressed here rather than in a colour table.
+ */
+@Composable
+private fun WorkPanel(
+    tab: PanelTab,
+    onPickTab: (PanelTab) -> Unit,
+    state: EditorState,
+    model: EditorViewModel,
+    height: androidx.compose.ui.unit.Dp,
+    onOpenTextStudio: (LayerId) -> Unit,
+    onImportPreset: () -> Unit,
+    onImportLut: () -> Unit,
+    render: suspend (ir.pixellab.core.model.Document) -> ir.pixellab.core.codec.RasterImage?,
+) {
+    val skin = LocalThemeSkin.current
+    val floating = skin.layout == PanelLayout.FLOATING
+    val inset = skin.panelInset
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = inset, end = inset, bottom = inset)
+            .clip(if (floating) Corners.panel else Corners.sheet)
+            .then(
+                if (floating) {
+                    // Translucent rather than blurred: a real backdrop blur needs a RenderEffect
+                    // the platform only offers from API 31, and one direction that looks different
+                    // on new phones is worse than one that looks the same everywhere.
+                    Modifier
+                        .background(Ink.Chrome.copy(alpha = 0.94f))
+                        .border(1.dp, Ink.Divider, Corners.panel)
+                } else {
+                    Modifier.background(Ink.Chrome)
+                },
+            ),
+    ) {
+        PanelBody(
+            tab = tab,
+            state = state,
+            model = model,
+            onOpenTextStudio = onOpenTextStudio,
+            onImportPreset = onImportPreset,
+            onImportLut = onImportLut,
+            render = render,
+            modifier = Modifier.height(height),
+        )
+        PanelTabRow(current = tab, onPick = onPickTab)
+    }
+}
 
 /**
  * The read-outs that float on the canvas: zoom, document size, and the two zoom steps.
