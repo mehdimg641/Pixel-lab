@@ -6,6 +6,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.FormatAlignLeft
+import androidx.compose.material.icons.automirrored.outlined.FormatAlignRight
+import androidx.compose.material.icons.automirrored.outlined.FormatTextdirectionLToR
+import androidx.compose.material.icons.automirrored.outlined.FormatTextdirectionRToL
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.FormatAlignCenter
+import androidx.compose.material.icons.outlined.FormatAlignJustify
+import androidx.compose.ui.graphics.vector.ImageVector
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.model.FontRef
 import ir.pixellab.core.model.KashidaMode
@@ -170,16 +179,19 @@ internal fun AlignmentControls(layer: Layer.Text, model: EditorViewModel) {
     val spec = layer.spec
     val paragraph = spec.paragraph
 
+    // Diagrams, because these are the canonical icon controls in every editor and because a row of
+    // four Persian words describing where text sits is slower to read than four pictures of text
+    // sitting there.
     SheetChips {
         for (align in TextAlign.entries) {
-            SheetChip(align.persianLabel, chosen = paragraph.align == align) {
+            SheetIconChip(align.icon, align.persianLabel, chosen = paragraph.align == align) {
                 model.setParagraph(id, paragraph.copy(align = align))
             }
         }
     }
     SheetChips {
         for (direction in TextDirection.entries) {
-            SheetChip(direction.persianLabel, chosen = paragraph.direction == direction) {
+            SheetIconChip(direction.icon, direction.persianLabel, chosen = paragraph.direction == direction) {
                 model.setParagraph(id, paragraph.copy(direction = direction))
             }
         }
@@ -321,3 +333,25 @@ private const val MAX_LEADING = 3f
 
 private const val MAX_PARAGRAPH_GAP = 200f
 private const val MAX_INDENT = 400f
+
+/**
+ * The diagram for each alignment.
+ *
+ * `START` and `END` rather than left and right, so the icons are the auto-mirrored ones: in a
+ * right-to-left paragraph "start" *is* the right edge, and an icon that did not mirror would show a
+ * left-aligned block on the button that right-aligns the text.
+ */
+private val TextAlign.icon: ImageVector
+    get() = when (this) {
+        TextAlign.START -> Icons.AutoMirrored.Outlined.FormatAlignRight
+        TextAlign.CENTER -> Icons.Outlined.FormatAlignCenter
+        TextAlign.END -> Icons.AutoMirrored.Outlined.FormatAlignLeft
+        TextAlign.JUSTIFY -> Icons.Outlined.FormatAlignJustify
+    }
+
+private val TextDirection.icon: ImageVector
+    get() = when (this) {
+        TextDirection.AUTO -> Icons.Outlined.AutoAwesome
+        TextDirection.RTL -> Icons.AutoMirrored.Outlined.FormatTextdirectionRToL
+        TextDirection.LTR -> Icons.AutoMirrored.Outlined.FormatTextdirectionLToR
+    }

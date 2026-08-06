@@ -46,7 +46,26 @@ class GlContext private constructor(
         "EXT_color_buffer_float" in extensions
     }
 
-    private val extensions: String by lazy { GLES30.glGetString(GLES30.GL_EXTENSIONS).orEmpty() }
+    /**
+     * The driver's extension list, read the way OpenGL ES 3.0 requires.
+     *
+     * **`glGetString(GL_EXTENSIONS)` is deprecated in ES 3.0 and a conforming driver may return
+     * null for it.** Several do. The result was a capability probe that reported "no half-float
+     * render target" on hardware that supports it perfectly well, which sent the distance field
+     * down the eight-bit path — and on that path every outline effect draws as a filled rectangle.
+     * A user's first new document is a headline with a stroke on it, so the first thing they saw
+     * was a black slab.
+     *
+     * The indexed form is the one that is specified to work, and it is three lines.
+     */
+    private val extensions: Set<String> by lazy {
+        val count = IntArray(1)
+        GLES30.glGetIntegerv(GLES30.GL_NUM_EXTENSIONS, count, 0)
+        val indexed = (0 until count[0]).mapNotNull { GLES30.glGetStringi(GLES30.GL_EXTENSIONS, it) }
+        // The old call is kept as a fallback rather than replaced, because a driver that answers
+        // one and not the other exists in both directions and the union is never wrong.
+        indexed.toSet() + GLES30.glGetString(GLES30.GL_EXTENSIONS).orEmpty().split(' ').filter { it.isNotBlank() }
+    }
 
     val maxTextureSize: Int by lazy {
         val out = IntArray(1)

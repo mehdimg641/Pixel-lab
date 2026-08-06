@@ -33,16 +33,28 @@ object Compositing {
     /**
      * Maps canvas UV to the layer texture's UV, which is what the composite shader samples with.
      *
-     * @param textureBounds the layer texture's rectangle in layer coordinates, already grown by the
-     *   effects' bleed — so the shadow that reaches past the shape is inside the texture too
+     * **The placement is built against the *shape*, not against the texture.** A four-corner warp is
+     * stored as four points in the layer's own coordinates, and those points were authored against
+     * the shape's rectangle — so normalising them against anything else silently rescales the whole
+     * placement. Handing over the bleed-grown rectangle is what used to happen, and the moment a
+     * perspective existed the artwork shrank by the ratio between the two and slid off register,
+     * while the selection handles stayed where they were: `Handles.localToCanvas` has always passed
+     * the shape bounds. Two implementations of one placement disagreeing is precisely the failure
+     * both files' comments promise cannot happen, and it happened because they were given different
+     * rectangles rather than because they computed different things.
+     *
+     * @param shapeBounds the layer's own rectangle, which is what the transform is expressed against
+     * @param textureBounds the layer texture's rectangle, already grown by the effects' bleed — so
+     *   the shadow that reaches past the shape is inside the texture too
      */
     fun canvasUvToLayerUv(
         canvasSize: Vec2,
+        shapeBounds: Rect,
         textureBounds: Rect,
         transform: Transform,
     ): Affine {
         val canvasUvToCanvas = Affine.scale(canvasSize.x, canvasSize.y)
-        val canvasToLayer = layerToCanvas(textureBounds, transform).inverse()
+        val canvasToLayer = layerToCanvas(shapeBounds, transform).inverse()
         val layerToTextureUv = Affine.scale(1f / textureBounds.width, 1f / textureBounds.height) *
             Affine.translate(-textureBounds.left, -textureBounds.top)
         return layerToTextureUv * canvasToLayer * canvasUvToCanvas

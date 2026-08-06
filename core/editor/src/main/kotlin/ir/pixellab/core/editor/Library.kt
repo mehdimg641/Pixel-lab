@@ -566,6 +566,15 @@ object Library {
      * With a layer rather than empty: an empty canvas gives the user nothing to select, nothing to
      * style, and no idea what the tools do. One editable headline is the shortest path from opening
      * the app to seeing it work.
+     *
+     * **Plain black, and no layer style.** It used to arrive wearing `headline-outline` — white
+     * letters under a ten-pixel black stroke and a black drop shadow — on the theory that a
+     * decorated example shows more of what the application can do. What it actually showed was a
+     * mass of black on a white canvas, and a user's first question was what the shape under their
+     * word was. Two things follow from that and both are worth stating: the first thing on screen
+     * has to be the thing the user recognises, and a starter document is not a showroom. The
+     * styles are a tap away in the style panel, chosen rather than inflicted — and being *chosen*
+     * is also what makes them read as a feature rather than as a defect.
      */
     fun documentFor(template: TemplatePreset, id: String = "new"): Document = Document(
         id = DocumentId(id),
@@ -586,7 +595,7 @@ object Library {
                 transform = Transform(
                     translation = Vec2(template.width * 0.1f, template.height * 0.4f),
                 ),
-                style = styleNamed("headline-outline"),
+                style = Style.PLAIN_BLACK,
                 blendMode = BlendMode.NORMAL,
             ),
         ),

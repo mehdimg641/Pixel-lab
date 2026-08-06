@@ -24,6 +24,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Brush
+import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material.icons.outlined.CropSquare
+import androidx.compose.material.icons.outlined.Gesture
+import androidx.compose.material.icons.outlined.JoinFull
+import androidx.compose.material.icons.outlined.JoinInner
+import androidx.compose.material.icons.outlined.JoinLeft
+import androidx.compose.material.icons.outlined.Rectangle
+import androidx.compose.ui.graphics.vector.ImageVector
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.paint.SelectionMode
@@ -60,15 +71,22 @@ fun SelectionSheetBody(state: EditorState, model: EditorViewModel, modifier: Mod
             },
         )
 
+        // The marquee shapes and the four boolean modes are the two rows every editor draws as
+        // pictures, and for the same reason: "subtract from the selection" is a diagram of two
+        // overlapping shapes, and no phrase describes it faster than the diagram does.
         ChipRow("ابزار") {
             for (shape in SelectionShape.entries) {
-                Chip(labelOf(shape), chosen = select.shape == shape) { select.shape = shape }
+                SheetIconChip(shape.icon, labelOf(shape), chosen = select.shape == shape) {
+                    select.shape = shape
+                }
             }
         }
 
         ChipRow("ترکیب") {
             for (mode in SelectionMode.entries) {
-                Chip(labelOf(mode), chosen = select.mode == mode) { select.mode = mode }
+                SheetIconChip(mode.icon, labelOf(mode), chosen = select.mode == mode) {
+                    select.mode = mode
+                }
             }
         }
 
@@ -219,3 +237,27 @@ private const val SOFTEN_RADIUS = 4f
 
 /** The middle of the range: takes the subject on a plain background without eating into it. */
 private const val DEFAULT_SENSITIVITY = 0.5f
+
+/**
+ * The diagram for each marquee tool and each boolean mode.
+ *
+ * The four combine modes are the clearest case in the application for a picture over a word: a user
+ * scanning «جایگزین / افزودن / کاستن / اشتراک» has to read four words and hold them apart, where
+ * four overlapping-circle diagrams are told apart without reading anything.
+ */
+private val SelectionShape.icon: ImageVector
+    get() = when (this) {
+        SelectionShape.RECTANGLE -> Icons.Outlined.CropSquare
+        SelectionShape.ELLIPSE -> Icons.Outlined.Circle
+        SelectionShape.LASSO -> Icons.Outlined.Gesture
+        SelectionShape.WAND -> Icons.Outlined.AutoAwesome
+        SelectionShape.QUICK -> Icons.Outlined.Brush
+    }
+
+private val SelectionMode.icon: ImageVector
+    get() = when (this) {
+        SelectionMode.REPLACE -> Icons.Outlined.Rectangle
+        SelectionMode.ADD -> Icons.Outlined.JoinFull
+        SelectionMode.SUBTRACT -> Icons.Outlined.JoinLeft
+        SelectionMode.INTERSECT -> Icons.Outlined.JoinInner
+    }

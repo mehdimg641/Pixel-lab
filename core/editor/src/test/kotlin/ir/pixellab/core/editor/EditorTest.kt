@@ -2,6 +2,7 @@ package ir.pixellab.core.editor
 
 import io.kotest.matchers.floats.plusOrMinus
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import ir.pixellab.core.canvas.Handle
 import ir.pixellab.core.canvas.Viewport
 import ir.pixellab.core.model.CanvasSpec
@@ -296,11 +297,40 @@ class EditorTest {
     }
 
     @Test
-    fun `a sheet with no subject leaves the canvas alone`() {
+    fun `a sheet that names no layer still moves the canvas out from under itself`() {
+        // **This test asserted the opposite, and the thing it asserted is what broke the
+        // application on a phone.** Only three of the twenty-one sheets name a layer, so
+        // "no subject means leave the canvas alone" meant almost every panel opened at nine tenths
+        // of the screen over artwork that never moved. A user opened «چیدمان» to nudge a headline
+        // and could not see the headline — every control in the panel became a guess.
+        //
+        // A test that codifies a defect is worse than no test, because it is the reason nobody
+        // looks again.
         val e = fixedEditor(box("a"))
         val before = e.state.viewport
         e.openSheet(SheetContent.StyleLibrary, SheetDetent.FULL)
+        e.state.viewport shouldNotBe before
+    }
+
+    @Test
+    fun `application settings are the one sheet that is not about the document`() {
+        // The exception that keeps the rule honest: preferences change nothing on the canvas, so
+        // panning it would be motion with no cause, and motion with no cause reads as a fault.
+        val e = fixedEditor(box("a"))
+        val before = e.state.viewport
+        e.openSheet(SheetContent.Settings, SheetDetent.FULL)
         e.state.viewport shouldBe before
+    }
+
+    @Test
+    fun `with nothing selected a sheet reveals the artboard rather than giving up`() {
+        // A crop frame and a guide are drawn against the canvas and can sit outside anything that
+        // has been drawn on it, so "nothing is selected" is not the same as "nothing to show".
+        val e = fixedEditor(box("a"))
+        e.clearSelection()
+        val before = e.state.viewport
+        e.openSheet(SheetContent.CanvasTools, SheetDetent.FULL)
+        e.state.viewport shouldNotBe before
     }
 
     @Test

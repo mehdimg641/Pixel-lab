@@ -86,21 +86,21 @@ class AndroidGlDevice(private val context: GlContext) : GlDevice {
     /**
      * Picks a sized internal format, degrading when the driver cannot render into it.
      *
-     * Half float is what keeps a wide gradient from banding and what lets the distance field hold
-     * offsets larger than 255.
+     * Half float is what keeps a wide gradient from banding, on a document the user has asked to
+     * render at sixteen bits.
      *
-     * **Eight bits is not a graceful degradation for a distance field, and the ladder now tries
-     * full float before reaching it.** The field stores a signed distance and a raw pixel offset
-     * to the nearest edge, with `8192` standing for "no seed found"; on `RGBA8` every one of those
-     * clamps to 1.0, so the field collapses to a binary mask. Fed that, the stroke shader's
-     * coverage comes out `1.0` at every pixel outside the letters — an opaque rectangle painted
-     * across the whole layer, which is what a user saw behind their text. `RGBA32F` costs twice
-     * the memory and is renderable wherever `EXT_color_buffer_float` is, which is most places that
-     * lack the half-float target.
+     * **The distance field no longer appears in this decision, and that is the point.** It used to
+     * ask for eight bytes a pixel, and on a driver with no renderable float target it silently got
+     * `RGBA8` — where the signed distance and the "no seed" sentinel both clamp to 1.0 and the
+     * field collapses into a binary mask. Fed that, the stroke shader computed full coverage at
+     * every pixel outside the letters and painted an opaque rectangle across the whole layer. That
+     * was the black slab behind the headline in a brand-new document, and the code here warned
+     * about it rather than preventing it.
      *
-     * If neither is available the warning below is the only warning there is, and the fix it points
-     * at — normalising the field into 0..1 so eight bits holds a coarse but usable version — is not
-     * written yet. Saying so here is better than a fallback that silently ruins the picture.
+     * The field is now packed into sixteen bits across a channel pair by the shaders, which is
+     * exact on `RGBA8`, so it asks for four bytes and there is nothing left to degrade. What
+     * remains below is only about colour precision, where eight bits is a real and acceptable
+     * fallback — a gradient bands, and nothing turns into a rectangle.
      */
     private fun internalFormat(bytesPerPixel: Int): Int = when {
         bytesPerPixel >= 16 -> GLES30.GL_RGBA32F
@@ -110,11 +110,7 @@ class AndroidGlDevice(private val context: GlContext) : GlDevice {
             GLES30.GL_RGBA32F
         }
         bytesPerPixel >= 8 -> {
-            Log.w(
-                TAG,
-                "no renderable float target on ${context.renderer}; distance fields will be " +
-                    "wrong and outline effects will draw as filled rectangles",
-            )
+            Log.w(TAG, "no renderable float target on ${context.renderer}; colour will band")
             GLES30.GL_RGBA8
         }
         else -> GLES30.GL_RGBA8

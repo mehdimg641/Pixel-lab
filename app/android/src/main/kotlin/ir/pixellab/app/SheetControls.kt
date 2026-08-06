@@ -16,12 +16,15 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
@@ -144,6 +147,72 @@ fun SheetChip(
                 else -> Ink.Text
             },
             maxLines = 1,
+        )
+    }
+}
+
+/**
+ * A chip that shows a picture instead of a word.
+ *
+ * ### Why some controls must not be words
+ *
+ * «چپ»، «وسط افقی»، «راست»، «بالا»، «وسط عمودی»، «پایین» — six pills of Persian text where every
+ * editor in the world draws six little diagrams, and the diagrams are *better*: an alignment is a
+ * spatial fact, and a picture of it is read at a glance while a word has to be parsed and then
+ * imagined. The same is true of flipping, of rotating, of the marquee shapes and of the Pathfinder
+ * operations. A row of text pills for these is not a stylistic preference, it is asking the user to
+ * translate before they can act, every single time.
+ *
+ * The label does not disappear — it becomes the thing a screen reader says, which is exactly where
+ * a word belongs and where an icon is useless. So this is not a trade between legibility and
+ * accessibility; it is both, each in the medium that suits it.
+ *
+ * Square, because an icon has no natural width and a row of chips that are each as wide as their
+ * hidden label would be a ragged row of identical pictures.
+ */
+@Composable
+fun SheetIconChip(
+    icon: ImageVector,
+    label: String,
+    chosen: Boolean = false,
+    enabled: Boolean = true,
+    tint: Color = Ink.Accent,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(CHIP_HEIGHT)
+            .clip(Corners.chip)
+            .background(if (chosen) tint.copy(alpha = CHOSEN_TINT) else Color.Transparent)
+            .border(
+                width = if (chosen) CHOSEN_EDGE else PLAIN_EDGE,
+                color = when {
+                    !enabled -> Ink.Divider
+                    chosen -> tint
+                    else -> Ink.Outline
+                },
+                shape = Corners.chip,
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics {
+                role = Role.RadioButton
+                selected = chosen
+                // The word, for the reader that cannot see the diagram. Without it this control is
+                // silent, and a silent row of six is unusable rather than merely inconvenient.
+                contentDescription = label
+                if (!enabled) disabled()
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = when {
+                !enabled -> Ink.TextDisabled
+                chosen -> tint
+                else -> Ink.Text
+            },
+            modifier = Modifier.size(Frame.icon),
         )
     }
 }

@@ -6,6 +6,21 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.AlignHorizontalLeft
+import androidx.compose.material.icons.automirrored.outlined.AlignHorizontalRight
+import androidx.compose.material.icons.outlined.AlignHorizontalCenter
+import androidx.compose.material.icons.outlined.AlignVerticalBottom
+import androidx.compose.material.icons.outlined.AlignVerticalCenter
+import androidx.compose.material.icons.outlined.AlignVerticalTop
+import androidx.compose.material.icons.outlined.Flip
+import androidx.compose.material.icons.outlined.HorizontalDistribute
+import androidx.compose.material.icons.outlined.Autorenew
+import androidx.compose.material.icons.outlined.Rotate90DegreesCcw
+import androidx.compose.material.icons.outlined.Rotate90DegreesCw
+import androidx.compose.material.icons.outlined.SwapVert
+import androidx.compose.material.icons.outlined.VerticalDistribute
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -64,16 +79,22 @@ fun ArrangeSheetBody(
             }
         }
 
+        // Diagrams rather than words. An alignment is a *spatial* fact: «وسط افقی» has to be read
+        // and then pictured, where the icon simply is the picture. Split across two rows by axis,
+        // which is the grouping the icons themselves already imply — and the one `isHorizontal`
+        // has always known about.
         SheetSection("ترازبندی")
-        SheetChips {
-            for (edge in AlignEdge.entries) {
-                SheetChip(edge.persianLabel, enabled = chosen.isNotEmpty()) {
-                    model.act {
-                        alignLayers(
-                            chosen,
-                            edge,
-                            if (chosen.size > 1) target else AlignTarget.CANVAS,
-                        )
+        for (horizontal in listOf(true, false)) {
+            SheetChips {
+                for (edge in AlignEdge.entries.filter { it.isHorizontal == horizontal }) {
+                    SheetIconChip(edge.icon, edge.persianLabel, enabled = chosen.isNotEmpty()) {
+                        model.act {
+                            alignLayers(
+                                chosen,
+                                edge,
+                                if (chosen.size > 1) target else AlignTarget.CANVAS,
+                            )
+                        }
                     }
                 }
             }
@@ -82,7 +103,7 @@ fun ArrangeSheetBody(
         SheetSection("توزیع یکنواخت")
         SheetChips {
             for (axis in DistributeAxis.entries) {
-                SheetChip(axis.persianLabel, enabled = chosen.size >= MIN_TO_DISTRIBUTE) {
+                SheetIconChip(axis.icon, axis.persianLabel, enabled = chosen.size >= MIN_TO_DISTRIBUTE) {
                     model.act { distributeLayers(chosen, axis) }
                 }
             }
@@ -95,15 +116,29 @@ fun ArrangeSheetBody(
             },
         )
 
-        SheetSection("قرینه و چرخش")
+        SheetSection("قرینهٔ لایه")
         SheetChips {
-            SheetChip("قرینهٔ افقی", enabled = id != null) { model.act { flipLayer(id!!, true) } }
-            SheetChip("قرینهٔ عمودی", enabled = id != null) { model.act { flipLayer(id!!, false) } }
+            SheetIconChip(Icons.Outlined.Flip, "قرینهٔ افقی", enabled = id != null) {
+                model.act { flipLayer(id!!, true) }
+            }
+            SheetIconChip(Icons.Outlined.SwapVert, "قرینهٔ عمودی", enabled = id != null) {
+                model.act { flipLayer(id!!, false) }
+            }
         }
+
+        // Its own heading, because these three turn the **canvas** and the two above turn the
+        // layer. As text pills the word «بوم» carried that distinction; as icons it would be lost,
+        // and rotating the whole artboard when you meant to rotate one layer is not a small
+        // surprise.
+        SheetSection("چرخش بوم")
         SheetChips {
-            SheetChip("بوم ۹۰° ساعت‌گرد") { model.act { rotateCanvas(1) } }
-            SheetChip("بوم ۹۰° پادساعت‌گرد") { model.act { rotateCanvas(-1) } }
-            SheetChip("بوم ۱۸۰°") { model.act { rotateCanvas(2) } }
+            // Deliberately *not* the auto-mirrored rotate icons. Those flip under a right-to-left
+            // layout because a "go back" arrow should, and a canvas rotation is not a reading
+            // direction — mirroring it would draw a counter-clockwise arrow on the clockwise
+            // button for every user of this application.
+            SheetIconChip(Icons.Outlined.Rotate90DegreesCw, "بوم ۹۰° ساعت‌گرد") { model.act { rotateCanvas(1) } }
+            SheetIconChip(Icons.Outlined.Rotate90DegreesCcw, "بوم ۹۰° پادساعت‌گرد") { model.act { rotateCanvas(-1) } }
+            SheetIconChip(Icons.Outlined.Autorenew, "بوم ۱۸۰°") { model.act { rotateCanvas(2) } }
         }
 
         if (id != null) {
@@ -229,6 +264,12 @@ private fun Placement(state: EditorState, model: EditorViewModel, modifier: Modi
                 skewX.toFloatOrNull(),
                 skewY.toFloatOrNull(),
             )
+            // **And the perspective above it.** It used to commit only when the slider was
+            // released, which meant a user who moved the slider and then pressed the button
+            // labelled «اعمال» — the obvious thing to do, and the only thing the layout suggests —
+            // saw nothing happen to it. A button that applies four of the five controls above it is
+            // worse than no button, because the two that did work prove it is not broken.
+            model.setPerspective(id, perspectiveAmount)
         }
     }
 }
@@ -242,3 +283,25 @@ private fun signedDigits(entry: String): String {
 
 private const val MIN_TO_DISTRIBUTE = 3
 private const val MAX_DIGITS = 6
+
+/**
+ * The diagram for each alignment.
+ *
+ * Kept beside the sheet rather than on the enum in `core:editor`, because that module knows nothing
+ * about Compose and should not start now for the sake of a picture.
+ */
+private val AlignEdge.icon: ImageVector
+    get() = when (this) {
+        AlignEdge.LEFT -> Icons.AutoMirrored.Outlined.AlignHorizontalLeft
+        AlignEdge.CENTER_X -> Icons.Outlined.AlignHorizontalCenter
+        AlignEdge.RIGHT -> Icons.AutoMirrored.Outlined.AlignHorizontalRight
+        AlignEdge.TOP -> Icons.Outlined.AlignVerticalTop
+        AlignEdge.CENTER_Y -> Icons.Outlined.AlignVerticalCenter
+        AlignEdge.BOTTOM -> Icons.Outlined.AlignVerticalBottom
+    }
+
+private val DistributeAxis.icon: ImageVector
+    get() = when (this) {
+        DistributeAxis.HORIZONTAL -> Icons.Outlined.HorizontalDistribute
+        DistributeAxis.VERTICAL -> Icons.Outlined.VerticalDistribute
+    }

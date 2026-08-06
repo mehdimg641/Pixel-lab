@@ -57,7 +57,7 @@ object StrokeModule : EffectModule<Effect.Stroke> {
 
     override fun describe(effect: Effect.Stroke, context: RenderContext) = PassDescriptor(
         shaderId = "stroke",
-        floats = mapOf("uWidth" to effect.width * context.scale, "uOpacity" to effect.opacity),
+        floats = mapOf("uWidth" to effect.width * context.scale),
         ints = mapOf("uPosition" to effect.position.ordinal),
     )
 
@@ -401,7 +401,7 @@ object OverlayModule : EffectModule<Effect.Overlay> {
     override fun bleed(effect: Effect.Overlay, context: BleedContext) = Bleed.NONE
 
     override fun describe(effect: Effect.Overlay, context: RenderContext) =
-        PassDescriptor(shaderId = "overlay", floats = mapOf("uOpacity" to effect.opacity))
+        PassDescriptor(shaderId = "overlay")
 
     override fun read(effect: Effect.Overlay, key: String) = when (key) {
         "fill" -> paint(effect.fill)

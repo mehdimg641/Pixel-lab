@@ -337,6 +337,18 @@ class GraphExecutor(
             device.setVec2(name, value.getOrElse(0) { 0f }, value.getOrElse(1) { 0f })
         }
 
+        // **Every effect's own strength, sent once, here.**
+        //
+        // It used to be each module's job to pass its opacity to its shader, and twelve of the
+        // fourteen forgot: the slider moved a number in the document that the GPU never read, so
+        // every one of those controls silently did nothing. Sending it from the one place that
+        // knows about *all* passes means the next effect cannot forget, and the shared
+        // `premultiply` in the shader prologue is where it lands.
+        //
+        // One for a pass with no effect behind it — the fill, the composite, the blur halves the
+        // graph synthesises — because those are not effects and must not be faded.
+        device.setFloat("uEffectOpacity", pass.effect?.opacity ?: 1f)
+
         val effect = pass.effect ?: return
         @Suppress("UNCHECKED_CAST")
         val module = registry.moduleFor(effect) as? EffectModule<Effect> ?: return

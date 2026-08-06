@@ -196,7 +196,12 @@ class TexturePoolTest {
  * Hands out one distinct texture per sampler name, standing in for the fills and curve tables the
  * host uploads. Distinct so a test can tell which sampler a pass actually received.
  */
-private class FakeTextureSource : TextureSource {
+/**
+ * Internal rather than private for the same reason [FakeGlDevice] is: [EffectOpacityTest] drives
+ * the whole effect set through the executor and needs a texture source, and a second copy of this
+ * stub is a second thing to keep in step with the interface.
+ */
+internal class FakeTextureSource : TextureSource {
     val issued = LinkedHashMap<String, TextureHandle>()
     val requested = ArrayList<Pair<String, String?>>()
 

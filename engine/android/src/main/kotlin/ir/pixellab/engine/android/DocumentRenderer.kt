@@ -883,10 +883,11 @@ class DocumentRenderer(
             frame = frame,
             source = appearance,
             textureBounds = graph.textureBounds,
+            shapeBounds = shape,
             transform = layer.transform,
             opacity = layer.opacity,
             blendMode = layer.blendMode,
-            mask = maskFor(frame, layer, graph.textureBounds),
+            mask = maskFor(frame, layer, graph.textureBounds, shape),
             clip = clip,
             surface = surface,
         )
@@ -906,6 +907,15 @@ class DocumentRenderer(
         frame: Frame,
         source: TextureHandle,
         textureBounds: Rect,
+        /**
+         * The layer's own rectangle, which is what its transform is expressed against.
+         *
+         * Defaults to [textureBounds] because for a flattened group or an adjustment the two are
+         * the same artboard. They differ for a layer whose effects grew its texture, and a
+         * four-corner warp normalised against the grown one shrinks the artwork by the ratio
+         * between them — while the selection handles, which have always used the shape, stay put.
+         */
+        shapeBounds: Rect = textureBounds,
         transform: Transform,
         opacity: Float,
         blendMode: BlendMode,
@@ -931,6 +941,7 @@ class DocumentRenderer(
             // any export multiplier.
             Compositing.canvasUvToLayerUv(
                 canvasSize = frame.document.canvas.size,
+                shapeBounds = shapeBounds,
                 textureBounds = textureBounds,
                 transform = transform,
             ).values,
@@ -971,7 +982,12 @@ class DocumentRenderer(
     private val maskTextures = HashMap<Any, TextureHandle>()
     private var whiteTexture: TextureHandle? = null
 
-    private fun maskFor(frame: Frame, layer: Layer, textureBounds: Rect): MaskBinding? {
+    private fun maskFor(
+        frame: Frame,
+        layer: Layer,
+        textureBounds: Rect,
+        shapeBounds: Rect = textureBounds,
+    ): MaskBinding? {
         val raster = layer.mask?.takeIf { it.enabled && it.density > 0f }
         val vector = layer.vectorMask?.takeIf { it.enabled }
         if (raster == null && vector == null) return null
@@ -985,7 +1001,7 @@ class DocumentRenderer(
                 raster == null -> Affine.IDENTITY
                 raster.unlinked -> Affine.IDENTITY
                 else -> Compositing.canvasUvToLayerUv(
-                    frame.document.canvas.size, textureBounds, layer.transform,
+                    frame.document.canvas.size, shapeBounds, textureBounds, layer.transform,
                 )
             },
             rasterInverted = raster?.inverted ?: false,
@@ -995,7 +1011,10 @@ class DocumentRenderer(
                 Affine.IDENTITY
             } else {
                 Compositing.canvasUvToLayerUv(
-                    frame.document.canvas.size, vectorMaskBounds(vector), layer.transform,
+                    frame.document.canvas.size,
+                    vectorMaskBounds(vector),
+                    vectorMaskBounds(vector),
+                    layer.transform,
                 )
             },
             vectorInverted = vector?.inverted ?: false,

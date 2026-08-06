@@ -168,6 +168,7 @@ object RenderGraphBuilder {
 
         // Anything that reasons about the silhouette shares one distance field.
         val needsSdf = plan.passes.any { it.slot in SDF_CONSUMERS }
+        val reach = sdfReach(plan, scale).coerceAtLeast(MIN_SDF_REACH)
         val sdf = if (needsSdf) {
             buildDistanceField(
                 buffers = ::buffer,
@@ -175,7 +176,7 @@ object RenderGraphBuilder {
                 layer = layer,
                 width = tileWidth,
                 height = tileHeight,
-                reach = sdfReach(plan, scale),
+                reach = reach,
             )
         } else {
             null
@@ -233,6 +234,11 @@ object RenderGraphBuilder {
                 output = target,
                 instanceCount = descriptor.instanceCount,
                 effect = effect,
+                // The reader has to decode against exactly the scale the writer encoded with. Sent
+                // to every effect pass rather than only the three that sample the field, because
+                // "which effects read the SDF" is a fact that changes when an effect is added and
+                // a uniform the shader does not declare costs nothing.
+                floats = mapOf("uSdfRange" to reach),
             )
         }
 
@@ -267,7 +273,12 @@ object RenderGraphBuilder {
         val floodB = buffers("sdfFloodB", BufferRole.SDF_FLOOD, FLOOD_BYTES_PER_PIXEL)
         val sdf = buffers("sdf", BufferRole.SDF, FLOOD_BYTES_PER_PIXEL)
 
-        passes += GraphPass(PassSlot.PREPARE, Shaders.SDF_SEED.id, listOf(layer), floodA)
+        // Every pass that touches the field is told how far it reaches, because that is the scale
+        // the packed values are stored against. Getting it out of step between the writer and the
+        // reader would not fail — it would silently shrink or stretch every outline.
+        val range = mapOf("uSdfRange" to reach)
+
+        passes += GraphPass(PassSlot.PREPARE, Shaders.SDF_SEED.id, listOf(layer), floodA, floats = range)
 
         val span = min(ceil(reach).toInt(), max(width, height)).coerceIn(1, MAX_FLOOD_STRIDE)
         // Computed by doubling rather than through a logarithm: at exact powers of two the
@@ -282,7 +293,7 @@ object RenderGraphBuilder {
                 shaderId = Shaders.SDF_FLOOD.id,
                 inputs = listOf(source),
                 output = destination,
-                floats = mapOf("uStep" to stride.toFloat()),
+                floats = range + ("uStep" to stride.toFloat()),
             )
             val swap = source
             source = destination
@@ -291,7 +302,7 @@ object RenderGraphBuilder {
         }
 
         // `source` now names whichever ping-pong buffer the last step wrote.
-        passes += GraphPass(PassSlot.PREPARE, Shaders.SDF_RESOLVE.id, listOf(layer, source), sdf)
+        passes += GraphPass(PassSlot.PREPARE, Shaders.SDF_RESOLVE.id, listOf(layer, source), sdf, floats = range)
         return sdf
     }
 
@@ -309,13 +320,16 @@ object RenderGraphBuilder {
     }
 
     /**
-     * Half float per channel.
+     * Eight bits per channel — and that is now a guarantee rather than a compromise.
      *
-     * The flood stores offsets to the nearest seed, which stay small and so survive half float
-     * exactly; absolute coordinates would not, and the resolved field is kept at the same width so a
-     * document rendering at eight bits does not quantise its own outlines into steps.
+     * The field used to ask for half float and get eight bits on any driver that could not render
+     * into one, where every value clamps to 0..1 and the stroke shader saw full coverage across the
+     * whole texture: a **solid rectangle** where an outline should be. The shaders now pack a
+     * signed distance into sixteen bits across a channel pair, which is exact on an eight-bit
+     * target, so the field no longer depends on a driver capability at all — and it costs half the
+     * memory it did.
      */
-    private const val FLOOD_BYTES_PER_PIXEL = 8
+    private const val FLOOD_BYTES_PER_PIXEL = 4
 
     /** Below this the flood costs more in setup than it saves, and antialiasing needs a few pixels. */
     private const val MIN_SDF_REACH = 8f

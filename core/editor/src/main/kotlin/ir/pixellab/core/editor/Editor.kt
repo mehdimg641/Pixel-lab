@@ -1145,19 +1145,55 @@ class Editor(
         )
     }
 
+    /**
+     * Moves the canvas so the sheet is not sitting on top of the thing it changes.
+     *
+     * **This used to give up whenever the sheet named no single layer**, and only three of the
+     * twenty-one sheets do. Everything else — aligning, adjusting, retouching, the grid, the crop
+     * frame, the whole 3D panel — opened at nine tenths of the screen over a canvas that never
+     * moved, so the artwork was simply not on screen. A user opened «چیدمان» to nudge a headline
+     * and could not see the headline. That is not a panel, it is a modal dialog pretending to be
+     * one, and every control in it is a guess.
+     *
+     * What to reveal, in order of how specific it is:
+     *
+     * 1. the layer the sheet names, when it names one;
+     * 2. otherwise everything selected, which is what a sheet acting on the selection changes;
+     * 3. otherwise the whole artboard, which is what a sheet acting on the document changes.
+     *
+     * Only [SheetContent.Settings] wants none of this, because it is not about the document at all.
+     */
     private fun revealSubject() {
         val sheet = state.sheet
-        val subject = sheet.content?.subject ?: return
-        val layer = state.document.findLayer(subject) ?: return
+        val content = sheet.content ?: return
+        if (content == SheetContent.Settings) return
         if (state.viewport.screenSize.y <= 0f) return
+
+        val rect = revealTarget(content) ?: return
         val obstructed = state.viewport.screenSize.y * sheet.detent.screenFraction
         state = state.copy(
             viewport = (state.viewportBeforeSheet ?: state.viewport).revealing(
-                canvasRect = Handles.canvasBounds(bounds.of(layer), layer.transform),
+                canvasRect = rect,
                 obstructedBottom = obstructed,
                 obstructedTop = TOP_BAR_HEIGHT,
             ),
         )
+    }
+
+    /** The rectangle a sheet should keep clear of itself. */
+    private fun revealTarget(content: SheetContent): Rect? {
+        content.subject?.let { id ->
+            state.document.findLayer(id)?.let { return Handles.canvasBounds(bounds.of(it), it.transform) }
+        }
+        val selected = state.selectedLayers
+            .map { Handles.canvasBounds(bounds.of(it), it.transform) }
+            .reduceOrNull(Rect::union)
+        if (selected != null) return selected
+        // Nothing selected: the sheet is about the document, so the document is what has to stay
+        // visible. The artboard rather than its contents, because a crop frame or a guide is drawn
+        // against the canvas and can sit well outside anything that has been drawn on it.
+        val canvas = state.document.canvas.size
+        return Rect(0f, 0f, canvas.x, canvas.y)
     }
 
     // ---- grid, rulers and guides ------------------------------------------------------------------

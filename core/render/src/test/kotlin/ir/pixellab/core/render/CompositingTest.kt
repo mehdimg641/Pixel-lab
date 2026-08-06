@@ -63,6 +63,7 @@ class CompositingTest {
     fun `an untransformed layer maps its texture straight onto the canvas`() {
         val map = Compositing.canvasUvToLayerUv(
             canvasSize = Vec2(1000f, 1000f),
+            shapeBounds = Rect(0f, 0f, 500f, 250f),
             textureBounds = Rect(0f, 0f, 500f, 250f),
             transform = Transform(),
         )
@@ -76,6 +77,7 @@ class CompositingTest {
     fun `moving a layer moves where the canvas samples it`() {
         val map = Compositing.canvasUvToLayerUv(
             canvasSize = Vec2(1000f, 1000f),
+            shapeBounds = Rect(0f, 0f, 500f, 250f),
             textureBounds = Rect(0f, 0f, 500f, 250f),
             transform = Transform(translation = Vec2(200f, 100f)),
         )
@@ -87,6 +89,7 @@ class CompositingTest {
     fun `a scaled layer samples its texture over a larger area`() {
         val map = Compositing.canvasUvToLayerUv(
             canvasSize = Vec2(1000f, 1000f),
+            shapeBounds = Rect(0f, 0f, 500f, 250f),
             textureBounds = Rect(0f, 0f, 500f, 250f),
             transform = Transform(scale = Vec2(2f, 2f)),
         )
@@ -103,6 +106,7 @@ class CompositingTest {
     fun `a rotated layer is sampled through its own frame`() {
         val map = Compositing.canvasUvToLayerUv(
             canvasSize = Vec2(1000f, 1000f),
+            shapeBounds = Rect(0f, 0f, 400f, 400f),
             textureBounds = Rect(0f, 0f, 400f, 400f),
             transform = Transform(rotation = 90f),
         )
@@ -116,10 +120,71 @@ class CompositingTest {
         // point at the shape's own origin must therefore land *inside* the texture, not at zero.
         val map = Compositing.canvasUvToLayerUv(
             canvasSize = Vec2(1000f, 1000f),
+            shapeBounds = Rect(0f, 0f, 400f, 400f),
             textureBounds = Rect(-50f, -50f, 450f, 450f),
             transform = Transform(),
         )
         map.map(Vec2(0f, 0f)) shouldBeNear Vec2(0.1f, 0.1f)
+    }
+
+    @Test
+    fun `the artwork and its handles are placed by the same rectangle`() {
+        // **The disagreement this parameter exists to end.** A layer's placement is expressed
+        // against its *shape*; its texture is larger by whatever bleed its effects asked for. The
+        // compositor used to normalise the placement against the texture, so the moment a layer had
+        // both an effect and anything other than a centred, unscaled, unrotated transform, the
+        // artwork pivoted about a different point from the selection box drawn around it.
+        //
+        // Both files carry a comment promising this cannot happen — and it happened, not because
+        // they computed different things but because they were handed different rectangles.
+        val shape = Rect(0f, 0f, 200f, 100f)
+        val texture = Rect(-60f, -60f, 260f, 160f)
+        val transform = Transform(rotation = 30f, scale = Vec2(1.4f, 1.4f), translation = Vec2(90f, 40f))
+
+        val composited = Compositing.canvasUvToLayerUv(
+            canvasSize = Vec2(1000f, 1000f),
+            shapeBounds = shape,
+            textureBounds = texture,
+            transform = transform,
+        )
+        // Where the compositor thinks the shape's centre lands on the canvas.
+        val centreUv = composited.inverse().map(
+            Vec2((shape.left + shape.width / 2f - texture.left) / texture.width,
+                 (shape.top + shape.height / 2f - texture.top) / texture.height),
+        )
+        val fromCompositor = Vec2(centreUv.x * 1000f, centreUv.y * 1000f)
+
+        // And where the placement itself says it lands — the map the handles are built from.
+        val fromPlacement = Affine.warpAware(shape, transform)
+            .map(Vec2(shape.left + shape.width / 2f, shape.top + shape.height / 2f))
+
+        fromCompositor shouldBeNear fromPlacement
+    }
+
+    @Test
+    fun `a four-corner warp is normalised against the shape, not the grown texture`() {
+        // With a perspective present the two rectangles scale the whole placement, so the error is
+        // no longer subtle: the artwork shrinks by the ratio between them. At this bleed that is
+        // about forty per cent, which is what "I applied perspective and the text moved and got
+        // small" looks like from the outside.
+        val shape = Rect(0f, 0f, 200f, 100f)
+        val warp = ir.pixellab.core.model.Perspective(
+            topLeft = Vec2(40f, 0f),
+            topRight = Vec2(160f, 0f),
+            bottomRight = Vec2(200f, 100f),
+            bottomLeft = Vec2(0f, 100f),
+        )
+        val transform = Transform(perspective = warp)
+
+        val map = Compositing.canvasUvToLayerUv(
+            canvasSize = Vec2(1000f, 1000f),
+            shapeBounds = shape,
+            textureBounds = Rect(-60f, -60f, 260f, 160f),
+            transform = transform,
+        )
+        // The warp's own bottom-left corner is where the shape's bottom-left goes, by definition.
+        val corner = map.inverse().map(Vec2((0f - -60f) / 320f, (100f - -60f) / 220f))
+        Vec2(corner.x * 1000f, corner.y * 1000f) shouldBeNear Vec2(0f, 100f)
     }
 
     @Test

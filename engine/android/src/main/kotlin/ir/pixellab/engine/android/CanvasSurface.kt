@@ -177,6 +177,24 @@ class CanvasSurface @JvmOverloads constructor(
         val renderer = DocumentRenderer(device)
         val exporter = Exporter(context, device, renderer)
 
+        // **A new renderer knows nothing, so it is told everything before its first frame.**
+        //
+        // This is not belt-and-braces, it is the whole defect. The surface is destroyed and rebuilt
+        // for ordinary reasons — the soft keyboard opening over a numeric field, a rotation, going
+        // multi-window — and each time this loop starts again with a brand-new `DocumentRenderer`
+        // whose font resolver is `FontResolver.NONE`. The "fonts changed" flag was consumed by the
+        // *previous* thread, so nothing ever set them again: from that moment every text layer in
+        // the document rendered completely blank, permanently, with correctly-sized selection
+        // handles around the empty space — because the handles measure through `LayerMeasure`,
+        // which is owned by the view model and still had its fonts.
+        //
+        // Unconditionally, and the flags cleared, so a change that arrives before the first frame
+        // is not applied twice.
+        renderer.setFonts(fonts)
+        renderer.assets = assets
+        fontsChanged.set(false)
+        assetsChanged.set(false)
+
         try {
             while (running.get()) {
                 if (fontsChanged.getAndSet(false)) renderer.setFonts(fonts)

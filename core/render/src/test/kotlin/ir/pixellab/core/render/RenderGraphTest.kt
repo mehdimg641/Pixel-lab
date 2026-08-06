@@ -185,13 +185,43 @@ class RenderGraphTest {
     }
 
     @Test
-    fun `the flood keeps float precision even when the document is eight bit`() {
+    fun `the distance field needs no float target, and says so`() {
+        // **This test used to assert the opposite** — that the flood buffers stay wider than eight
+        // bits — and that requirement is what broke the application on a real phone. A driver that
+        // cannot render into a half-float target got eight bits anyway, every value clamped into
+        // 0..1, and the stroke shader read full coverage across the whole texture: a solid black
+        // rectangle where an outline belonged, on the very first document a user opens.
+        //
+        // The field is now packed into sixteen bits across a channel pair, which is exact on an
+        // eight-bit target, so it asks for nothing a driver can refuse.
         val g = graph(
             Style(effects = listOf(Effect.Stroke(4f, Fill.Solid(Color.BLACK)))),
             color = ColorSettings(precision = Precision.U8),
         )
-        // Seed offsets quantised to eight bits would step the outline visibly.
-        g.buffers.filter { it.role == BufferRole.SDF_FLOOD }.all { it.bytesPerPixel > 4 } shouldBe true
+        g.buffers.filter { it.role == BufferRole.SDF_FLOOD || it.role == BufferRole.SDF }
+            .all { it.bytesPerPixel == 4 } shouldBe true
+    }
+
+    @Test
+    fun `the packed field is sampled without filtering`() {
+        // The packing is only exact because neighbouring texels are never blended. Interpolating a
+        // high byte against its neighbour's produces a number that means nothing — an outline made
+        // of noise — so this is a hard requirement of the encoding rather than an optimisation.
+        val g = graph(Style(effects = listOf(Effect.Stroke(4f, Fill.Solid(Color.BLACK)))))
+        g.buffers.filter { it.role == BufferRole.SDF_FLOOD || it.role == BufferRole.SDF }
+            .all { it.filter == TextureFilter.NEAREST } shouldBe true
+    }
+
+    @Test
+    fun `every pass that touches the field agrees on the scale it is stored against`() {
+        // The writer encodes against a range and the reader decodes against one. If they ever
+        // disagreed nothing would fail — every outline would simply come out the wrong width, which
+        // is the kind of defect that gets explained away as a bad default.
+        val g = graph(
+            Style(effects = listOf(Effect.Stroke(9f, Fill.Solid(Color.BLACK)), Effect.Bevel())),
+        )
+        val ranges = g.passes.mapNotNull { it.floats["uSdfRange"] }.distinct()
+        ranges.size shouldBe 1
     }
 
     @Test

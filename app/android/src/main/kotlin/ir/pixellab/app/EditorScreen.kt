@@ -821,7 +821,15 @@ private fun RibbonSheet(
     content: SheetContent,
     state: EditorState,
     model: EditorViewModel,
-    detent: SheetDetent = SheetDetent.FULL,
+    /**
+     * Half the screen, not nine tenths.
+     *
+     * A panel is a tool, and a tool that covers the artwork is a dialog. At FULL there is one tenth
+     * of the screen left and the top bar sits in most of it, so a user adjusting a headline could
+     * not see the headline — which turns every control into a guess and every guess into an undo.
+     * The grip still walks the detents for a panel somebody wants to browse rather than operate.
+     */
+    detent: SheetDetent = SheetDetent.HALF,
 ) {
     BarAction(icon, label, selected = state.tool == tool && state.sheet.content == content) {
         model.act {
@@ -1003,7 +1011,7 @@ internal fun SelectionCard(state: EditorState, model: EditorViewModel, onEditTex
             }
         }
         BarAction(Icons.AutoMirrored.Outlined.AlignHorizontalLeft, "چیدمان") {
-            model.act { openSheet(SheetContent.Arrange, SheetDetent.FULL) }
+            model.act { openSheet(SheetContent.Arrange, SheetDetent.HALF) }
         }
         BarAction(Icons.Outlined.ContentCopy, "کپی") {
             // The id comes from the document rather than from a count: a count collides the first

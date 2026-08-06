@@ -47,6 +47,58 @@ object Shaders {
         uniform sampler2D uSource;
         uniform vec2 uTexelSize;
 
+        /**
+         * How strong the effect this pass belongs to is, 0..1. One for everything that is not an
+         * effect.
+         *
+         * Declared here rather than per shader because it was per shader, and twelve of the fourteen
+         * effects forgot it. Every one of their opacity sliders moved a number in the document that
+         * the GPU never read — a control that does nothing is worse than a missing one, because the
+         * user concludes the whole panel is decorative. Folding it into [premultiply] below reaches
+         * every effect at once and cannot be forgotten by the next one.
+         */
+        uniform float uEffectOpacity;
+
+        /**
+         * How far the distance field reaches, in device pixels. The field is stored scaled into
+         * this range so it fits in eight-bit channels; see the pack helpers below.
+         */
+        uniform float uSdfRange;
+
+        // ---- fixed-point packing -------------------------------------------------------------
+        //
+        // **Why the distance field is packed rather than stored as floats.**
+        //
+        // It used to be written into a half-float target, and a driver that cannot render into one
+        // fell back to eight bits — where every value clamps to 0..1. The field then read as zero
+        // everywhere inside the shape and one everywhere outside, so the stroke shader saw full
+        // coverage across the whole texture and painted a **solid rectangle**. That is what a user
+        // sees instead of an outline, and it was the first thing on screen in a new document.
+        //
+        // Sixteen bits across a channel pair is exact on an eight-bit UNORM target and exact on a
+        // float one, so there is a single code path and no capability to probe. At a 256 px reach
+        // it resolves to 0.008 px, which is far finer than the half float it replaces needed to be.
+        //
+        // This only works because the field's buffers are sampled with NEAREST filtering — see
+        // `BufferSpec.filter`. Interpolating a packed high byte against its neighbour produces a
+        // number that means nothing at all.
+
+        vec2 packUnit(float v) {
+            float q = floor(clamp(v, 0.0, 1.0) * 65535.0 + 0.5);
+            float hi = floor(q / 256.0);
+            return vec2(hi / 255.0, (q - hi * 256.0) / 255.0);
+        }
+        float unpackUnit(vec2 c) {
+            return (floor(c.x * 255.0 + 0.5) * 256.0 + floor(c.y * 255.0 + 0.5)) / 65535.0;
+        }
+
+        /** A signed pixel distance in -uSdfRange..uSdfRange. */
+        vec2 packSigned(float px) { return packUnit(clamp(px / uSdfRange, -1.0, 1.0) * 0.5 + 0.5); }
+        float unpackSigned(vec2 c) { return (unpackUnit(c) * 2.0 - 1.0) * uSdfRange; }
+
+        /** The resolved field, as every outline effect reads it. */
+        float sdfAt(sampler2D field, vec2 uv) { return unpackSigned(texture(field, uv).rg); }
+
         // The compositor works in linear light; effect colours arrive gamma-encoded.
         vec3 toLinear(vec3 c) {
             return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
@@ -55,7 +107,14 @@ object Shaders {
             return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
         }
 
-        vec4 premultiply(vec4 c) { return vec4(c.rgb * c.a, c.a); }
+        // The one place every effect's alpha passes through, which is why the effect's own strength
+        // is applied here. Multiplying before the premultiply rather than after keeps the colour
+        // and the alpha consistent; halving only `a` afterwards would leave the rgb twice as bright
+        // as its coverage and show as a bright fringe on a faded shadow.
+        vec4 premultiply(vec4 c) {
+            float a = c.a * uEffectOpacity;
+            return vec4(c.rgb * a, a);
+        }
         vec4 unpremultiply(vec4 c) { return c.a > 0.0 ? vec4(c.rgb / c.a, c.a) : c; }
 
         // Cheap hash for grain and roughening; deterministic per pixel.
@@ -100,8 +159,13 @@ object Shaders {
                     inside != (texture(uSource, vUv + vec2(uTexelSize.x, 0.0)).a >= 0.5) ||
                     inside != (texture(uSource, vUv - vec2(0.0, uTexelSize.y)).a >= 0.5) ||
                     inside != (texture(uSource, vUv + vec2(0.0, uTexelSize.y)).a >= 0.5);
-                // xy is the offset in pixels to the nearest seed, z its length, w whether one is known.
-                fragColor = edge ? vec4(0.0, 0.0, 0.0, 1.0) : vec4(0.0, 0.0, 8192.0, 0.0);
+                // The offset in pixels to the nearest seed, packed as two signed 16-bit values.
+                // "No seed yet" is written as the full reach on both axes, whose length is longer
+                // than the reach itself — so a flood step can recognise it without a spare channel
+                // to carry a flag in.
+                fragColor = edge
+                    ? vec4(packSigned(0.0), packSigned(0.0))
+                    : vec4(packSigned(uSdfRange), packSigned(uSdfRange));
             }
         """,
     )
@@ -126,19 +190,26 @@ object Shaders {
             uniform float uStep;
 
             void main() {
-                vec4 best = texture(uSeed, vUv);
+                vec4 here = texture(uSeed, vUv);
+                vec2 bestOffset = vec2(unpackSigned(here.rg), unpackSigned(here.ba));
+                float best = length(bestOffset);
+
                 for (int dy = -1; dy <= 1; dy++) {
                     for (int dx = -1; dx <= 1; dx++) {
                         vec2 jump = vec2(float(dx), float(dy)) * uStep;
                         vec4 candidate = texture(uSeed, vUv + jump * uTexelSize);
-                        if (candidate.w < 0.5) continue;
+                        vec2 seen = vec2(unpackSigned(candidate.rg), unpackSigned(candidate.ba));
+                        // A neighbour that has not found a seed yet carries the sentinel, and
+                        // adding our own jump to it could bring it back under the reach and pass
+                        // for a real answer — so it is rejected on its own value, before the jump.
+                        if (length(seen) >= uSdfRange) continue;
                         // The neighbour's seed, re-expressed as an offset from this pixel.
-                        vec2 offset = jump + candidate.xy;
+                        vec2 offset = jump + seen;
                         float d = length(offset);
-                        if (d < best.z) best = vec4(offset, d, 1.0);
+                        if (d < best) { best = d; bestOffset = offset; }
                     }
                 }
-                fragColor = best;
+                fragColor = vec4(packSigned(bestOffset.x), packSigned(bestOffset.y));
             }
         """,
         floats = setOf("uStep"),
@@ -153,10 +224,11 @@ object Shaders {
 
             void main() {
                 vec4 s = texture(uSeed, vUv);
-                float d = s.w > 0.5 ? s.z : 8192.0;
+                vec2 offset = vec2(unpackSigned(s.rg), unpackSigned(s.ba));
+                float d = min(length(offset), uSdfRange);
                 // Negative inside the shape, positive outside — the convention every consumer reads.
                 float inside = texture(uSource, vUv).a >= 0.5 ? -1.0 : 1.0;
-                fragColor = vec4(inside * d, 0.0, 0.0, 1.0);
+                fragColor = vec4(packSigned(inside * d), 0.0, 0.0);
             }
         """,
         samplers = setOf("uSource", "uSeed"),
@@ -168,21 +240,20 @@ object Shaders {
             uniform sampler2D uSdf;
             uniform sampler2D uFill;
             uniform float uWidth;
-            uniform float uOpacity;
             uniform int uPosition;   // 0 inside, 1 centre, 2 outside
 
             void main() {
-                float d = texture(uSdf, vUv).r;
+                float d = sdfAt(uSdf, vUv);
                 // Shift the band according to where the stroke sits relative to the edge.
                 float inner = uPosition == 0 ? -uWidth : (uPosition == 1 ? -uWidth * 0.5 : 0.0);
                 float outer = uPosition == 0 ? 0.0    : (uPosition == 1 ?  uWidth * 0.5 : uWidth);
                 float coverage = smoothstep(inner - 0.5, inner + 0.5, d) *
                                  (1.0 - smoothstep(outer - 0.5, outer + 0.5, d));
                 vec4 fill = texture(uFill, vUv);
-                fragColor = premultiply(vec4(fill.rgb, fill.a * coverage * uOpacity));
+                fragColor = premultiply(vec4(fill.rgb, fill.a * coverage));
             }
         """,
-        floats = setOf("uWidth", "uOpacity"),
+        floats = setOf("uWidth"),
         ints = setOf("uPosition"),
         samplers = setOf("uSource", "uSdf", "uFill"),
     )
@@ -287,7 +358,7 @@ object Shaders {
             float heightAt(vec2 uv) {
                 // The field is negative inside; an inner bevel climbs as it goes deeper, an outer
                 // one climbs going outwards.
-                float d = texture(uSdf, uv).r * (uStyle == 0 ? 1.0 : -1.0);
+                float d = sdfAt(uSdf, uv) * (uStyle == 0 ? 1.0 : -1.0);
                 float t = clamp(d / max(uSize, 0.001), 0.0, 1.0);
                 return texture(uProfile, vec2(t, 0.5)).r;
             }
@@ -342,15 +413,13 @@ object Shaders {
         id = "overlay",
         body = """
             uniform sampler2D uFill;
-            uniform float uOpacity;
 
             void main() {
                 vec4 fill = texture(uFill, vUv);
                 float layer = texture(uSource, vUv).a;
-                fragColor = premultiply(vec4(fill.rgb, fill.a * layer * uOpacity));
+                fragColor = premultiply(vec4(fill.rgb, fill.a * layer));
             }
         """,
-        floats = setOf("uOpacity"),
         samplers = setOf("uSource", "uFill"),
     )
 
@@ -497,7 +566,7 @@ object Shaders {
 
             void main() {
                 // Displacing the distance field erodes the silhouette instead of just fading it.
-                float d = texture(uSdf, vUv).r + fbm(vUv * 128.0) * uAmount;
+                float d = sdfAt(uSdf, vUv) + fbm(vUv * 128.0) * uAmount;
                 vec4 c = texture(uSource, vUv);
                 // The field is negative inside, so coverage falls off as d rises through zero.
                 fragColor = vec4(c.rgb, c.a * (1.0 - smoothstep(-0.5, 0.5, d)));
