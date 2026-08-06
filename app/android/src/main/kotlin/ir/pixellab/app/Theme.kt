@@ -490,14 +490,22 @@ enum class ThemeSkin(
 
     internal fun palette(dark: Boolean): Palette = if (dark) this.dark else this.light
 
-    internal val corners: CornerSet
-        get() = CornerSet(
+    /**
+     * Built once per direction, not once per read.
+     *
+     * A `get()` here allocated a new `CornerSet` on every call, which made "the shapes did not
+     * change" impossible to establish by equality — see the note on [Metrics.use] for what that
+     * cost.
+     */
+    internal val corners: CornerSet by lazy {
+        CornerSet(
             button = RoundedCornerShape(buttonRadius.dp),
             card = RoundedCornerShape(cardRadius.dp),
             chip = RoundedCornerShape(chipRadius.dp),
             sheet = RoundedCornerShape(topStart = sheetRadius.dp, topEnd = sheetRadius.dp),
             panel = RoundedCornerShape(cardRadius.dp),
         )
+    }
 
     /** The inset a floating panel keeps from the screen edge. Zero for the flat layouts. */
     val panelInset: Dp get() = if (layout == PanelLayout.FLOATING) 10.dp else 0.dp
@@ -603,7 +611,26 @@ object Metrics {
     internal var numeric: TextStyle by mutableStateOf(numericStyle(mono = false))
         private set
 
+    /**
+     * Adopts a direction — **and does nothing at all if it is already the one in force.**
+     *
+     * ### The hang this guard exists to prevent
+     *
+     * `PixelLabTheme` calls this from inside composition, the same way it hands [Ink] its palette.
+     * Without the early return, every composition of the root wrote three snapshot states; two of
+     * them are rebuilt values (`chosen.corners` allocates a `CornerSet`, `numericStyle` allocates a
+     * `TextStyle` holding a freshly-loaded `FontFamily`) and a rebuilt value is not reliably equal
+     * to its predecessor. An unequal write invalidates every reader — and `Corners.card` and
+     * [NumericStyle] are read all over the tree — so the tree recomposed, which re-ran this, which
+     * wrote again. **Write-during-composition of a value derived from that composition is a loop**,
+     * and it presented as `TouchTargetTest` pinning a core at 100% inside
+     * `ComposeIdlingResource.isIdleNow` for half an hour with no failure and no output.
+     *
+     * The guard is the fix, and the cached [ThemeSkin.corners] behind it is the belt: a stable
+     * instance per direction means even a future caller that skips the guard writes an equal value.
+     */
     internal fun use(chosen: ThemeSkin) {
+        if (skin == chosen) return
         skin = chosen
         corners = chosen.corners
         numeric = numericStyle(chosen.mono)
@@ -741,7 +768,12 @@ private fun typographyFor(mono: Boolean): Typography {
  * already tabular, so Console gets it for free and keeps the feature tag anyway — harmless, and it
  * survives a future swap of the mono face for one that is not fixed-pitch in its figures.
  */
-private fun numericStyle(mono: Boolean): TextStyle =
+private val numericStyles = HashMap<Boolean, TextStyle>()
+
+/** Cached per variant, for the same reason [ThemeSkin.corners] is: a rebuilt value is not equal. */
+private fun numericStyle(mono: Boolean): TextStyle = numericStyles.getOrPut(mono) { buildNumericStyle(mono) }
+
+private fun buildNumericStyle(mono: Boolean): TextStyle =
     style(if (mono) FontFamily.Monospace else vazirmatn(500), 14, 1.4, 500, features = "tnum")
         // **Left to right, inside a right-to-left interface.** A number is written left to right in
         // Persian exactly as it is in English — ۱۰۸۰ is one thousand and eighty in both — but a
