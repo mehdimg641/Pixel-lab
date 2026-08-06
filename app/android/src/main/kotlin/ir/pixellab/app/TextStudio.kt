@@ -4,7 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -142,8 +144,37 @@ private fun Scrolling(content: @Composable () -> Unit) {
  * main ribbon carries and exists for the same reason: a strip that scrolls with no sign of it reads
  * as a strip that has been cut off.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SectionStrip(current: TextSection, onPick: (TextSection) -> Unit) {
+    // Console wraps the sections into a block of equal tabs; the other two scroll a single row of
+    // them. The brief asks for exactly this — «full-width square tabs» against «pill section
+    // chips» — and it is not only decoration: a scrolling strip hides the sections past the edge,
+    // which is the right trade when the panel below is what matters, and the wrong one for a
+    // direction whose whole claim is that everything is on screen at once.
+    if (Metrics.layout == PanelLayout.DENSE) {
+        FlowRow(
+            Modifier
+                .fillMaxWidth()
+                .background(Ink.ChromeRaised)
+                .padding(horizontal = Space.tight, vertical = Space.tight),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            maxItemsInEachRow = DENSE_TABS_PER_ROW,
+        ) {
+            for (section in TextSection.entries) {
+                BarAction(
+                    icon = section.icon,
+                    label = section.persianLabel,
+                    selected = section == current,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPick(section) },
+                )
+            }
+        }
+        return
+    }
+
     val scroll = rememberScrollState()
     Row(
         Modifier
@@ -166,6 +197,15 @@ private fun SectionStrip(current: TextSection, onPick: (TextSection) -> Unit) {
         }
     }
 }
+
+/**
+ * Five across, which is fourteen sections in three rows.
+ *
+ * Four would be four rows and eat the panel; six puts «سه‌بعدی» and «پس‌زمینه» below 60dp, where a
+ * Persian word at label size starts to ellipsise. Five is the widest that keeps every label whole
+ * on a 411dp phone.
+ */
+private const val DENSE_TABS_PER_ROW = 5
 
 // ---- the target bar ----------------------------------------------------------------------------
 
