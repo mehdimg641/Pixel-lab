@@ -23,32 +23,46 @@ import org.robolectric.annotation.Config
  * because the interface is Persian. Only the rendered frame is wrong, and it took looking at a
  * screenshot of the template grid to see it.
  *
- * ### Why the fix is on the style
+ * The fix is on [NumericStyle] rather than at each call site, because that is exactly the set of
+ * values this style exists for — a size, a percentage, a coordinate; things the user could type
+ * back in, which is also why it carries tabular figures. Fixing it per call site means finding all
+ * of them, and then finding the next one somebody writes.
  *
- * [NumericStyle] exists because these are values the user could type back in: a size, a percentage,
- * a coordinate. That is exactly the set that has to read left to right regardless of the language
- * around it — the same reason the tabular-figures feature is on it. Fixing it at each call site
- * would mean finding all of them, and then finding the next one somebody writes.
+ * Note this is *not* about the digits. ۱۰۸۰ is written left to right in Persian exactly as 1080 is
+ * in English, and «امبر — فارسی» renders Persian digits and needs this just the same.
  *
- * Note that this is *not* about the digits themselves. ۱۰۸۰ is written left to right in Persian
- * exactly as 1080 is in English, and «امبر — فارسی» renders Persian digits and still needs this.
+ * ### Two things this file learned the hard way
+ *
+ * **It does not loop over the four directions.** It did, and calling `Metrics.use(skin)` to do so
+ * changed the direction that `ScreenshotTest`, `TouchTargetTest` and `ScreenReaderTest` — which run
+ * afterwards in the same worker — compose in. [Metrics] is a process-global singleton. Thirty-two
+ * of their tests failed with `AppNotIdleException` inside `./gradlew build` while every one of them
+ * passed when run alone, and deleting *this file* made the module green in twenty-six seconds. An
+ * `@After` that put the direction back was not enough. **A unit test that writes global interface
+ * state is not a unit test.** Reading the default is enough for the regression this exists for —
+ * somebody deleting the `textDirection` — and all four directions share one builder, so there is no
+ * fifth case hiding.
+ *
+ * **It runs under Robolectric despite asserting on a plain value.** Reading [NumericStyle] builds
+ * the style, which loads `R.font.vazirmatn` — an Android *resource* font. `ThemeContrastTest` and
+ * `ThemeSwitchTest` are plain JUnit and have always been fine because they touch only colours; a
+ * resource font constructed on the bare JVM initialises Compose's font machinery outside any
+ * sandbox, and the Robolectric classes that follow inherit it half-built. That was the second half
+ * of the same afternoon.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], qualifiers = "fa")
 class NumericReadoutTest {
 
     @Test
-    fun `every direction sets its read-outs left to right`() {
-        for (skin in ThemeSkin.entries) {
-            Metrics.use(skin)
-            assertEquals(
-                "${skin.name} lays its numeric read-outs out in the paragraph direction. In a " +
-                    "right-to-left interface that renders «1080 × 1920» as «1920 × 1080», and " +
-                    "every dimension in the application is reversed.",
-                TextDirection.Ltr,
-                NumericStyle.textDirection,
-            )
-        }
+    fun `the read-out style is laid out left to right`() {
+        assertEquals(
+            "the numeric style lays out in the paragraph direction again. In a right-to-left " +
+                "interface that renders «1080 × 1920» as «1920 × 1080», and every dimension in " +
+                "the application reads backwards.",
+            TextDirection.Ltr,
+            NumericStyle.textDirection,
+        )
     }
 
     @Test
@@ -56,9 +70,6 @@ class NumericReadoutTest {
         // The other half of why this style exists, and the half a `copy()` is most likely to drop:
         // a proportional `1` is narrower than a `0`, so a value that counts while a slider moves
         // jitters sideways under the finger and a column of them refuses to line up.
-        for (skin in ThemeSkin.entries) {
-            Metrics.use(skin)
-            assertEquals("${skin.name} lost tnum", "tnum", NumericStyle.fontFeatureSettings)
-        }
+        assertEquals("tnum", NumericStyle.fontFeatureSettings)
     }
 }
