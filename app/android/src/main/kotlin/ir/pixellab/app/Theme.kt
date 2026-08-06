@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.toFontFamily
 import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -742,6 +743,16 @@ private fun typographyFor(mono: Boolean): Typography {
  */
 private fun numericStyle(mono: Boolean): TextStyle =
     style(if (mono) FontFamily.Monospace else vazirmatn(500), 14, 1.4, 500, features = "tnum")
+        // **Left to right, inside a right-to-left interface.** A number is written left to right in
+        // Persian exactly as it is in English — ۱۰۸۰ is one thousand and eighty in both — but a
+        // *compound* read-out is a run of tokens, and the bidi algorithm lays those out in the
+        // paragraph's direction. So `1080 × 1920` in an RTL row renders as `1920 × 1080`, and the
+        // first render of the template grid showed a story template advertising itself as landscape.
+        //
+        // Set on the style rather than at each call site, because that is the property every
+        // read-out in the application shares and the reason this style exists at all: these are
+        // values the user could type back in, and a value that reads backwards is worse than none.
+        .copy(textDirection = TextDirection.Ltr)
 
 /** The numeric style of the direction in force. */
 val NumericStyle: TextStyle get() = Metrics.numeric

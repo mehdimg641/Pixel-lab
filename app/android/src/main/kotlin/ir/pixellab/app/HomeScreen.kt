@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -82,6 +84,12 @@ fun HomeScreen(
     // asking for the direction down there does not compile — and the layout choice belongs to the
     // screen anyway, not to each row.
     val layout = LocalThemeSkin.current.layout
+    // Which group of sizes is showing. Beside the screen rather than in the document, because a
+    // filter is a way of looking at a list and not a fact about anybody's work.
+    var category by remember { mutableStateOf(ALL_TEMPLATES) }
+    val visibleTemplates = remember(category) {
+        if (category == ALL_TEMPLATES) Library.templates else Library.templates.filter { it.group == category }
+    }
     LazyColumn(
         Modifier.fillMaxSize().background(Ink.Ground).systemBarsPadding(),
         contentPadding = PaddingValues(
@@ -98,7 +106,10 @@ fun HomeScreen(
         // with the jobs put "3D text" ahead of the canvas it needs, so the first press in the
         // application landed on a document nobody had chosen the shape of.
         item { SectionHeader("اندازه را انتخاب کنید") }
-        item { TemplateStrip(onNew) }
+        item {
+            TemplateCategories(chosen = category, onPick = { category = it })
+        }
+        templateSection(layout, visibleTemplates, onNew)
         item { SectionHeader("یا از این‌ها شروع کنید") }
         item { QuickActionRow(onQuickAction) }
         item { SectionHeader("کارهای اخیر") }
@@ -350,17 +361,154 @@ enum class QuickAction(val icon: ImageVector, val label: String, val dock: Dock)
  * recognise, and it is why the dimensions can stay small and grey underneath rather than competing.
  */
 @Composable
-private fun TemplateStrip(onNew: (TemplatePreset) -> Unit) {
-    LazyRow(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(Space.medium),
-    ) {
-        item { BlankCard { onNew(BLANK) } }
-        items(Library.templates, key = { it.name }) { template ->
-            TemplateCard(template) { onNew(template) }
+private fun TemplateCategories(chosen: String, onPick: (String) -> Unit) {
+    // «همه» first, then the groups in the order the library declares them — alphabetical would put
+    // «چاپ» before «شبکهٔ اجتماعی», and the social sizes are what nine users in ten came for.
+    val groups = remember { listOf(ALL_TEMPLATES) + Library.templates.map { it.group }.distinct() }
+    SheetChips {
+        for (group in groups) {
+            SheetChip(group, chosen = group == chosen) { onPick(group) }
         }
     }
 }
+
+/**
+ * The sizes, in whichever shape the direction asks for.
+ *
+ * A `LazyListScope` extension rather than a composable, so the rows are lazy items like everything
+ * else on this screen. Wrapping a grid in one `item {}` would lay out every card whether or not it
+ * is on screen, which on the print sizes means measuring text nobody has scrolled to.
+ *
+ * The blank canvas leads in every shape. It is the one entry that requires no decision, and putting
+ * it after eight named sizes makes «I just want to start» the ninth-easiest thing to do.
+ */
+private fun LazyListScope.templateSection(
+    layout: PanelLayout,
+    templates: List<TemplatePreset>,
+    onNew: (TemplatePreset) -> Unit,
+) {
+    when (layout) {
+        // Console: one line each, name and dimensions, the way a size list reads in a print shop.
+        PanelLayout.DENSE -> {
+            item { TemplateRow(BLANK, blank = true, onNew = { onNew(BLANK) }) }
+            items(templates, key = { it.name }) { template ->
+                TemplateRow(template, blank = false, onNew = { onNew(template) })
+            }
+        }
+        else -> {
+            val staggered = layout == PanelLayout.FLOATING
+            // The blank card rides in the first pair rather than on a row of its own, so the grid
+            // has no gap at the top.
+            val entries: List<TemplatePreset?> = listOf(null) + templates
+            items(entries.chunked(2)) { pair ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = Space.tight),
+                    horizontalArrangement = Arrangement.spacedBy(Space.medium),
+                ) {
+                    for (template in pair) {
+                        val tall = staggered && (entries.indexOf(template) % 3 == 1)
+                        Box(Modifier.weight(1f)) {
+                            if (template == null) {
+                                BlankCard { onNew(BLANK) }
+                            } else {
+                                TemplateTile(template, tall = tall) { onNew(template) }
+                            }
+                        }
+                    }
+                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+/** A template as a proportioned plate with its name and pixel size under it. */
+@Composable
+private fun TemplateTile(template: TemplatePreset, tall: Boolean, onNew: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onNew)
+            .semantics { role = Role.Button },
+        verticalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(if (tall) TALL_TILE else SHORT_TILE)
+                .clip(Corners.card)
+                .background(Ink.ChromeRaised)
+                .border(1.dp, Ink.Divider, Corners.card),
+            contentAlignment = Alignment.Center,
+        ) {
+            // The plate inside is the template's *actual* proportion, which is the one thing a
+            // list of numbers does not tell you: 1080×1920 and 1080×1350 are both "tall" until
+            // you see them beside each other.
+            Box(
+                Modifier
+                    .fillMaxHeight(0.7f)
+                    .wrapToAspect(template.width.toFloat() / template.height.toFloat())
+                    .clip(Corners.small)
+                    .background(Ink.Ground),
+            )
+        }
+        Text(
+            template.name,
+            style = MaterialTheme.typography.labelLarge,
+            color = Ink.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            "${Digits.technical(template.width)} × ${Digits.technical(template.height)}",
+            style = NumericStyle,
+            color = Ink.TextMuted,
+            maxLines = 1,
+        )
+    }
+}
+
+/** Console's one-line form: name on the leading edge, size on the trailing one. */
+@Composable
+private fun TemplateRow(template: TemplatePreset, blank: Boolean, onNew: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = Space.touch)
+            .clickable(onClick = onNew)
+            .padding(horizontal = Space.medium)
+            .semantics { role = Role.Button },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        Icon(
+            if (blank) Icons.Outlined.Add else Icons.Outlined.Description,
+            contentDescription = null,
+            tint = if (blank) Ink.Accent else Ink.TextMuted,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            if (blank) "بوم خالی" else template.name,
+            style = MaterialTheme.typography.labelMedium,
+            color = Ink.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "${Digits.technical(template.width)} × ${Digits.technical(template.height)}",
+            style = NumericStyle,
+            color = Ink.TextMuted,
+            maxLines = 1,
+        )
+    }
+}
+
+/** The chip that means "no filter". Not a group name, so it cannot collide with one. */
+private const val ALL_TEMPLATES = "همه"
+
+private val TALL_TILE = 156.dp
+private val SHORT_TILE = 112.dp
 
 /** The first card in the strip: no size decided, start drawing. */
 @Composable

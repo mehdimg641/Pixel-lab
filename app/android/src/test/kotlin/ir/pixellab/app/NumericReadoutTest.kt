@@ -1,0 +1,64 @@
+package ir.pixellab.app
+
+import androidx.compose.ui.text.style.TextDirection
+import org.junit.Assert.assertEquals
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/**
+ * Whether a number reads the way it was written.
+ *
+ * ### The defect
+ *
+ * The interface is right-to-left throughout, and a compound read-out is a *run of tokens* — so the
+ * bidirectional algorithm lays `1080 × 1920` out in the paragraph's direction and paints it as
+ * `1920 × 1080`. Every dimension in the application was reversed: the template grid advertised the
+ * story size as landscape, the canvas read-out reported a portrait document as wide, and the export
+ * sheet told the user they were about to write a file of the wrong shape.
+ *
+ * It is a good example of a class of bug that no amount of reading catches. The string is correct.
+ * The composable is correct. The layout direction is correct — it is *deliberately* right-to-left,
+ * because the interface is Persian. Only the rendered frame is wrong, and it took looking at a
+ * screenshot of the template grid to see it.
+ *
+ * ### Why the fix is on the style
+ *
+ * [NumericStyle] exists because these are values the user could type back in: a size, a percentage,
+ * a coordinate. That is exactly the set that has to read left to right regardless of the language
+ * around it — the same reason the tabular-figures feature is on it. Fixing it at each call site
+ * would mean finding all of them, and then finding the next one somebody writes.
+ *
+ * Note that this is *not* about the digits themselves. ۱۰۸۰ is written left to right in Persian
+ * exactly as 1080 is in English, and «امبر — فارسی» renders Persian digits and still needs this.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], qualifiers = "fa")
+class NumericReadoutTest {
+
+    @Test
+    fun `every direction sets its read-outs left to right`() {
+        for (skin in ThemeSkin.entries) {
+            Metrics.use(skin)
+            assertEquals(
+                "${skin.name} lays its numeric read-outs out in the paragraph direction. In a " +
+                    "right-to-left interface that renders «1080 × 1920» as «1920 × 1080», and " +
+                    "every dimension in the application is reversed.",
+                TextDirection.Ltr,
+                NumericStyle.textDirection,
+            )
+        }
+    }
+
+    @Test
+    fun `the read-out style keeps its tabular figures`() {
+        // The other half of why this style exists, and the half a `copy()` is most likely to drop:
+        // a proportional `1` is narrower than a `0`, so a value that counts while a slider moves
+        // jitters sideways under the finger and a column of them refuses to line up.
+        for (skin in ThemeSkin.entries) {
+            Metrics.use(skin)
+            assertEquals("${skin.name} lost tnum", "tnum", NumericStyle.fontFeatureSettings)
+        }
+    }
+}
