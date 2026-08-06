@@ -255,7 +255,16 @@ private fun StretchHandle(chosen: Boolean, onStretch: (Int) -> Unit) {
 /** How far the finger travels for one kashida. Roughly a letter's width at ribbon scale. */
 private val STEP = 24.dp
 
-private val HANDLE = 28.dp
+/**
+ * The drag handle's target. Square at [Space.touch], where it was 28dp wide.
+ *
+ * A target is two-dimensional and the narrow axis is the one that fails: this handle sits at the
+ * edge of a chip in a horizontally scrolling ribbon, so 28dp of width meant a thumb reaching for
+ * the kashida grabbed the chip beside it and selected a different cluster instead.
+ */
+private val HANDLE = Space.touch
+
+/** The two bars *drawn* inside the handle. Deliberately smaller than the target that carries them. */
 private val GRIP = 18.dp
 
 /** The half-space mark. Shorter than a chip, so it reads as punctuation rather than as a piece. */

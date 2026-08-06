@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -151,7 +152,9 @@ fun Pill(
 ) {
     Box(
         modifier
-            .heightIn(min = PILL_HEIGHT)
+            // Both axes. Constraining only the height leaves the width to the label, so a pill
+            // reading «۱» came out under the minimum on the axis nobody had thought about.
+            .sizeIn(minWidth = PILL_HEIGHT, minHeight = PILL_HEIGHT)
             .clip(Corners.chip)
             .background(if (selected) Ink.AccentSoft else Color.Transparent)
             .border(
@@ -283,16 +286,21 @@ fun SectionHeader(
     ) {
         Text(title, style = MaterialTheme.typography.titleLarge, color = Ink.Text)
         if (action != null && onAction != null) {
-            Text(
-                action,
-                style = MaterialTheme.typography.labelLarge,
-                color = Ink.Accent,
-                modifier = Modifier
+            // A Box around the label rather than padding on it. Padding sized this target by the
+            // *type* it holds — labelLarge plus 8dp above and below came to 37dp, and it would have
+            // come to something else the next time the type scale moved. A target that is a
+            // consequence of a font size is a target nobody chose.
+            Box(
+                Modifier
+                    .sizeIn(minWidth = Space.touch, minHeight = Space.touch)
                     .clip(Corners.button)
                     .clickable(onClick = onAction)
                     .padding(horizontal = Space.medium, vertical = Space.small)
                     .semantics { role = Role.Button },
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(action, style = MaterialTheme.typography.labelLarge, color = Ink.Accent)
+            }
         }
     }
 }
@@ -463,7 +471,8 @@ fun HeldBarIcon(
 
 private val TILE = 76.dp
 private val TILE_CIRCLE = 56.dp
-private val PILL_HEIGHT = 40.dp
+/** The platform's touch minimum. Was 40dp — see the note on [CHIP_HEIGHT] in SheetControls. */
+private val PILL_HEIGHT = Space.touch
 
 private val EDGE = 1.dp
 private val EDGE_CHOSEN = 1.5.dp

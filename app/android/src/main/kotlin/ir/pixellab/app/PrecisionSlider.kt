@@ -178,8 +178,16 @@ fun PrecisionSlider(
 /** Thin, because the knob is what the eye finds and a heavy track competes with it. */
 private val TRACK = 4.dp
 
-/** The band the finger may land on. Comfortably over the 4dp track it controls. */
-private val TOUCH_STRIP = 36.dp
+/**
+ * The band the finger may land on.
+ *
+ * [Space.touch], not the 36dp it was. "Comfortably over the 4dp track" was the wrong comparison —
+ * the target is measured against the finger, not against the graphic it draws. This is the second
+ * most-tapped control in the application after the chip: every effect parameter, every adjustment,
+ * every brush setting is one of these, and a miss here does nothing at all rather than doing the
+ * wrong thing, which is the failure mode people read as "the app is not responding".
+ */
+private val TOUCH_STRIP = Space.touch
 
 /** Small enough not to hide the value it points at, large enough to see against a busy sheet. */
 private val KNOB = 16.dp

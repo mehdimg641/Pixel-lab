@@ -594,8 +594,11 @@ internal fun TopBar(
     }
 }
 
+// Internal rather than private so TouchTargetTest can measure it on its own. The strip is empty
+// until the user has done something, so it is invisible to a test that renders a fresh editor —
+// and it held the smallest target in the application.
 @Composable
-private fun HistoryStrip(model: EditorViewModel, modifier: Modifier = Modifier) {
+internal fun HistoryStrip(model: EditorViewModel, modifier: Modifier = Modifier) {
     val length = model.historyLength
     if (length == 0) {
         Box(modifier)
@@ -603,7 +606,11 @@ private fun HistoryStrip(model: EditorViewModel, modifier: Modifier = Modifier) 
     }
     Row(
         modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(Space.tight),
+        // No gap. The targets are adjacent on purpose: a gap between two 24dp targets is space the
+        // finger can land in that belongs to neither of them, and WCAG's dense-control allowance
+        // only holds while nothing eats into the target. The *marks* are still visibly separated,
+        // because each one is a 6dp dot centred in its own target.
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Zero is the document as it was opened, so there are length + 1 positions to stand at.
@@ -611,15 +618,25 @@ private fun HistoryStrip(model: EditorViewModel, modifier: Modifier = Modifier) 
             val here = position == model.historyPosition
             Box(
                 Modifier
-                    .size(width = if (here) MARK_WIDE else MARK, height = MARK)
-                    .clip(Corners.chip)
-                    .background(if (here) Ink.Accent else Ink.Outline)
+                    // The target, which is not the graphic. This was the graphic: a 6dp square
+                    // carrying the click, which is a control no finger can hit — the single worst
+                    // touch target in the application, and one that costs an accidental jump
+                    // through history when the neighbouring dot answers instead.
+                    .size(width = MARK_TARGET, height = Space.touch)
                     .clickable(onClickLabel = "گام ${Digits.prose(position)}") { model.jumpTo(position) }
                     .semantics {
                         role = Role.Button
                         selected = here
                     },
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier
+                        .size(width = if (here) MARK_WIDE else MARK, height = MARK)
+                        .clip(Corners.chip)
+                        .background(if (here) Ink.Accent else Ink.Outline),
+                )
+            }
         }
     }
 }
@@ -1071,6 +1088,21 @@ private val DOCK_PILL_HEIGHT = 28.dp
 /** History marks. Small: there can be two hundred of them and they are a strip, not a control. */
 private val MARK = 6.dp
 private val MARK_WIDE = 18.dp
+
+/**
+ * What the finger gets for one history step.
+ *
+ * The one control in the application that cannot have the full [Space.touch] on both axes: the
+ * count is unbounded — two hundred steps at 48dp is nine metres of scroller — so the strip takes
+ * WCAG 2.2's allowance for dense repeated controls instead. 2.5.8 AA asks 24dp *provided the
+ * targets do not encroach on one another*, which is why the row's gap is zero, and the full 48dp
+ * is still spent on the axis that is free.
+ *
+ * The honest statement of the remaining weakness: a row of unlabelled dots tells you where you are
+ * but not what each step *was*. Photoshop names them. Replacing this with a named list is a real
+ * improvement and a separate piece of work; making it hittable is not.
+ */
+private val MARK_TARGET = 24.dp
 
 /** What the picker accepts. Every still image; video is deliberately not part of this app. */
 private const val IMAGE_MIME = "image/*"

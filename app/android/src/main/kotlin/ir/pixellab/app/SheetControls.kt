@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -106,7 +107,9 @@ fun SheetChip(
 ) {
     Box(
         Modifier
-            .heightIn(min = CHIP_HEIGHT)
+            // Both axes, not just the height: a chip labelled «۱» or «خ» is as tall as its
+            // neighbours and half as wide, and the narrow axis is the one a thumb misses.
+            .sizeIn(minWidth = CHIP_HEIGHT, minHeight = CHIP_HEIGHT)
             .clip(Corners.chip)
             .background(if (chosen) tint.copy(alpha = CHOSEN_TINT) else Color.Transparent)
             .border(
@@ -216,13 +219,27 @@ fun SheetTextField(
             // announced as an unnamed edit box.
             modifier = Modifier
                 .semantics { contentDescription = label }
+                .fillMaxWidth()
                 .clip(Corners.small)
                 .background(Ink.ChromeSunken)
                 // Sunken rather than outlined, and the outline is on top of the sink: a well with
                 // no edge disappears into a card of nearly the same value, which is what made the
                 // old fields hard to find on a sheet.
-                .border(PLAIN_EDGE, Ink.Divider, Corners.small)
-                .padding(horizontal = Space.medium, vertical = Space.medium),
+                .border(PLAIN_EDGE, Ink.Divider, Corners.small),
+            // The height and the inset live in the decoration rather than on the modifier above,
+            // and that is not a style choice. A field's pointer handling sits *inside* whatever
+            // padding the caller wraps it in, so a well that looked 48dp tall had a 17dp strip in
+            // the middle of it that answered a tap and a ring of dead space around that. Put the
+            // room inside the decoration and the whole well is the target.
+            decorationBox = { field ->
+                Box(
+                    Modifier
+                        .heightIn(min = Space.touch)
+                        .fillMaxWidth()
+                        .padding(horizontal = Space.medium, vertical = Space.small),
+                    contentAlignment = Alignment.CenterStart,
+                ) { field() }
+            },
         )
     }
 }
@@ -320,5 +337,16 @@ private const val EDGE_TINT = 0.55f
 private val PLAIN_EDGE = 1.dp
 private val CHOSEN_EDGE = 1.5.dp
 
-/** Comfortably inside the platform's touch minimum once the row's own spacing is counted. */
-private val CHIP_HEIGHT = 40.dp
+/**
+ * The platform's touch minimum, and not a pixel under it.
+ *
+ * This was 40dp, with a comment claiming it was "comfortably inside the platform's touch minimum
+ * once the row's own spacing is counted" — which is not how a touch target works. Spacing *between*
+ * targets is a separate requirement; it does not enlarge the target. Forty is eight short of the
+ * minimum on the single most-tapped control in the application: every blend mode, every filter,
+ * every layout, every effect is one of these.
+ *
+ * [Space.touch] already held the right number. Naming it here rather than repeating 48 is the whole
+ * point of having the token.
+ */
+private val CHIP_HEIGHT = Space.touch

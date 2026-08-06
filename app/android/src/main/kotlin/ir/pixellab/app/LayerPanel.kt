@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -239,10 +240,14 @@ private fun StructureButton(
 ) {
     Column(
         Modifier
+            // Ten points of padding around an icon made a 44dp target — close enough to look right
+            // and short enough to miss. The floor is stated rather than arrived at.
+            .sizeIn(minWidth = Space.touch, minHeight = Space.touch)
             .clip(RoundedCornerShape(10.dp))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
         val tint = when {
             !enabled -> Ink.Divider
@@ -277,18 +282,22 @@ private fun LayerRow(row: PanelRow, selected: Boolean, state: EditorState, model
         if (row.depth > 0) Box(Modifier.width((row.depth * 14).dp))
 
         if (layer is Layer.Group) {
-            Text(
-                if (layer.expanded) "▾" else "▸",
-                color = Ink.TextMuted,
-                modifier = Modifier
+            // A triangle four points wide is not a target. It only escaped the measurement
+            // because the fixture document has no group in it — which is exactly how a control
+            // this small survives in a panel nobody has measured.
+            Box(
+                Modifier
+                    .size(Space.touch)
                     .clip(RoundedCornerShape(6.dp))
-                    .clickable {
+                    .clickable(onClickLabel = if (layer.expanded) "بستن گروه" else "بازکردن گروه") {
                         model.act {
                             replaceLayer(layer.id) { (it as Layer.Group).copy(expanded = !it.expanded) }
                         }
-                    }
-                    .padding(horizontal = 4.dp),
-            )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(if (layer.expanded) "▾" else "▸", color = Ink.TextMuted)
+            }
         }
 
         Box(
@@ -354,13 +363,16 @@ private fun RowIcon(
     active: Boolean,
     onClick: () -> Unit,
 ) {
-    Icon(
-        icon,
-        label,
-        tint = if (active) Ink.Text else Ink.TextMuted,
-        modifier = Modifier
+    // The target is the Box; the icon is what it draws. Icon-plus-padding came to 36dp square,
+    // which is what a target sized by its *graphic* rather than by a finger always comes to — and
+    // these two are pressed more than anything else in the panel.
+    Box(
+        Modifier
+            .size(Space.touch)
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(6.dp),
-    )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, label, tint = if (active) Ink.Text else Ink.TextMuted)
+    }
 }

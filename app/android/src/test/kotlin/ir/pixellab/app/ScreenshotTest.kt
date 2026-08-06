@@ -148,7 +148,10 @@ class ScreenshotTest {
         // is nearly all text on cards and looks fine in any palette; the editor is where a theme
         // succeeds or fails, because it has the four surfaces stacked against each other and a
         // mid-grey surround between them and the artwork.
+        // Recovery timer off: it schedules a delay on the main looper that never comes due,
+        // and Compose's idling check waits on that queue. See TouchTargetTest.editor().
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
+            .also { it.autoSave.stop() }
         model.act { select(state.document.layers.first().id) }
         page("editor-chrome-light", dark = false) {
             Column(
@@ -180,7 +183,10 @@ class ScreenshotTest {
         // The real bars, driven by a real view model, because the thing worth looking at is how the
         // top bar, the selection card and the toolbar sit *together*. Each one alone always looked
         // fine; it was the three of them at once that read as unfinished.
+        // Recovery timer off: it schedules a delay on the main looper that never comes due,
+        // and Compose's idling check waits on that queue. See TouchTargetTest.editor().
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
+            .also { it.autoSave.stop() }
         model.act { select(state.document.layers.first().id) }
         page("editor-chrome") {
             Column(

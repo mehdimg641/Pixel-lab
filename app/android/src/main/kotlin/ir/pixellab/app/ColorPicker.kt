@@ -6,6 +6,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +27,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -48,6 +56,7 @@ import kotlin.math.roundToInt
  * Hex entry is here because it is how a brand colour actually arrives: from a style guide, as six
  * characters. A picker without it makes matching an exact colour a game of nudging a dot.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ColorPickerBody(color: Color, onChange: (Color) -> Unit, modifier: Modifier = Modifier) {
     // Held as HSV rather than derived from the colour each recomposition, because a fully black or
@@ -79,49 +88,69 @@ fun ColorPickerBody(color: Color, onChange: (Color) -> Unit, modifier: Modifier 
                     .background(UiColor(color.r, color.g, color.b, 1f))
                     .border(1.dp, Ink.Divider, RoundedCornerShape(8.dp)),
             )
-            Box(
-                Modifier
+            BasicTextField(
+                value = hex,
+                onValueChange = { typed ->
+                    hex = typed
+                    // Applied only once it is a whole colour, so a half-typed value does not
+                    // repaint the artwork with whatever three characters happen to parse.
+                    parseHex(typed)?.let { parsed ->
+                        hsv = parsed.toHsv()
+                        onChange(parsed.copy(a = color.a))
+                    }
+                },
+                singleLine = true,
+                cursorBrush = SolidColor(Ink.Accent),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = Ink.Text),
+                modifier = Modifier
                     .weight(1f)
-                    .height(40.dp)
+                    .semantics { contentDescription = "کد رنگ" }
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Ink.Chrome)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-            ) {
-                BasicTextField(
-                    value = hex,
-                    onValueChange = { typed ->
-                        hex = typed
-                        // Applied only once it is a whole colour, so a half-typed value does not
-                        // repaint the artwork with whatever three characters happen to parse.
-                        parseHex(typed)?.let { parsed ->
-                            hsv = parsed.toHsv()
-                            onChange(parsed.copy(a = color.a))
-                        }
-                    },
-                    singleLine = true,
-                    cursorBrush = SolidColor(Ink.Accent),
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = Ink.Text),
-                )
-            }
+                    .background(Ink.Chrome),
+                // Inside the decoration, not around the field — the well was 40dp tall and only
+                // the 20dp of it holding the six characters answered a tap.
+                decorationBox = { field ->
+                    Box(
+                        Modifier.heightIn(min = Space.touch).padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) { field() }
+                },
+            )
         }
 
-        Row(
-            Modifier.fillMaxWidth().padding(top = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        // A wrapping row, not a fixed one. Eight 48dp targets do not fit across a 411dp phone, and
+        // the previous arrangement resolved that by making each swatch a 28dp circle carrying its
+        // own click — eight controls the user cannot reliably hit, on the panel they reach for
+        // first. Wrapping costs a second line and keeps every target the full size; a grid of
+        // swatches on two rows is what a swatch panel looks like anyway.
+        FlowRow(
+            Modifier.fillMaxWidth().padding(top = Space.small),
+            // No gap: the targets are adjacent, and the visible separation between the circles is
+            // the twenty points of empty target around each one.
+            horizontalArrangement = Arrangement.spacedBy(0.dp),
         ) {
             for (swatch in SWATCHES) {
                 Box(
                     Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(UiColor(swatch.r, swatch.g, swatch.b, 1f))
-                        .border(1.dp, Ink.Divider, CircleShape)
+                        .size(Space.touch)
                         .clickable {
                             hsv = swatch.toHsv()
                             hex = swatch.toHex()
                             onChange(swatch.copy(a = color.a))
-                        },
-                )
+                        }
+                        .semantics { role = Role.Button },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier
+                            .size(SWATCH)
+                            .clip(CircleShape)
+                            .background(UiColor(swatch.r, swatch.g, swatch.b, 1f))
+                            // The edge is what makes a white swatch visible on a light sheet and a
+                            // black one visible on a dark sheet.
+                            .border(1.dp, Ink.Divider, CircleShape),
+                    )
+                }
             }
         }
     }
@@ -257,6 +286,9 @@ internal fun parseHex(text: String): Color? {
         (value and 0xFF) / 255f,
     )
 }
+
+/** The circle the swatch *draws*. The target around it is [Space.touch]. */
+private val SWATCH = 28.dp
 
 private const val HUE_STOPS = 12
 
