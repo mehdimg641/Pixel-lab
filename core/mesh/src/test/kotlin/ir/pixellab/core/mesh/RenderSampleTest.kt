@@ -257,7 +257,15 @@ class RenderSampleTest {
         // in the side walls. A tessellator that got only the front right leaves a letter that is
         // hollow from the front and solid from behind, which shows the moment it is turned.
         val mesh = Extruder.extrude(ring(), depth = 30f, bevelSize = 4f)
-        val rendered = Rasteriser.render(mesh, goldOnWhite.copy(rotation = Vec3(0f, 18f, 0f)), 320, 320, 2)
+        // Without the cast shadow. The hole is genuinely in shadow — the ring around it stands
+        // between the plane and the light, so the counter fills with grey and the assertion below
+        // would fail on a render that is correct. This test is about the *geometry* going all the
+        // way through, so the honest thing is to take the shadow out rather than weaken the check.
+        val rendered = Rasteriser.render(
+            mesh,
+            goldOnWhite.copy(rotation = Vec3(0f, 18f, 0f), shadow = null),
+            320, 320, 2,
+        )
         write("counter", rendered)
 
         // Straight through the middle there is background, not letter.

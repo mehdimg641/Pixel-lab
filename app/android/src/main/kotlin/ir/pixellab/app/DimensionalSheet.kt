@@ -10,6 +10,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.mesh.MarkStyle
+import ir.pixellab.core.model.ShadowCast
 import ir.pixellab.core.model.Geometry3D
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.Light
@@ -127,6 +128,38 @@ fun DimensionalSheetBody(state: EditorState, model: EditorViewModel, modifier: M
             put(geometry.copy(fieldOfView = value))
         })
         SheetHint("میدان دید کمتر، پرسپکتیو را صاف‌تر می‌کند — بیشتر، حروف را اغراق‌آمیز عمیق")
+
+        // ---- the cast shadow ------------------------------------------------------------------
+
+        SheetSection("سایه")
+        val shadow = geometry.shadow
+        SheetChips {
+            SheetChip("سایه‌اندازی", chosen = shadow != null) {
+                put(geometry.copy(shadow = if (shadow == null) ShadowCast() else null))
+            }
+        }
+        if (shadow == null) {
+            SheetHint("بدون سایه، حروف روی زمینه شناورند — سایه چیزی است که می‌گوید کجا ایستاده‌اند")
+        } else {
+            SheetSlider("فاصله", shadow.distance, 0f..MAX_SHADOW_THROW, onChange = { value, _ ->
+                put(geometry.copy(shadow = shadow.copy(distance = value)))
+            })
+            SheetSlider("نرمی", shadow.softness, 0f..MAX_SHADOW_SOFTNESS, onChange = { value, _ ->
+                put(geometry.copy(shadow = shadow.copy(softness = value)))
+            })
+            SheetSlider("تیرگی", shadow.opacity, 0f..1f, onChange = { value, _ ->
+                put(geometry.copy(shadow = shadow.copy(opacity = value)))
+            })
+            // Screen angle, not a direction vector. Nobody sets a shadow by typing three
+            // components, and Photoshop has asked for an angle here since layer styles existed.
+            SheetSlider("زاویه", shadowAngle(shadow), 0f..FULL_TURN, onChange = { value, _ ->
+                put(geometry.copy(shadow = shadow.copy(direction = shadowDirection(value, shadow))))
+            })
+            SheetHint(
+                "فاصله کسری از بلندی حروف است. کمتر از آنچه هندسه اجازه می‌دهد نمی‌شود — " +
+                    "برجستگی عمیق‌تر، کوتاه‌ترین سایهٔ ممکنش بلندتر است",
+            )
+        }
 
         SheetSection("متریال")
         MaterialControls("رو", geometry.faceMaterial) { put(geometry.copy(faceMaterial = it)) }
@@ -333,6 +366,37 @@ private const val MAX_MARK_DEPTH = 2f
 
 /** Far enough that the dot clears the body entirely and casts its own shadow. */
 private const val MAX_MARK_LIFT = 2f
+
+/**
+ * The shadow's direction as an angle on screen, and back again.
+ *
+ * The model holds a direction vector because that is what the projection needs; a person setting a
+ * shadow is pointing at a clock face. The z component — how frontal the source is — is what decides
+ * the *shortest* shadow the geometry can produce, so it is preserved across a turn of the dial
+ * rather than recomputed: turning the angle should sweep the shadow round, not change its length.
+ */
+private fun shadowAngle(shadow: ShadowCast): Float {
+    val degrees = Math.toDegrees(kotlin.math.atan2(-shadow.direction.y, shadow.direction.x).toDouble())
+    return ((degrees + FULL_TURN) % FULL_TURN).toFloat()
+}
+
+private fun shadowDirection(angle: Float, shadow: ShadowCast): Vec3 {
+    val lateral = kotlin.math.hypot(shadow.direction.x, shadow.direction.y)
+    val radians = Math.toRadians(angle.toDouble())
+    return Vec3(
+        (kotlin.math.cos(radians) * lateral).toFloat(),
+        (-kotlin.math.sin(radians) * lateral).toFloat(),
+        shadow.direction.z,
+    )
+}
+
+private const val FULL_TURN = 360f
+
+/** Past a third of the letters' height the type stops reading as printed and starts to float. */
+private const val MAX_SHADOW_THROW = 0.6f
+
+/** A fraction of the frame; beyond this the shadow is a wash rather than a shadow. */
+private const val MAX_SHADOW_SOFTNESS = 0.4f
 
 private const val MIN_FOV = 10f
 private const val MAX_FOV = 90f

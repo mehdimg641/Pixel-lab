@@ -8,6 +8,7 @@ import ir.pixellab.core.model.Geometry3D
 import ir.pixellab.core.model.Light
 import ir.pixellab.core.model.LightRig
 import ir.pixellab.core.model.Material
+import ir.pixellab.core.model.ShadowCast
 import ir.pixellab.core.model.Vec2
 import ir.pixellab.core.model.Vec3
 import org.junit.jupiter.api.Test
@@ -290,6 +291,109 @@ class RenderPipelineTest {
         ((out.pixels[0] ushr 24) and 0xFF) shouldBe 0
     }
 
+    // ---- the cast shadow -------------------------------------------------------------------
+
+    /**
+     * Lit from the upper left and thrown onto a plane behind, which is the ordinary arrangement and
+     * the one where a mistake in the projection is easiest to see: the shadow has to land *down and
+     * to the right*, opposite the light, and nowhere else.
+     */
+    private val shadowed = geometry.copy(
+        lighting = LightRig(
+            key = Light(direction = Vec3(0.5f, -0.5f, -0.7f)),
+            fill = Light(intensity = 0f, castsShadow = false),
+        ),
+        shadow = ShadowCast(
+            distance = 0.3f,
+            softness = 0.02f,
+            opacity = 0.8f,
+            direction = Vec3(0.5f, -0.5f, -0.7f),
+        ),
+    )
+
+    @Test
+    fun `the letters throw a shadow onto what is behind them`() {
+        val mesh = Extruder.extrude(listOf(square(100f)), depth = 20f, bevelSize = 4f)
+        val with = Rasteriser.render(mesh, shadowed, 128, 128, supersample = 1)
+        val without = Rasteriser.render(mesh, shadowed.copy(shadow = null), 128, 128, supersample = 1)
+
+        // Counted within each render rather than compared pixel against pixel: the camera is framed
+        // to hold the shadow, so switching it off moves the letter as well, and a difference taken
+        // between the two would be measuring the reframing.
+        fun partlyCovered(out: Rendered) = out.pixels.count { (it ushr 24) and 0xFF in 1..254 }
+
+        // At one sample per pixel there is no anti-aliasing to blur an edge, so *every* part-covered
+        // pixel is shadow. Without one there is none at all.
+        (partlyCovered(with) > 200) shouldBe true
+        partlyCovered(without) shouldBe 0
+    }
+
+    @Test
+    fun `the shadow falls away from the light, not towards it`() {
+        // The sign error that produces a picture: a shadow on the same side as the light looks like
+        // a render until you notice every object is lit from where its own shadow is.
+        val mesh = Extruder.extrude(listOf(square(100f)), depth = 20f, bevelSize = 4f)
+        val out = Rasteriser.render(mesh, shadowed, 128, 128, supersample = 1)
+
+        // Centroids rather than sampled corners. Where the shadow lands depends on the throw and on
+        // the framing that now has to hold it, so a test that names two pixels has to be rewritten
+        // every time either is tuned — and would pass for the wrong reason in between.
+        fun centroid(of: (Int) -> Boolean): Pair<Float, Float> {
+            var sx = 0.0
+            var sy = 0.0
+            var n = 0
+            for (i in out.pixels.indices) {
+                if (!of((out.pixels[i] ushr 24) and 0xFF)) continue
+                sx += i % 128
+                sy += i / 128
+                n++
+            }
+            check(n > 0) { "nothing matched" }
+            return (sx / n).toFloat() to (sy / n).toFloat()
+        }
+
+        val letter = centroid { it == 255 }
+        val shadow = centroid { it in 1..254 }
+
+        // The shadow's own light runs (+0.5, −0.5, −0.7): rightwards, and downwards in a y-up
+        // world. The buffer is y-down, so both come out as "larger" on screen.
+        (shadow.first > letter.first) shouldBe true
+        (shadow.second > letter.second) shouldBe true
+    }
+
+    @Test
+    fun `a light told not to cast does not`() {
+        // `castsShadow` was in the model for twenty-odd waves and read by nothing. Now that it is
+        // read, the false case has to keep working — a fill light that threw its own shadow would
+        // give every letter two at two angles, which is the thing photographers work to avoid.
+        val mesh = Extruder.extrude(listOf(square(100f)), depth = 20f, bevelSize = 4f)
+        val muted = shadowed.copy(
+            lighting = shadowed.lighting.copy(
+                key = shadowed.lighting.key.copy(castsShadow = false),
+                fill = shadowed.lighting.fill.copy(castsShadow = false),
+            ),
+        )
+        val out = Rasteriser.render(mesh, muted, 128, 128, supersample = 1)
+        val bare = Rasteriser.render(mesh, muted.copy(shadow = null), 128, 128, supersample = 1)
+        out.pixels.toList() shouldBe bare.pixels.toList()
+    }
+
+    @Test
+    fun `a softer shadow covers more ground than a sharp one`() {
+        val mesh = Extruder.extrude(listOf(square(100f)), depth = 20f, bevelSize = 4f)
+        fun spread(softness: Float): Int {
+            val out = Rasteriser.render(
+                mesh,
+                shadowed.copy(shadow = shadowed.shadow!!.copy(softness = softness)),
+                128, 128, supersample = 1,
+            )
+            return out.pixels.count { (it ushr 24) and 0xFF in 1..254 }
+        }
+        // Softness spends itself on the penumbra, so the part-covered band grows with it. Counting
+        // the band rather than the whole shadow is what makes this insensitive to the shape.
+        (spread(0.15f) > spread(0.01f)) shouldBe true
+    }
+
     @Test
     fun `an empty mesh renders to nothing rather than failing`() {
         Rasteriser.render(Mesh.EMPTY, geometry, 32, 32).isEmpty shouldBe true
@@ -346,7 +450,10 @@ class RenderPipelineTest {
         // colour in unweighted is what puts a dark halo round every edge of a cut-out — and a 3D
         // letter is entirely edge.
         val mesh = Extruder.extrude(listOf(square(100f)), depth = 10f, bevelSize = 3f)
-        val out = Rasteriser.render(mesh, geometry, 96, 96, supersample = 3)
+        // No shadow, because a shadow is *legitimately* a dark part-transparent pixel and would
+        // trip an assertion that exists to catch a fringe. Turning off the unrelated feature is
+        // what leaves this testing the thing it is named for.
+        val out = Rasteriser.render(mesh, geometry.copy(shadow = null), 96, 96, supersample = 3)
 
         for (pixel in out.pixels) {
             val alpha = (pixel ushr 24) and 0xFF

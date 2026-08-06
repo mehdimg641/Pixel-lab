@@ -63,7 +63,13 @@ object Rasteriser {
         // also rotated leans with it rather than in screen space.
         val model = Mat4.rotation(geometry.rotation) * Mat4.obliqueExtrusion(geometry.extrusionTilt)
         val normalMatrix = Mat4.normalMatrix(model)
-        val (eye, view) = framing(mesh, model, geometry, width.toFloat() / height)
+        // The shadow is framed with the letters. Fitting the camera to the mesh alone slices the
+        // shadow off at the edge of the picture — a hard straight cut down one side, which reads as
+        // a rendering fault rather than as a choice, and is worse than having no shadow at all.
+        val shadowReach = geometry.shadow
+            ?.let { CastShadow.reach(mesh, model, geometry.lighting, it) }
+            .orEmpty()
+        val (eye, view) = framing(mesh, model, geometry, width.toFloat() / height, shadowReach)
         val projection = Mat4.perspective(
             geometry.fieldOfView.coerceIn(MIN_FOV, MAX_FOV),
             width.toFloat() / height,
@@ -74,6 +80,22 @@ object Rasteriser {
 
         val colour = IntArray(w * h)
         val depth = FloatArray(w * h) { Float.MAX_VALUE }
+
+        // Before the letters, never after: a shadow is what the surface behind them looks like, so
+        // anything the mesh covers should simply overwrite it. Drawing it afterwards would need the
+        // silhouette masked out of it, which is the same picture arrived at by more work.
+        geometry.shadow?.let { cast ->
+            CastShadow.draw(
+                mesh = mesh,
+                model = model,
+                viewProjection = viewProjection,
+                rig = geometry.lighting,
+                cast = cast,
+                colour = colour,
+                width = w,
+                height = h,
+            )
+        }
 
         // Materials decoded once. A base colour is authored as an sRGB swatch and the shading runs
         // in linear light; decoding per pixel would be a pow per channel per fragment for a value
@@ -293,6 +315,8 @@ object Rasteriser {
         model: Mat4,
         geometry: Geometry3D,
         aspect: Float,
+        /** Already in world space — the shadow is projected before the camera exists. */
+        alsoHold: List<Vec3> = emptyList(),
     ): Pair<Vec3, Mat4> {
         var minX = Float.MAX_VALUE
         var minY = Float.MAX_VALUE
@@ -308,6 +332,16 @@ object Rasteriser {
             if (p.x > maxX) maxX = p.x
             if (p.y > maxY) maxY = p.y
             if (p.z > maxZ) maxZ = p.z
+        }
+
+        // Width and height only. The shadow lies on a plane well behind the letters, and letting it
+        // stretch the depth range would push the camera back and shrink the type for no reason —
+        // nothing is being framed *in depth*, only across the picture.
+        for (p in alsoHold) {
+            if (p.x < minX) minX = p.x
+            if (p.y < minY) minY = p.y
+            if (p.x > maxX) maxX = p.x
+            if (p.y > maxY) maxY = p.y
         }
 
         val centre = Vec3((minX + maxX) / 2f, (minY + maxY) / 2f, (minZ + maxZ) / 2f)

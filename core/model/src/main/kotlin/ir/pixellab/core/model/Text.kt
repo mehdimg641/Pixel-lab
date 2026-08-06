@@ -328,7 +328,84 @@ data class Geometry3D(
     val lighting: LightRig = LightRig(),
     /** Camera field of view in degrees; lower values flatten the perspective. */
     val fieldOfView: Float = 35f,
+
+    /**
+     * The shadow the letters throw onto whatever is behind them.
+     *
+     * Null means none, and that was the only behaviour available until now — [Light.castsShadow] had
+     * been in the model since the rig was written, set at two call sites, and read by no renderer at
+     * all. A document could say the key light cast a shadow, save it, reload it, and no pixel ever
+     * changed.
+     *
+     * It belongs to the *look* rather than to the renderer's arguments for the same reason the bevel
+     * does: the same letters with a tight dark shadow and with a wide soft one are two different
+     * pieces of design, and the difference has to survive being saved.
+     */
+    val shadow: ShadowCast? = ShadowCast(),
 )
+
+/**
+ * How far behind the type its shadow falls, and how soft it is when it lands.
+ *
+ * Everything here is a *ratio* rather than a length, so a look survives being re-rendered at export
+ * size. A softness in pixels that was right on a 400px preview is a smear at 4000, which is the
+ * usual way a 3D style stops surviving the trip to print.
+ */
+@Serializable
+data class ShadowCast(
+    /**
+     * How far the shadow is thrown, as a fraction of the type's own height.
+     *
+     * **Not the depth of the receiving plane, which is what this was first written as and what it
+     * physically is.** The plane depth is the honest quantity and a useless control: the throw it
+     * produces also depends on the extrusion's depth and on how far off-axis the key light sits, so
+     * the same number gave a discreet shadow on one style and a grey slab twice the size of the
+     * letters on the next. A designer setting this is asking "how far behind does it fall", and the
+     * renderer solves for the plane that answers it. The projection stays exact either way — this
+     * chooses which end of it the user holds.
+     *
+     * A tenth or so reads as a poster; past a third the type starts to float off the page.
+     */
+    val distance: Float = 0.12f,
+    /**
+     * The penumbra, as a fraction of the frame.
+     *
+     * A real shadow's edge softens with distance from what casts it, which is why this and
+     * [distance] are separate: a card standing on a table has a sharp edge at its foot and a soft
+     * one at its top, and one number cannot say both.
+     */
+    val softness: Float = 0.18f,
+    /** How dark it gets where it is fully occluded. One would be pitch black, which nothing is. */
+    val opacity: Float = 0.55f,
+    val color: Color = Color.BLACK,
+
+    /**
+     * Which way the light that throws it comes from — the shadow's own, not the key's.
+     *
+     * Photoshop's Drop Shadow has carried a separate Angle since the layer-style panel existed, with
+     * "Use Global Light" as an opt-in rather than the rule, and it is worth saying why rather than
+     * treating it as a quirk to copy. A shadow's *reach* is the light's lateral direction divided by
+     * its axial one, multiplied by the depth of the thing casting it. A key light placed where the
+     * metal looks best is usually well off-axis, and an extruded title is deep — so a physically
+     * exact shadow from the key comes out longer than the letters are tall. That is not a bug in the
+     * arithmetic; it is what a real lamp in that position would do, and it is why nobody lights a
+     * poster with one lamp.
+     *
+     * So this defaults to a near-frontal source, which is what actually throws the compact shadow
+     * under a printed title, and the key light is left free to be wherever the highlight wants it.
+     *
+     * **[distance] cannot go below what the geometry allows.** The receiving surface can sit at most
+     * flush against the back of the letters, so a deep extrusion has a shortest possible shadow. Ask
+     * for less and you get that.
+     */
+    val direction: Vec3 = Vec3(0.35f, -0.45f, -1.6f),
+) {
+    init {
+        require(distance >= 0f) { "a shadow cannot fall in front of what casts it, got $distance" }
+        require(softness >= 0f) { "softness is a fraction of the frame, got $softness" }
+        require(opacity in 0f..1f) { "opacity is 0..1, got $opacity" }
+    }
+}
 
 /** Everything that turns a string into rendered artwork. */
 @Serializable
