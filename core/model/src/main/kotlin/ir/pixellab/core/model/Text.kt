@@ -197,6 +197,50 @@ data class TextBackground(
     }
 }
 
+/**
+ * A surface relief, generated rather than loaded.
+ *
+ * The reference images people bring to this application are made of *materials* — leather, knitted
+ * wool, rusted steel, hammered copper — and none of them is a colour. They are a fine height
+ * variation catching the light, and without one a "leather" letter is a brown letter.
+ *
+ * Generated from a formula rather than shipped as images, for two reasons that happen to agree. The
+ * project is offline-first and ships no asset pack, so a texture that needs a download is a texture
+ * nobody has; and a procedural relief has no resolution, so it stays sharp on a letter blown up to
+ * poster size, which a 1024-pixel photograph of leather does not.
+ */
+@Serializable
+enum class Relief {
+    NONE,
+
+    /** Fine irregular cells with soft creases between them. */
+    LEATHER,
+
+    /** Interlocking loops in rows — the one that reads as *hand-made* rather than as noise. */
+    KNIT,
+
+    /** Fine parallel scratches. Meaningless without [Material.anisotropy], which is why it sets it. */
+    BRUSHED,
+
+    /** Pitted and eaten away, coarser than leather and much less regular. */
+    RUST,
+
+    /** Sparse aggregate in a fine matrix. */
+    CONCRETE,
+
+    /** Long grain with occasional knots. */
+    WOOD,
+
+    /** Overlapping shallow dents, as on beaten metal. */
+    HAMMERED,
+
+    /** Crystalline branching — frost on glass. */
+    FROST,
+
+    /** A regular over-and-under weave. */
+    CANVAS,
+}
+
 /** Physically-based material for a 3D text or shape layer. */
 @Serializable
 data class Material(
@@ -223,12 +267,155 @@ data class Material(
      * gold; they are asking for a line.
      */
     val unlit: Boolean = false,
+    /** Fine height variation across the surface, generated rather than loaded. */
+    val relief: Relief = Relief.NONE,
+    /** How large the relief's features are, as a fraction of the letter. Smaller is finer. */
+    val reliefScale: Float = 0.08f,
+    /** How much the relief tilts the surface. Past about a half it stops reading as a surface. */
+    val reliefDepth: Float = 0.5f,
+    /**
+     * Retro-reflective fuzz at grazing angles — the lobe that makes cloth look like cloth.
+     *
+     * Wool, velvet and felt are bright at their *silhouette* rather than where they face the light,
+     * because the fibres standing off the surface catch it side-on. No amount of adjusting roughness
+     * produces that: a rough dielectric goes evenly dim, which is why every "fabric" made without
+     * this lobe reads as matte plastic.
+     */
+    val sheen: Float = 0f,
+    val sheenColor: Color = Color.WHITE,
+    /**
+     * Stretches the specular highlight along one axis. Negative turns the brushing through 90°.
+     *
+     * What separates brushed steel from a mirror: the scratches run one way, so the reflection
+     * smears across them into a band rather than staying a point.
+     */
+    val anisotropy: Float = 0f,
+    /**
+     * How much light passes through rather than bouncing off. 1 is clear glass.
+     *
+     * Refraction is approximated by sampling the environment along the bent view direction, which
+     * is what a real-time renderer does — a letter of glass shows the room behind it distorted,
+     * not the geometry behind it. On a title that is the whole effect; on a lens it would not be.
+     */
+    val transmission: Float = 0f,
+    /** Refractive index. 1.5 is glass, 1.33 water, 2.4 diamond. */
+    val ior: Float = 1.5f,
 ) {
+    init {
+        require(reliefScale > 0f) { "reliefScale is a size and must be positive, got $reliefScale" }
+        require(anisotropy in -1f..1f) { "anisotropy is -1..1, got $anisotropy" }
+        require(ior >= 1f) { "a refractive index below one is not a material, got $ior" }
+    }
+
     companion object {
         val GLOSSY_WHITE = Material(baseColor = Color.WHITE, roughness = 0.25f, clearCoat = 1f)
         val GOLD = Material(baseColor = Color(1f, 0.77f, 0.34f), metallic = 1f, roughness = 0.25f)
         val CHROME = Material(baseColor = Color(0.95f, 0.95f, 0.97f), metallic = 1f, roughness = 0.05f)
         val MATTE = Material(roughness = 0.9f)
+
+        /**
+         * The looks the reference images are made of.
+         *
+         * Each one is a claim about a real surface rather than a colour with a name on it, which is
+         * why several of them barely differ in base colour and differ enormously in everything else:
+         * brushed steel and chrome are the same metal, and the whole difference is the scratches.
+         */
+        val LEATHER = Material(
+            baseColor = Color(0.36f, 0.19f, 0.11f),
+            roughness = 0.62f,
+            relief = Relief.LEATHER,
+            reliefScale = 0.05f,
+            reliefDepth = 0.6f,
+            sheen = 0.25f,
+            sheenColor = Color(0.7f, 0.55f, 0.45f),
+        )
+
+        val KNIT = Material(
+            baseColor = Color(0.78f, 0.28f, 0.3f),
+            roughness = 0.95f,
+            relief = Relief.KNIT,
+            reliefScale = 0.06f,
+            reliefDepth = 0.85f,
+            // The lobe is the whole point: wool is bright at its edges, not at its highlights.
+            sheen = 1f,
+            sheenColor = Color(1f, 0.86f, 0.82f),
+        )
+
+        val BRUSHED_STEEL = Material(
+            baseColor = Color(0.79f, 0.81f, 0.84f),
+            metallic = 1f,
+            roughness = 0.32f,
+            relief = Relief.BRUSHED,
+            reliefScale = 0.012f,
+            reliefDepth = 0.25f,
+            anisotropy = 0.85f,
+        )
+
+        val COPPER = Material(baseColor = Color(0.95f, 0.64f, 0.54f), metallic = 1f, roughness = 0.22f)
+
+        val ROSE_GOLD = Material(baseColor = Color(0.98f, 0.76f, 0.72f), metallic = 1f, roughness = 0.18f)
+
+        val RUSTED = Material(
+            baseColor = Color(0.45f, 0.22f, 0.12f),
+            metallic = 0.35f,
+            roughness = 0.86f,
+            relief = Relief.RUST,
+            reliefScale = 0.07f,
+            reliefDepth = 0.9f,
+        )
+
+        val GLASS = Material(
+            baseColor = Color(0.94f, 0.97f, 1f),
+            roughness = 0.03f,
+            transmission = 0.94f,
+            ior = 1.52f,
+            clearCoat = 0.4f,
+        )
+
+        val WOOD = Material(
+            baseColor = Color(0.52f, 0.34f, 0.18f),
+            roughness = 0.55f,
+            relief = Relief.WOOD,
+            reliefScale = 0.09f,
+            reliefDepth = 0.4f,
+            clearCoat = 0.25f,
+        )
+
+        val CONCRETE = Material(
+            baseColor = Color(0.62f, 0.61f, 0.58f),
+            roughness = 0.94f,
+            relief = Relief.CONCRETE,
+            reliefScale = 0.04f,
+            reliefDepth = 0.55f,
+        )
+
+        val HAMMERED = Material(
+            baseColor = Color(0.86f, 0.72f, 0.42f),
+            metallic = 1f,
+            roughness = 0.3f,
+            relief = Relief.HAMMERED,
+            reliefScale = 0.11f,
+            reliefDepth = 0.8f,
+        )
+
+        val SNOW = Material(
+            baseColor = Color(0.96f, 0.97f, 1f),
+            roughness = 0.75f,
+            relief = Relief.FROST,
+            reliefScale = 0.05f,
+            reliefDepth = 0.5f,
+            sheen = 0.55f,
+        )
+
+        val VELVET = Material(
+            baseColor = Color(0.24f, 0.06f, 0.22f),
+            roughness = 1f,
+            relief = Relief.CANVAS,
+            reliefScale = 0.02f,
+            reliefDepth = 0.3f,
+            sheen = 1f,
+            sheenColor = Color(0.85f, 0.55f, 0.8f),
+        )
     }
 }
 

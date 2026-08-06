@@ -88,10 +88,24 @@ object Pbr {
         )
 
         for (light in listOfNotNull(rig.key, rig.fill, rig.rim)) {
-            result = result + contribution(light, n, v, nDotV, roughness, f0, diffuseColor)
+            result = result + contribution(light, n, v, nDotV, roughness, f0, diffuseColor, material)
         }
 
         if (material.clearCoat > 0f) result = result + clearCoat(material, n, v, nDotV, rig)
+
+        // What passes *through* rather than bouncing off, blended over the opaque result. Last,
+        // because it replaces the body of the surface while leaving its highlights alone — a glass
+        // letter still has a specular edge, and losing that is what makes cheap glass look like a
+        // hole cut in the picture.
+        if (material.transmission > 0f) {
+            val amount = material.transmission.coerceIn(0f, 1f) * (1f - metallic)
+            val through = refracted(n, v, material, roughness, environment)
+            result = Vec3(
+                result.x * (1f - amount) + through.x * amount,
+                result.y * (1f - amount) + through.y * amount,
+                result.z * (1f - amount) + through.z * amount,
+            )
+        }
 
         return Color(
             r = result.x + material.emissive.r,
@@ -109,6 +123,7 @@ object Pbr {
         roughness: Float,
         f0: Vec3,
         diffuseColor: Vec3,
+        material: Material,
     ): Vec3 {
         // The rig stores the direction light *travels*; the shading needs the direction towards it.
         val l = (light.direction * -1f).normalised()
@@ -119,7 +134,11 @@ object Pbr {
         val nDotH = max(n dot h, 0f)
         val vDotH = max(v dot h, MIN_DOT)
 
-        val d = distribution(nDotH, roughness)
+        val d = if (material.anisotropy != 0f) {
+            anisotropicDistribution(n, h, roughness, material.anisotropy)
+        } else {
+            distribution(nDotH, roughness)
+        }
         val g = geometry(nDotL, nDotV, roughness)
         val f = fresnel(vDotH, f0)
 
@@ -139,11 +158,121 @@ object Pbr {
             light.color.b * light.intensity,
         )
 
-        return Vec3(
+        val lit = Vec3(
             (kd.x * diffuseColor.x / PI.toFloat() + specular.x) * radiance.x * nDotL,
             (kd.y * diffuseColor.y / PI.toFloat() + specular.y) * radiance.y * nDotL,
             (kd.z * diffuseColor.z / PI.toFloat() + specular.z) * radiance.z * nDotL,
         )
+        if (material.sheen <= 0f) return lit
+        return lit + sheen(material, nDotH, nDotL, nDotV, radiance)
+    }
+
+    /**
+     * The fuzz lobe — what makes cloth look like cloth.
+     *
+     * Wool, velvet and felt are brightest at their **silhouette**, not where they face the light,
+     * because the fibres standing off the surface catch it side-on. No setting of roughness produces
+     * that: a rough dielectric dims evenly in every direction, which is why fabric rendered without
+     * this reads as matte plastic and why every attempt to fix it by making the surface rougher
+     * makes it worse.
+     *
+     * The distribution is Estevez–Kulla's "Charlie" — an inverted power of the sine rather than the
+     * usual exponential of the cosine — because it is the one that peaks *away* from the normal and
+     * therefore actually produces the rim. Its visibility term is approximated by the simple
+     * `1/(4(l·n + v·n − l·n·v·n))` that ships with it, which is not energy-conserving and is what
+     * everyone shipping this lobe in real time uses.
+     */
+    private fun sheen(material: Material, nDotH: Float, nDotL: Float, nDotV: Float, radiance: Vec3): Vec3 {
+        val amount = material.sheen.coerceIn(0f, 1f)
+        // Reusing the surface roughness would tie the fuzz to the body, and they are different
+        // things: velvet is a smooth backing under a very diffuse pile.
+        val alpha = max(1f - amount, MIN_ROUGHNESS)
+        val invR = 1f / alpha
+        val sin2 = max(1f - nDotH * nDotH, 0f)
+        val d = (2f + invR) * sin2.pow(invR * 0.5f) / TWO_PI
+        val visibility = 1f / (4f * (nDotL + nDotV - nDotL * nDotV) + MIN_DOT)
+        val strength = d * visibility * amount * nDotL
+        return Vec3(
+            material.sheenColor.r * radiance.x * strength,
+            material.sheenColor.g * radiance.y * strength,
+            material.sheenColor.b * radiance.z * strength,
+        )
+    }
+
+    /**
+     * GGX stretched along one axis — brushed metal rather than a mirror.
+     *
+     * The scratches all run one way, so the reflection smears *across* them into a band instead of
+     * staying a point. That band is the entire visual difference between brushed steel and chrome,
+     * and neither roughness nor a texture can fake it: a rougher mirror is a blurrier point.
+     *
+     * The tangent is the world X axis, and the sign of [anisotropy] turns the brushing through 90°
+     * by swapping which roughness is the stretched one. Taking it from geometry instead would mean
+     * carrying a tangent frame through the extruder for a control whose only meaningful settings on
+     * a letter are "along" and "across".
+     */
+    private fun anisotropicDistribution(n: Vec3, h: Vec3, roughness: Float, anisotropy: Float): Float {
+        val strength = abs(anisotropy).coerceIn(0f, ANISOTROPY_LIMIT)
+        val alpha = roughness * roughness
+        val stretched = alpha / max(1f - strength, MIN_ROUGHNESS)
+        val squeezed = alpha * (1f - strength)
+        val (alongAlpha, acrossAlpha) = if (anisotropy >= 0f) stretched to squeezed else squeezed to stretched
+
+        // A tangent frame from the world axes, made orthogonal to whatever the normal happens to be.
+        val tangent = orthogonalise(Vec3(1f, 0f, 0f), n)
+        val bitangent = n cross tangent
+
+        val hDotT = h dot tangent
+        val hDotB = h dot bitangent
+        val hDotN = max(h dot n, MIN_DOT)
+
+        val term = (hDotT * hDotT) / (alongAlpha * alongAlpha) +
+            (hDotB * hDotB) / (acrossAlpha * acrossAlpha) +
+            hDotN * hDotN
+        return 1f / (PI.toFloat() * alongAlpha * acrossAlpha * term * term + MIN_DOT)
+    }
+
+    /**
+     * What the environment looks like *through* the surface.
+     *
+     * The view direction is bent by Snell's law and the environment sampled along it, which is what
+     * a real-time renderer does and is honest about its limit: a glass letter shows the *room*
+     * behind it distorted, not the geometry behind it. On a title that is the whole effect. It would
+     * not be enough for a lens, and this is not a lens.
+     *
+     * Total internal reflection is handled by falling back to the reflected direction, which is what
+     * physically happens and also stops the square root going imaginary.
+     */
+    private fun refracted(
+        n: Vec3,
+        v: Vec3,
+        material: Material,
+        roughness: Float,
+        environment: EnvironmentMap,
+    ): Vec3 {
+        val eta = 1f / max(material.ior, 1f)
+        val cosI = (n dot v).coerceIn(-1f, 1f)
+        val k = 1f - eta * eta * (1f - cosI * cosI)
+        val direction = if (k < 0f) {
+            (n * (2f * cosI) - v).normalised()
+        } else {
+            (v * -eta + n * (eta * cosI - sqrt(k))).normalised()
+        }
+        val sample = environment.sample(direction, roughness)
+        // Tinted by the base colour, so coloured glass is possible at all — clear glass is simply
+        // a base colour of white, which is what the preset uses.
+        return Vec3(
+            sample.x * material.baseColor.r,
+            sample.y * material.baseColor.g,
+            sample.z * material.baseColor.b,
+        )
+    }
+
+    /** Gram-Schmidt: the part of [candidate] that is perpendicular to [normal], unit length. */
+    private fun orthogonalise(candidate: Vec3, normal: Vec3): Vec3 {
+        val projected = candidate - normal * (candidate dot normal)
+        // A normal that happens to be the X axis leaves nothing behind; any other axis will do.
+        return if (projected dot projected < MIN_DOT) (Vec3(0f, 1f, 0f) cross normal).normalised() else projected.normalised()
     }
 
     /**
@@ -381,6 +510,17 @@ object Pbr {
     private const val SOFTBOX_WARM = 0.97f
 
     private const val MIN_DOT = 1e-4f
+
+    private const val TWO_PI = (2.0 * PI).toFloat()
+
+    /**
+     * How far apart the two roughnesses may be pulled.
+     *
+     * At 1.0 the squeezed axis reaches zero width and the highlight becomes an infinitely thin line
+     * carrying infinite energy — a row of blown-out pixels across a letter. Brushed metal is nowhere
+     * near that limit anyway; the look is a band, not a wire.
+     */
+    private const val ANISOTROPY_LIMIT = 0.92f
 
     /** Only to keep the division finite; far below any value a real roughness can produce. */
     private const val MIN_DENOMINATOR = 1e-12f

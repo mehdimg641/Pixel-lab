@@ -15,6 +15,7 @@ import ir.pixellab.core.model.Geometry3D
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.Light
 import ir.pixellab.core.model.Material
+import ir.pixellab.core.model.Relief
 import ir.pixellab.core.model.Vec3
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -259,6 +260,46 @@ internal fun MaterialControls(label: String, material: Material, onChange: (Mate
     SheetSlider("لاک $label", material.clearCoat, 0f..1f, onChange = { value, _ ->
         onChange(material.copy(clearCoat = value))
     })
+
+    // ---- what it is made of, as opposed to what colour it is -------------------------------------
+
+    // The grain. Offered before the three lobes below because it is the one anybody looking at a
+    // reference image is actually reaching for — «چرم» is not a brown, it is a surface.
+    SheetChips {
+        for ((name, relief) in RELIEFS) {
+            SheetChip(name, chosen = material.relief == relief) { onChange(material.copy(relief = relief)) }
+        }
+    }
+    if (material.relief != Relief.NONE) {
+        SheetSlider("درشتی بافت", material.reliefScale, MIN_RELIEF..MAX_RELIEF, onChange = { value, _ ->
+            onChange(material.copy(reliefScale = value))
+        })
+        SheetSlider("عمق بافت", material.reliefDepth, 0f..MAX_RELIEF_DEPTH, onChange = { value, _ ->
+            onChange(material.copy(reliefDepth = value))
+        })
+        SheetHint("بافت فقط نور را می‌شکند و لبهٔ حرف را تغییر نمی‌دهد — حاشیهٔ حرف صاف می‌ماند")
+    }
+
+    // Named for what it does rather than for the lobe it is: nobody reaches for "sheen", they reach
+    // for wool.
+    SheetSlider("پرز (پارچه و پشم)", material.sheen, 0f..1f, onChange = { value, _ ->
+        onChange(material.copy(sheen = value))
+    })
+    // Crosses zero rather than pairing a magnitude with a direction switch, because the two ends
+    // genuinely are the two brushing directions and the middle genuinely is no brushing.
+    SheetSlider("کشیدگی بازتاب", material.anisotropy, -1f..1f, onChange = { value, _ ->
+        onChange(material.copy(anisotropy = value.coerceIn(-1f, 1f)))
+    })
+    SheetSlider("شفافیت (شیشه)", material.transmission, 0f..1f, onChange = { value, _ ->
+        onChange(material.copy(transmission = value))
+    })
+    if (material.transmission > 0f) {
+        SheetSlider("ضریب شکست", material.ior, MIN_IOR..MAX_IOR, onChange = { value, _ ->
+            onChange(material.copy(ior = value.coerceAtLeast(1f)))
+        })
+        SheetHint("۱٫۵ شیشه، ۱٫۳۳ آب، ۲٫۴ الماس")
+    }
+
     ColorPickerBody(color = material.baseColor, onChange = { onChange(material.copy(baseColor = it)) })
 }
 
@@ -297,11 +338,55 @@ private fun direction(azimuthDegrees: Float, elevationDegrees: Float): Vec3 {
     )
 }
 
+/**
+ * The surfaces a letter can be made of.
+ *
+ * Each is a claim about a real material rather than a colour with a name on it, which is why some of
+ * them barely differ in colour and differ enormously in everything else — brushed steel and chrome
+ * are the same metal, and the whole difference between them is the scratches. The metals come first
+ * because a gold title is what most people open this panel for.
+ */
+/** Fine enough to read as a texture, coarse enough that one feature spans a whole letter. */
+private const val MIN_RELIEF = 0.005f
+private const val MAX_RELIEF = 0.4f
+
+/** Past about one the tilt exceeds the surface and the letter grows black pits. */
+private const val MAX_RELIEF_DEPTH = 1.2f
+
+private const val MIN_IOR = 1f
+private const val MAX_IOR = 2.6f
+
 private val MATERIALS = listOf(
     "طلا" to Material.GOLD,
     "کروم" to Material.CHROME,
+    "مس" to Material.COPPER,
+    "رزگلد" to Material.ROSE_GOLD,
+    "فولاد برس‌خورده" to Material.BRUSHED_STEEL,
+    "چکش‌کاری" to Material.HAMMERED,
+    "شیشه" to Material.GLASS,
+    "چرم" to Material.LEATHER,
+    "بافت پشمی" to Material.KNIT,
+    "مخمل" to Material.VELVET,
+    "چوب" to Material.WOOD,
+    "زنگ‌زده" to Material.RUSTED,
+    "بتن" to Material.CONCRETE,
+    "برف" to Material.SNOW,
     "براق" to Material.GLOSSY_WHITE,
     "مات" to Material.MATTE,
+)
+
+/** The reliefs, named for the surface each is trying to be rather than for its formula. */
+private val RELIEFS: List<Pair<String, Relief>> = listOf(
+    "بدون بافت" to Relief.NONE,
+    "چرم" to Relief.LEATHER,
+    "بافت پشمی" to Relief.KNIT,
+    "برس‌خورده" to Relief.BRUSHED,
+    "زنگ" to Relief.RUST,
+    "بتن" to Relief.CONCRETE,
+    "چوب" to Relief.WOOD,
+    "چکش‌کاری" to Relief.HAMMERED,
+    "برفک" to Relief.FROST,
+    "کرباس" to Relief.CANVAS,
 )
 
 /**

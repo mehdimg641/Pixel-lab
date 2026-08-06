@@ -6,6 +6,7 @@ import ir.pixellab.core.model.Geometry3D
 import ir.pixellab.core.model.GradientStop
 import ir.pixellab.core.model.Material
 import ir.pixellab.core.model.Ramp
+import ir.pixellab.core.model.Relief
 import ir.pixellab.core.model.Vec3
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -126,6 +127,11 @@ object Rasteriser {
             ?: geometry.faceFill?.let { FacePaint.of(it, mesh) }
         val sidePaint = geometry.sideFill?.let { SidePaint.of(it, mesh) }
 
+        // Where the surface's own coordinates come from, measured once. Every fragment that carries
+        // a grain or a gradient needs the letter's bounding box, and asking the mesh for it inside
+        // the inner loop would walk every vertex per pixel.
+        val surfaceFrame = SurfaceFrame.of(mesh)
+
         for (t in 0 until mesh.triangleCount) {
             val surface = mesh.surfaces[t]
             drawTriangle(
@@ -140,6 +146,7 @@ object Rasteriser {
                 } else {
                     materials.getValue(surface)
                 },
+                surface = surfaceFrame,
                 // Only the face, and only where a mark has not claimed its own material — a dot
                 // given chrome asked for chrome, not for the body's gradient.
                 paint = when {
@@ -178,6 +185,7 @@ object Rasteriser {
         eye: Vec3,
         material: Material,
         paint: SurfacePaint?,
+        surface: SurfaceFrame,
         geometry: Geometry3D,
         environment: EnvironmentMap,
         colour: IntArray,
@@ -278,19 +286,34 @@ object Rasteriser {
                     (l0 * na.z * wa + l1 * nb.z * wb + l2 * nc.z * wc) / invW,
                 )
                 val toEye = (eye - world).normalised()
-                val normal = normalRaw
 
-                // The face's gradient, sampled from the letter's *own* coordinates rather than the
-                // world ones interpolated above. Using world space would slide the ramp across the
-                // letter as it turned, which reads as the paint being on the camera rather than on
-                // the letter. Object space is fixed to the glyph, so the colours stay where the
-                // artist put them under any rotation or lean.
+                // Object space, in the letter's own coordinates rather than the world ones
+                // interpolated above. Two things need it and both need it for the same reason:
+                // using world space would slide the paint and the grain across the letter as it
+                // turned, which reads as the surface being on the camera rather than on the letter.
+                val needsSurface = paint != null || material.relief != Relief.NONE
+                val ox = if (needsSurface) (l0 * objectA.x * wa + l1 * objectB.x * wb + l2 * objectC.x * wc) / invW else 0f
+                val oy = if (needsSurface) (l0 * objectA.y * wa + l1 * objectB.y * wb + l2 * objectC.y * wc) / invW else 0f
+                val oz = if (needsSurface) (l0 * objectA.z * wa + l1 * objectB.z * wb + l2 * objectC.z * wc) / invW else 0f
+
+                // The grain. Tilting the normal rather than moving a vertex, which is the whole
+                // reason a leather or knitted letter is affordable at all — the variation is far
+                // smaller than a triangle and displacing geometry to reach it would mean hundreds
+                // of thousands of them per letter.
+                val normal = if (material.relief == Relief.NONE) {
+                    normalRaw
+                } else {
+                    SurfaceRelief.perturb(
+                        material = material,
+                        u = (ox - surface.minX) / surface.spanX,
+                        v = (oy - surface.minY) / surface.spanY,
+                        normal = normalRaw,
+                    )
+                }
+
                 val painted = if (paint == null) {
                     material
                 } else {
-                    val ox = (l0 * objectA.x * wa + l1 * objectB.x * wb + l2 * objectC.x * wc) / invW
-                    val oy = (l0 * objectA.y * wa + l1 * objectB.y * wb + l2 * objectC.y * wc) / invW
-                    val oz = (l0 * objectA.z * wa + l1 * objectB.z * wb + l2 * objectC.z * wc) / invW
                     val sampled = paint.at(ox, oy, oz)
                     // An unlit surface emits its colour directly, so the ramp must stay in the space
                     // the user authored it in; a lit one is about to be shaded in linear light.
