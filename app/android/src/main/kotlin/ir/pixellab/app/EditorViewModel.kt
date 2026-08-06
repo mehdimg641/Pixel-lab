@@ -22,6 +22,7 @@ import ir.pixellab.core.model.Document
 import ir.pixellab.core.model.DocumentId
 import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.FontRef
+import ir.pixellab.core.model.CharacterStyle
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.with
 import ir.pixellab.core.model.withTransform
@@ -31,6 +32,7 @@ import ir.pixellab.core.model.TextSpec
 import ir.pixellab.core.model.Transform
 import ir.pixellab.core.model.Vec2
 import ir.pixellab.core.model.withStyle
+import ir.pixellab.core.text.StyleRuns
 import ir.pixellab.engine.android.AssetSource
 import ir.pixellab.engine.android.FontResolver
 import ir.pixellab.engine.android.LayerMeasure
@@ -1982,11 +1984,65 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         return true
     }
 
-    /** Replaces the string of a text layer, keeping everything else about it. */
+    /**
+     * Replaces the string of a text layer, keeping everything else about it — including which parts
+     * of it were styled differently.
+     *
+     * The ranges have to move with the letters. The editor hands back a whole new string rather than
+     * a keystroke, so `retarget` recovers the edit from the difference between the two; without it,
+     * correcting a typo at the front of a sentence slides every colour along by one letter.
+     */
     fun setText(id: LayerId, text: String) = edit {
         val layer = state.document.findLayer(id) as? Layer.Text ?: return@edit
         bounds.invalidate(id)
-        applyTextSpec(id, layer.spec.copy(text = text))
+        applyTextSpec(
+            id,
+            layer.spec.copy(
+                text = text,
+                runs = StyleRuns.retarget(layer.spec.runs, layer.spec.text, text),
+            ),
+        )
+    }
+
+    /**
+     * Changes how one stretch of a text layer is painted — the point of the whole text panel.
+     *
+     * Aimed at [range], or at the whole string when it is null, and expressed as an *edit* to
+     * whatever style is already there rather than as a replacement. That is what lets a user set a
+     * colour and then a size on the same word without the second undoing the first, and it is why
+     * every control in the panel routes through here instead of building runs of its own.
+     *
+     * [continuous] carries a drag: the whole sweep of a slider is one undo entry, the same contract
+     * every other scrubbing control in the application follows.
+     */
+    fun setCharacterStyle(
+        id: LayerId,
+        range: IntRange?,
+        continuous: Boolean = false,
+        change: (CharacterStyle) -> CharacterStyle,
+    ) = edit {
+        val layer = state.document.findLayer(id) as? Layer.Text ?: return@edit
+        val spec = layer.spec
+        val target = range ?: spec.text.indices
+        if (target.isEmpty()) return@edit
+        val runs = StyleRuns.apply(spec.text, spec.runs, target, change)
+        if (runs == spec.runs) return@edit
+        // Only the metrics-changing properties can move a letter, so only they need the measured
+        // bounds thrown away. A colour change that invalidated them would re-shape the string on
+        // every frame of a colour drag.
+        if (runs.any { it.style.changesMetrics } || spec.runs.any { it.style.changesMetrics }) {
+            bounds.invalidate(id)
+        }
+        setTextSpec(id, continuous) { it.copy(runs = runs) }
+    }
+
+    /** Clears every override on [range], returning it to the layer's own settings. */
+    fun clearCharacterStyle(id: LayerId, range: IntRange?) = edit {
+        val layer = state.document.findLayer(id) as? Layer.Text ?: return@edit
+        val spec = layer.spec
+        val target = range ?: spec.text.indices
+        bounds.invalidate(id)
+        applyTextSpec(id, spec.copy(runs = StyleRuns.clear(spec.text, spec.runs, target)))
     }
 
     /** Restyles a text layer onto another typeface or weight. */

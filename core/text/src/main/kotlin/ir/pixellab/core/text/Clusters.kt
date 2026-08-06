@@ -120,6 +120,20 @@ object Clusters {
         breaksBetween(text, before, at)
     }
 
+    /**
+     * Whether the script actually draws a connection across the boundary in front of [index].
+     *
+     * The question [StyleRuns] asks before it cuts a styled piece out of a line: a cut here needs a
+     * zero-width joiner to keep the letterforms, or it does not. Exposed from here rather than
+     * re-derived at the call site because two implementations of Persian joining will eventually
+     * disagree, and the disagreement shows up as letters coming apart in a document nobody can
+     * reproduce.
+     *
+     * False at both ends of the string, where there is nothing on one side to join to.
+     */
+    fun joinsBefore(text: String, index: Int): Boolean =
+        index > 0 && index < text.length && !breaksBetween(text, index - 1, index)
+
     private fun breaksBetween(text: String, before: Int, at: Int): Boolean {
         val previous = text[before]
         val next = text[at]

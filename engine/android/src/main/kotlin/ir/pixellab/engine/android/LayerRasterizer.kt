@@ -109,6 +109,72 @@ class LayerRasterizer(private val text: TextRasterizer = TextRasterizer()) {
     }
 
     /**
+     * The paint for a text layer whose ranges are not all painted the same.
+     *
+     * ### Why this is a *fill* texture and not a different silhouette
+     *
+     * The silhouette above stays exactly as it was: white coverage for the whole string, drawn from
+     * the same union outline it always drew. Only the paint varies across it. That is not a
+     * convenience — it is what makes the guarantee provable rather than tested. Every layer effect
+     * downstream reads alpha from the silhouette, so a stroke and a shadow follow the whole word
+     * even when one syllable of it is a different colour, exactly as Photoshop does; and tinting a
+     * word cannot possibly change the shape of the letters, because nothing about the shape passes
+     * through here.
+     *
+     * The base fill is painted across the entire rectangle first, so every unstyled glyph gets it,
+     * and each styled piece is then painted inside its own outline. Sized and positioned to the
+     * layer's *shape* bounds rather than the texture's, because the fill is sampled in shape space
+     * — the renderer's `fillMap` is what converts between the two.
+     */
+    fun textFill(
+        layer: Layer.Text,
+        shape: Rect,
+        scale: Float,
+        font: FontFile,
+        base: Fill,
+        patterns: Map<String, Bitmap> = emptyMap(),
+    ): Bitmap {
+        val width = pixels(shape.width, scale)
+        val height = pixels(shape.height, scale)
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        // The base paint covers everything, including the gaps between glyphs — harmless, because
+        // the silhouette's alpha is what decides where any of it is visible.
+        canvas.drawBitmap(fill(base, width, height, patternFor(base, patterns)), 0f, 0f, null)
+
+        canvas.scale(scale, scale)
+        canvas.translate(-shape.left, -shape.top)
+        for (piece in text.rasterize(layer.spec, font).pieces) {
+            val paint = piece.style.fill ?: base
+            val opacity = piece.style.opacity
+            if (piece.style.fill == null && opacity >= 1f) continue
+
+            canvas.save()
+            canvas.clipPath(piece.outline)
+            // Painted through the shape-space transform so a gradient inside a styled word runs
+            // across the whole layer, the way the base fill does, rather than restarting per word.
+            canvas.translate(shape.left, shape.top)
+            canvas.scale(1f / scale, 1f / scale)
+            val patch = fill(paint, width, height, patternFor(paint, patterns))
+            canvas.drawBitmap(patch, 0f, 0f, alphaPaint(opacity))
+            canvas.restore()
+        }
+        return bitmap
+    }
+
+    private fun patternFor(fill: Fill, patterns: Map<String, Bitmap>): Bitmap? =
+        (fill as? Fill.Pattern)?.let { patterns[it.asset.value] }
+
+    /** A paint that scales what it draws down to [opacity], or null when it is fully opaque. */
+    private fun alphaPaint(opacity: Float): Paint? =
+        if (opacity >= 1f) {
+            null
+        } else {
+            Paint().apply { alpha = (opacity.coerceIn(0f, 1f) * MAX_ALPHA).toInt() }
+        }
+
+    /**
      * Renders a paint across the same region as its silhouette.
      *
      * Sized to the layer, not to the canvas: a gradient's angle and extent are defined relative to
@@ -199,5 +265,8 @@ class LayerRasterizer(private val text: TextRasterizer = TextRasterizer()) {
          */
         fun pixels(extent: Float, scale: Float) =
             kotlin.math.ceil(extent * scale).toInt().coerceAtLeast(1)
+
+        /** Android's alpha channel is eight bits, and `Paint.alpha` wants it in those units. */
+        const val MAX_ALPHA = 255f
     }
 }

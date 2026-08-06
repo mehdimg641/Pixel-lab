@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.editor.SheetContent
+import ir.pixellab.core.editor.TextSection
 import ir.pixellab.core.model.Color
 import ir.pixellab.core.model.Effect
 import ir.pixellab.core.model.Fill
@@ -363,7 +364,46 @@ internal object AuditedInterface {
                 )
             },
             effectSheet(),
-        )
+        ) + textStudioSheets()
+    }
+
+    /**
+     * Every section of the text panel, audited as its own screen.
+     *
+     * One per section rather than one for the panel, because they share nothing but the strip at the
+     * top: a section that hides a 32dp swatch or an unlabelled chip is invisible to a sweep that
+     * only ever opens the first one. Fourteen entries generated from the enum, so a section added
+     * later is audited without anybody remembering to add it here — which is exactly how the two
+     * defects this file was written after got in.
+     */
+    private fun textStudioSheets(): List<Screen> {
+        val model = editor()
+        // Built directly rather than through `addTextLayer`, which needs a scanned font catalogue —
+        // and the scan finds nothing in this environment, so that route returns null and every
+        // section below would be silently skipped. A screen list that quietly shrinks to nothing is
+        // the exact shape of the gap these audits exist to close, so it is worth the four lines.
+        val id = LayerId("text-studio-under-audit")
+        model.act {
+            addLayer(
+                Layer.Text(
+                    id = id,
+                    spec = TextSpec(text = SENTENCE, font = FontRef(family = "Vazirmatn"), size = 96f),
+                    name = SENTENCE,
+                ),
+            )
+        }
+        model.act { select(id) }
+        // Aimed at one word, so the sections that can be aimed are audited in the state that has
+        // the most controls on screen rather than the fewest.
+        model.act { selectTextRange(SENTENCE.indexOf(WORD) until SENTENCE.length) }
+        check(model.state.activeTextRange != null) { "the text range did not take, so the target bar is unaudited" }
+        return TextSection.entries.map { section ->
+            Screen("the text studio · ${section.name.lowercase()}") {
+                Column(Modifier.fillMaxWidth().requiredHeight(TALL).background(Ink.ChromeRaised)) {
+                    TextStudioBody(model.state, SheetContent.TextStudio(id, section), model)
+                }
+            }
+        }
     }
 
     /**
@@ -407,6 +447,10 @@ internal object AuditedInterface {
      * Twenty metres of it, which sounds absurd and is not: the filter sheet alone is over four,
      * and running out is silent — the controls past the end simply report zero and read as defects.
      */
+    /** The sentence the per-range feature was asked for, so the audit runs on the real case. */
+    private const val SENTENCE = "برای اطلاع از قیمت کابینت"
+    private const val WORD = "کابینت"
+
     private val TALL = 20_000.dp
 
     private object Shadows {

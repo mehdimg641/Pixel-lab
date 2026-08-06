@@ -67,11 +67,37 @@ fun ParameterSheetBody(
             color = Ink.Text,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
+        EffectControls(state, content.layer, content.effectIndex, model)
+    }
+}
 
+/**
+ * The controls of one effect, without the sheet around them.
+ *
+ * Pulled out of [ParameterSheetBody] so the text panel can show a shadow's numbers *inside* the
+ * shadow section instead of sending the user to a different sheet to find them. Sending them away
+ * is what the application did, and it is why «سایه» and «رنگ» — two halves of the same decision —
+ * lived three panels apart.
+ *
+ * Still generated entirely from what the effect declares. Adding an effect adds its panel here and
+ * in the text studio at once, with no edit to either.
+ */
+@Composable
+fun EffectControls(
+    state: EditorState,
+    layerId: ir.pixellab.core.model.LayerId,
+    effectIndex: Int,
+    model: EditorViewModel,
+) {
+    val act: (Editor.() -> Unit) -> Unit = model::act
+    val layer = state.document.findLayer(layerId) ?: return
+    val effect = layer.style.effects.getOrNull(effectIndex) ?: return
+
+    Column {
         for (spec in builtinEffectRegistry.parametersOf(effect)) {
             val value = builtinEffectRegistry.read(effect, spec.key) ?: continue
             val write: (ParameterValue, Boolean) -> Unit = { v, continuous ->
-                act { setEffectParameter(content.layer, content.effectIndex, spec.key, v, continuous) }
+                act { setEffectParameter(layerId, effectIndex, spec.key, v, continuous) }
             }
 
             when (spec) {

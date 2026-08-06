@@ -127,6 +127,16 @@ class DocumentRenderer(
     private val content = HashMap<LayerId, LayerContent>()
 
     /**
+     * Painted-in-place fills for text whose ranges are not all one colour.
+     *
+     * Held apart from [content] because the two are invalidated by different things and share only
+     * their key: the silhouette changes when the letters change, and this changes when the *paint*
+     * changes, which the layer's style can do without touching a glyph. Keyed on both, so dragging
+     * a colour picker over a styled word rebuilds one texture and not the shaping.
+     */
+    private val textFills = HashMap<LayerId, LayerContent>()
+
+    /**
      * A pair of buffers a stack of layers composites into, swapped after every layer.
      *
      * A layer has to *read* what is beneath it: the four non-separable blend modes are functions of
@@ -342,6 +352,8 @@ class DocumentRenderer(
     fun dispose() {
         content.values.forEach { device.deleteTexture(it.texture) }
         content.clear()
+        textFills.values.forEach { device.deleteTexture(it.texture) }
+        textFills.clear()
         canvas?.let { device.deleteTexture(it.front); device.deleteTexture(it.back) }
         canvas = null
         canvasSize = Vec2.ZERO
@@ -834,7 +846,16 @@ class DocumentRenderer(
         effectTextures.layerFill = layer.style.fill
         // A placed photograph is its own paint. Everything else takes its colour from the style,
         // and leaving a previous layer's image set would paint a shape with the last photo.
-        effectTextures.layerImage = (layer as? Layer.Image)?.let { imageTexture(it.asset) }
+        //
+        // Text with styled ranges is the third case and it arrives the same way: the paint varies
+        // across the layer, so it cannot be a flat fill, and it is handed over as a picture. The
+        // silhouette is untouched — which is what makes a stroke or a shadow follow the whole word
+        // even when one syllable inside it is a different colour.
+        effectTextures.layerImage = when {
+            layer is Layer.Image -> imageTexture(layer.asset)
+            layer is Layer.Text && layer.spec.hasRuns && font != null -> textFillFor(layer, shape, frame.scale, font)
+            else -> null
+        }
         // Where that paint sits inside the texture. The texture is larger than the layer whenever
         // an effect has asked for bleed, and sampling the paint across the whole of it slides a
         // photograph inside its own frame by exactly that much.
@@ -1224,6 +1245,34 @@ class DocumentRenderer(
         raster.bitmap.recycle()
 
         content[layer.id] = LayerContent(bounds, handle, revision, key)
+        return handle
+    }
+
+    /**
+     * The paint for a text layer whose ranges are not all one colour, as a texture.
+     *
+     * Sized to the layer's *shape* rather than its texture, because `fillMap` already converts
+     * between the two for every fill — sampling a shape-space paint across a texture that an effect
+     * has grown by its bleed would slide the colours off the letters by exactly that much, which is
+     * the same mistake a placed photograph made before that map existed.
+     */
+    private fun textFillFor(layer: Layer.Text, shape: Rect, scale: Float, font: FontFile): TextureHandle {
+        val revision = revisions.getOrPut(layer.id) { 0 }
+        val key = 31 * contentKey(layer, font) + layer.style.fill.hashCode()
+        val cached = textFills[layer.id]
+        if (cached != null && cached.revision == revision && cached.bounds == shape && cached.key == key) {
+            return cached.texture
+        }
+
+        cached?.let { device.deleteTexture(it.texture) }
+        val bitmap = rasterizer.textFill(layer, shape, scale, font, layer.style.fill, effectTextures.patterns)
+        val handle = device.createTexture(bitmap.width, bitmap.height, bytesPerPixel = 4)
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        device.uploadArgb(handle, bitmap.width, bitmap.height, pixels)
+        bitmap.recycle()
+
+        textFills[layer.id] = LayerContent(shape, handle, revision, key)
         return handle
     }
 

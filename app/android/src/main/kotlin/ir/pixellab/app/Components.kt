@@ -25,6 +25,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.ScrollState
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -566,3 +571,42 @@ val BASIC_SWATCHES: List<Pair<String, ir.pixellab.core.model.Color>> = listOf(
     "آبی" to ir.pixellab.core.model.Color(0.2f, 0.5f, 0.9f),
     "بنفش" to ir.pixellab.core.model.Color(0.55f, 0.25f, 0.8f),
 )
+
+/**
+ * A soft fade over whichever end of a horizontal scroller still has content behind it.
+ *
+ * A strip that scrolls with no sign of it is read as a strip that has been cut off — a user
+ * photographed «خط د…» sliced by the edge of the screen and reasonably reported it as broken
+ * layout rather than as more controls. Drawn rather than reserved as space, because an arrow or a
+ * gutter costs width on the axis that is already short, and drawn *over* the content via
+ * `drawWithContent` so it lands on the chips instead of under them.
+ *
+ * Driven by the scroll position, so it disappears at each end rather than implying there is always
+ * more — a permanent fade is its own small lie.
+ *
+ * @param background the colour behind the strip; the fade has to end in it or it reads as a shadow.
+ */
+fun Modifier.edgeFade(scroll: ScrollState, background: Color): Modifier = drawWithContent {
+    drawContent()
+    val fade = EDGE_FADE.toPx()
+    if (scroll.value > 0) {
+        drawRect(
+            brush = Brush.horizontalGradient(listOf(background, Color.Transparent), endX = fade),
+            size = Size(fade, size.height),
+        )
+    }
+    if (scroll.value < scroll.maxValue) {
+        drawRect(
+            brush = Brush.horizontalGradient(
+                listOf(Color.Transparent, background),
+                startX = size.width - fade,
+                endX = size.width,
+            ),
+            topLeft = Offset(size.width - fade, 0f),
+            size = Size(fade, size.height),
+        )
+    }
+}
+
+/** Wide enough to read as a fade rather than as an edge artefact, narrow enough to hide nothing. */
+private val EDGE_FADE = 28.dp

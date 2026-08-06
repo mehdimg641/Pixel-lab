@@ -14,6 +14,7 @@ kotlin {
 
 dependencies {
     api(project(":core:model"))
+    api(project(":core:text"))
     api(project(":core:canvas"))
     api(project(":core:render"))
     testImplementation(libs.junit.jupiter)

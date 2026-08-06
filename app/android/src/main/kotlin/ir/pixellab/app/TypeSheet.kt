@@ -104,70 +104,12 @@ fun TypeSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifier
         // ---- paragraph ---------------------------------------------------------------------
 
         SheetSection("بند")
-        SheetChips {
-            for (align in TextAlign.entries) {
-                SheetChip(align.persianLabel, chosen = paragraph.align == align) {
-                    model.setParagraph(id, paragraph.copy(align = align))
-                }
-            }
-        }
-        SheetChips {
-            for (direction in TextDirection.entries) {
-                SheetChip(direction.persianLabel, chosen = paragraph.direction == direction) {
-                    model.setParagraph(id, paragraph.copy(direction = direction))
-                }
-            }
-        }
-        // Automatic is the right default and the reason is worth saying once: a caption that mixes
-        // Persian with a Latin brand name has to resolve its direction per paragraph, from the
-        // first strong character, or the punctuation lands on the wrong end.
-        SheetHint("خودکار جهت هر بند را از اولین حرف قوی می‌گیرد — درست برای متن فارسی و لاتین باهم")
-
-        // A multiplier, not a point size: line height set in points has to be reset every time the
-        // type size changes, and nobody remembers to.
-        SheetSlider("ارتفاع خط", paragraph.lineHeight, MIN_LEADING..MAX_LEADING, onChange = { value, _ ->
-            model.setParagraph(id, paragraph.copy(lineHeight = value))
-        })
-        SheetSlider("فاصلهٔ بند", paragraph.paragraphSpacing, 0f..MAX_PARAGRAPH_GAP, onChange = { value, _ ->
-            model.setParagraph(id, paragraph.copy(paragraphSpacing = value))
-        })
-        SheetSlider("تورفتگی", paragraph.indent, 0f..MAX_INDENT, onChange = { value, _ ->
-            model.setParagraph(id, paragraph.copy(indent = value))
-        })
-
-        SheetChips {
-            SheetChip("نقطه‌ای", chosen = spec.boxMode == TextBoxMode.POINT) {
-                model.setTextBox(id, area = false)
-            }
-            SheetChip("کادردار", chosen = spec.boxMode == TextBoxMode.AREA) {
-                model.setTextBox(id, area = true)
-            }
-        }
-        SheetHint("نقطه‌ای با نوشتن پهن‌تر می‌شود؛ کادردار داخل کادر می‌شکند و بلندتر می‌شود")
+        AlignmentControls(layer, model)
 
         // ---- kashida -----------------------------------------------------------------------
 
         SheetSection("کشیدگی")
-        SheetChips {
-            for (mode in KashidaMode.entries) {
-                val usable = mode != KashidaMode.VARIABLE_AXIS || typeface?.hasKashidaAxis == true
-                SheetChip(mode.persianLabel, chosen = paragraph.kashida == mode, enabled = usable) {
-                    model.setParagraph(id, paragraph.copy(kashida = mode))
-                }
-            }
-        }
-        SheetSlider("مقدار کشیدگی", paragraph.kashidaAmount, 0f..1f, onChange = { value, _ ->
-            model.setParagraph(id, paragraph.copy(kashidaAmount = value))
-        })
-        SheetHint(
-            when {
-                typeface?.hasKashidaAxis == true ->
-                    "این فونت محور کشیدگی دارد — حرف واقعاً کشیده می‌شود و متن دست‌نخورده می‌ماند"
-                // The honest version. Tatweel changes the string itself, and a user who later
-                // copies the text out gets a row of U+0640 they did not type.
-                else -> "این فونت محور کشیدگی ندارد — با تطویل کشیده می‌شود که کاراکتر به متن اضافه می‌کند"
-            },
-        )
+        KashidaControls(layer, model)
 
         // ---- OpenType ----------------------------------------------------------------------
 
@@ -211,34 +153,127 @@ fun TypeSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifier
         }
 
         SheetSection("تاب متن")
-        SheetChips {
-            for (style in WarpStyle.entries) {
-                SheetChip(style.persianLabel, chosen = spec.warp.style == style) {
-                    model.setTextWarp(id, spec.warp.copy(style = style))
-                }
+        WarpControls(layer, model)
+    }
+}
+
+/**
+ * Alignment, direction, leading and the point-or-area choice.
+ *
+ * Shared with the text studio rather than written twice. Two implementations of the same panel is
+ * how «رنگ» ended up meaning one thing in one sheet and another somewhere else, and a control that
+ * exists in two places will be fixed in one of them.
+ */
+@Composable
+internal fun AlignmentControls(layer: Layer.Text, model: EditorViewModel) {
+    val id = layer.id
+    val spec = layer.spec
+    val paragraph = spec.paragraph
+
+    SheetChips {
+        for (align in TextAlign.entries) {
+            SheetChip(align.persianLabel, chosen = paragraph.align == align) {
+                model.setParagraph(id, paragraph.copy(align = align))
             }
-        }
-        if (spec.warp.isActive) {
-            SheetSlider("خمش", spec.warp.bend, -1f..1f, onChange = { value, _ ->
-                model.setTextWarp(id, spec.warp.copy(bend = value))
-            })
-            SheetSlider("اعوجاج افقی", spec.warp.horizontal, -1f..1f, onChange = { value, _ ->
-                model.setTextWarp(id, spec.warp.copy(horizontal = value))
-            })
-            SheetSlider("اعوجاج عمودی", spec.warp.vertical, -1f..1f, onChange = { value, _ ->
-                model.setTextWarp(id, spec.warp.copy(vertical = value))
-            })
-            SheetChips {
-                SheetChip("محور افقی", chosen = spec.warp.horizontalAxis) {
-                    model.setTextWarp(id, spec.warp.copy(horizontalAxis = true))
-                }
-                SheetChip("محور عمودی", chosen = !spec.warp.horizontalAxis) {
-                    model.setTextWarp(id, spec.warp.copy(horizontalAxis = false))
-                }
-            }
-            SheetAction("بدون تاب") { model.setTextWarp(id, TextWarp.NONE) }
         }
     }
+    SheetChips {
+        for (direction in TextDirection.entries) {
+            SheetChip(direction.persianLabel, chosen = paragraph.direction == direction) {
+                model.setParagraph(id, paragraph.copy(direction = direction))
+            }
+        }
+    }
+    // Automatic is the right default and the reason is worth saying once: a caption that mixes
+    // Persian with a Latin brand name has to resolve its direction per paragraph, from the first
+    // strong character, or the punctuation lands on the wrong end.
+    SheetHint("خودکار جهت هر بند را از اولین حرف قوی می‌گیرد — درست برای متن فارسی و لاتین باهم")
+
+    // A multiplier, not a point size: line height set in points has to be reset every time the type
+    // size changes, and nobody remembers to.
+    SheetSlider("ارتفاع خط", paragraph.lineHeight, MIN_LEADING..MAX_LEADING, onChange = { value, _ ->
+        model.setParagraph(id, paragraph.copy(lineHeight = value))
+    })
+    SheetSlider("فاصلهٔ بند", paragraph.paragraphSpacing, 0f..MAX_PARAGRAPH_GAP, onChange = { value, _ ->
+        model.setParagraph(id, paragraph.copy(paragraphSpacing = value))
+    })
+    SheetSlider("تورفتگی", paragraph.indent, 0f..MAX_INDENT, onChange = { value, _ ->
+        model.setParagraph(id, paragraph.copy(indent = value))
+    })
+
+    SheetChips {
+        SheetChip("نقطه‌ای", chosen = spec.boxMode == TextBoxMode.POINT) {
+            model.setTextBox(id, area = false)
+        }
+        SheetChip("کادردار", chosen = spec.boxMode == TextBoxMode.AREA) {
+            model.setTextBox(id, area = true)
+        }
+    }
+    SheetHint("نقطه‌ای با نوشتن پهن‌تر می‌شود؛ کادردار داخل کادر می‌شکند و بلندتر می‌شود")
+}
+
+/** The elongation controls — the two mechanisms and how much of one to use. */
+@Composable
+internal fun KashidaControls(layer: Layer.Text, model: EditorViewModel) {
+    val id = layer.id
+    val paragraph = layer.spec.paragraph
+    val typeface = model.typefaceFor(layer.spec)
+
+    SheetChips {
+        for (mode in KashidaMode.entries) {
+            val usable = mode != KashidaMode.VARIABLE_AXIS || typeface?.hasKashidaAxis == true
+            SheetChip(mode.persianLabel, chosen = paragraph.kashida == mode, enabled = usable) {
+                model.setParagraph(id, paragraph.copy(kashida = mode))
+            }
+        }
+    }
+    SheetSlider("مقدار کشیدگی", paragraph.kashidaAmount, 0f..1f, onChange = { value, _ ->
+        model.setParagraph(id, paragraph.copy(kashidaAmount = value))
+    })
+    SheetHint(
+        when {
+            typeface?.hasKashidaAxis == true ->
+                "این فونت محور کشیدگی دارد — حرف واقعاً کشیده می‌شود و متن دست‌نخورده می‌ماند"
+            // The honest version. Tatweel changes the string itself, and a user who later copies
+            // the text out gets a row of U+0640 they did not type.
+            else -> "این فونت محور کشیدگی ندارد — با تطویل کشیده می‌شود که کاراکتر به متن اضافه می‌کند"
+        },
+    )
+}
+
+/** The sixteen warp shapes and the three numbers that steer whichever is chosen. */
+@Composable
+internal fun WarpControls(layer: Layer.Text, model: EditorViewModel) {
+    val id = layer.id
+    val warp = layer.spec.warp
+
+    SheetChips {
+        for (style in WarpStyle.entries) {
+            SheetChip(style.persianLabel, chosen = warp.style == style) {
+                model.setTextWarp(id, warp.copy(style = style))
+            }
+        }
+    }
+    if (!warp.isActive) return
+
+    SheetSlider("خمش", warp.bend, -1f..1f, onChange = { value, _ ->
+        model.setTextWarp(id, warp.copy(bend = value))
+    })
+    SheetSlider("اعوجاج افقی", warp.horizontal, -1f..1f, onChange = { value, _ ->
+        model.setTextWarp(id, warp.copy(horizontal = value))
+    })
+    SheetSlider("اعوجاج عمودی", warp.vertical, -1f..1f, onChange = { value, _ ->
+        model.setTextWarp(id, warp.copy(vertical = value))
+    })
+    SheetChips {
+        SheetChip("محور افقی", chosen = warp.horizontalAxis) {
+            model.setTextWarp(id, warp.copy(horizontalAxis = true))
+        }
+        SheetChip("محور عمودی", chosen = !warp.horizontalAxis) {
+            model.setTextWarp(id, warp.copy(horizontalAxis = false))
+        }
+    }
+    SheetAction("بدون تاب") { model.setTextWarp(id, TextWarp.NONE) }
 }
 
 private val TextAlign.persianLabel: String

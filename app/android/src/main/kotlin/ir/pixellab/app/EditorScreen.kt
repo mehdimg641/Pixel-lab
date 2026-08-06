@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.dp
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.editor.SheetContent
 import ir.pixellab.core.editor.SheetDetent
+import ir.pixellab.core.editor.TextSection
 import ir.pixellab.core.editor.Tool
 import ir.pixellab.core.model.Effect
 import ir.pixellab.core.model.Fill
@@ -476,6 +477,8 @@ fun EditorScreen(
                         is SheetContent.LibraryPanel -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
                         is SheetContent.LayerParameters ->
                             LayerParametersSheetBody(state, content, model, Modifier.fillMaxHeight())
+                        is SheetContent.TextStudio ->
+                            TextStudioBody(state, content, model, Modifier.fillMaxHeight())
                         is SheetContent.CanvasTools -> CanvasSheetBody(
                             state = state,
                             model = model,
@@ -673,36 +676,8 @@ internal fun Ribbon(
             //
             // The strip scrolls and gave no sign of it, so the last entries were simply sliced off
             // by the edge of the screen — a user photographed «خط د…» cut in half and reasonably
-            // read it as broken layout rather than as more controls. Drawn rather than reserved as
-            // space: an arrow or a gutter would cost width on the axis that is already short.
-            //
-            // `drawWithContent`, so the fade lands *over* the chips instead of under them, and
-            // driven by the scroll position, so it disappears at each end rather than implying
-            // there is always more.
-            .drawWithContent {
-                drawContent()
-                val fade = FADE.toPx()
-                if (scroll.value > 0) {
-                    drawRect(
-                        brush = Brush.horizontalGradient(
-                            listOf(Ink.Chrome, Color.Transparent),
-                            endX = fade,
-                        ),
-                        size = androidx.compose.ui.geometry.Size(fade, size.height),
-                    )
-                }
-                if (scroll.value < scroll.maxValue) {
-                    drawRect(
-                        brush = Brush.horizontalGradient(
-                            listOf(Color.Transparent, Ink.Chrome),
-                            startX = size.width - fade,
-                            endX = size.width,
-                        ),
-                        topLeft = Offset(size.width - fade, 0f),
-                        size = androidx.compose.ui.geometry.Size(fade, size.height),
-                    )
-                }
-            }
+            // read it as broken layout rather than as more controls.
+            .edgeFade(scroll, Ink.Chrome)
             .horizontalScroll(scroll)
             .padding(horizontal = Space.small),
         horizontalArrangement = Arrangement.spacedBy(Space.small),
@@ -793,37 +768,49 @@ private fun TextRibbon(
     onEditText: (LayerId) -> Unit,
 ) {
     BarAction(Icons.Outlined.TextFields, "ویرایش") { onEditText(id) }
-    RibbonSheet(Icons.Outlined.FontDownload, "فونت", Tool.TEXT, SheetContent.FontPicker, state, model)
-    RibbonSheet(Icons.Outlined.Tune, "رنگ و اندازه", Tool.TEXT, SheetContent.Typography, state, model)
-
-    val white = ir.pixellab.core.model.Color.WHITE
-    val black = ir.pixellab.core.model.Color.BLACK
-
-    BarAction(Icons.Outlined.Layers, "سایه") {
-        model.act {
-            addEffect(id, Effect.DropShadow(color = black, angle = 135f, distance = 12f, blur = 18f))
+    for (section in RIBBON_SECTIONS) {
+        val target = SheetContent.TextStudio(id, section)
+        BarAction(
+            icon = section.ribbonIcon,
+            label = section.persianLabel,
+            selected = state.sheet.content == target,
+        ) {
+            model.act {
+                setTool(Tool.TEXT)
+                openSheet(target, SheetDetent.FULL)
+            }
         }
     }
-    BarAction(Icons.Outlined.FormatColorFill, "پوشش رنگ") {
-        model.act { addEffect(id, Effect.Overlay(fill = Fill.Solid(ir.pixellab.core.model.Color(0.98f, 0.72f, 0.15f)))) }
-    }
-    BarAction(Icons.Outlined.BorderColor, "خط دور") {
-        model.act { addEffect(id, Effect.Stroke(width = 10f, fill = Fill.Solid(white))) }
-    }
-    BarAction(Icons.Outlined.Lightbulb, "درخشش") {
-        model.act {
-            addEffect(
-                id,
-                Effect.OuterGlow(fill = Fill.Solid(ir.pixellab.core.model.Color(1f, 0.85f, 0.4f)), blur = 28f),
-            )
-        }
-    }
-    BarAction(Icons.Outlined.Deblur, "برجسته") {
-        model.act { addEffect(id, Effect.Bevel(depth = 120f, size = 14f)) }
-    }
-    RibbonSheet(Icons.Outlined.ViewInAr, "سه‌بعدی", Tool.TEXT, SheetContent.Dimensional, state, model)
     RibbonSheet(Icons.Outlined.Star, "سبک آماده", Tool.TEXT, SheetContent.StyleLibrary, state, model)
 }
+
+/**
+ * Which sections earn a place on the ribbon itself.
+ *
+ * Not all fourteen: the ribbon is eighty-eight points of the screen and the panel already carries
+ * the full list. These are the ones a hand goes to without thinking, and the rest are one tap
+ * further in — which is the same trade the reference editor makes.
+ */
+private val RIBBON_SECTIONS = listOf(
+    TextSection.FONT,
+    TextSection.COLOR,
+    TextSection.METRICS,
+    TextSection.STROKE,
+    TextSection.SHADOW,
+    TextSection.GLOW,
+    TextSection.DIMENSIONAL,
+)
+
+private val TextSection.ribbonIcon: ImageVector
+    get() = when (this) {
+        TextSection.FONT -> Icons.Outlined.FontDownload
+        TextSection.COLOR -> Icons.Outlined.FormatColorFill
+        TextSection.METRICS -> Icons.Outlined.Tune
+        TextSection.STROKE -> Icons.Outlined.BorderColor
+        TextSection.SHADOW -> Icons.Outlined.Layers
+        TextSection.GLOW -> Icons.Outlined.Lightbulb
+        else -> Icons.Outlined.ViewInAr
+    }
 
 /** A ribbon entry that opens a panel and takes its tool. */
 @Composable
@@ -1045,9 +1032,12 @@ internal fun SelectionCard(state: EditorState, model: EditorViewModel, onEditTex
  */
 @Composable
 private fun SheetHeader(state: EditorState, model: EditorViewModel) {
-    // A new sheet is a new transaction. Keyed on the content so re-opening the same panel for a
-    // different layer starts again rather than reverting to some earlier layer's baseline.
-    LaunchedEffect(state.sheet.content) { model.noteSheetOpened() }
+    // A new sheet is a new transaction. Keyed on the content's *identity* rather than the content,
+    // so re-opening the same panel for a different layer starts again — but moving between the
+    // sections of one panel does not. Without that distinction, «انصراف» in the text studio would
+    // only undo back to the last section tap: set a shadow, glance at the colour section, and
+    // cancelling silently stops removing the shadow.
+    LaunchedEffect(state.sheet.content?.identity) { model.noteSheetOpened() }
 
     Row(
         Modifier.fillMaxWidth().padding(horizontal = Space.medium, vertical = Space.small),
@@ -1113,6 +1103,10 @@ private fun sheetTitle(content: SheetContent): String = when (content) {
     SheetContent.Typography -> "تایپوگرافی"
     SheetContent.Settings -> "تنظیمات"
     SheetContent.Dimensional -> "صحنهٔ سه‌بعدی"
+    // Named after the section rather than the panel, because the panel is where the user already
+    // is: a header that said «کارگاه متن» through fourteen different screens would be the one piece
+    // of text on the page that never tells them anything.
+    is SheetContent.TextStudio -> "متن · ${content.section.persianLabel}"
 }
 
 /** How much of the chrome colour the top bar carries. The canvas stays faintly visible behind it. */

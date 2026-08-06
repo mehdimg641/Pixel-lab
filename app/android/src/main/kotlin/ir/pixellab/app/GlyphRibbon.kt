@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -155,6 +156,11 @@ private fun ClusterChip(
     Row(
         Modifier
             .heightIn(min = Space.touch)
+            // **And wide enough as well.** A chip is as wide as the letter on it, so «ا» came out
+            // 28dp across — well under the touch minimum, on the control that is now the selector
+            // for the entire text panel. The narrowest letters of the alphabet are exactly the ones
+            // a finger misses, and the whole row was built for one-handed use.
+            .widthIn(min = Space.touch)
             .clip(Corners.chip)
             .background(if (chosen) Ink.AccentSoft else Color.Transparent)
             .border(
@@ -352,6 +358,8 @@ fun GlyphRibbonPanel(
     text: String,
     state: RibbonState,
     modifier: Modifier = Modifier,
+    showHint: Boolean = true,
+    onSelect: (TextCluster?) -> Unit = {},
     onStretch: (cluster: TextCluster, amount: Int) -> Unit,
 ) {
     val clusters = remember(text, state.granularity) { Clusters.of(text, state.granularity) }
@@ -361,9 +369,18 @@ fun GlyphRibbonPanel(
             text = text,
             granularity = state.granularity,
             selected = state.chosen,
-            onSelect = state::choose,
+            // The ribbon is the *selector* for the text panel as well as the kashida control, so
+            // choosing a chip has to report the piece and not only redraw the chip. Reported as the
+            // cluster rather than as an index because an index means nothing to a caller that does
+            // not also know which granularity produced it — and getting that pairing wrong aims an
+            // edit at a different part of the word.
+            onSelect = { index ->
+                state.choose(index)
+                onSelect(state.chosen?.let { clusters.getOrNull(it) })
+            },
             onStretch = onStretch,
         )
+        if (!showHint) return@Column
         val chosen = state.chosen?.let { clusters.getOrNull(it) }
         SheetHint(
             when {

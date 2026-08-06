@@ -160,13 +160,91 @@ sealed interface SheetContent {
     /** Real extruded 3D: depth, bevel, materials, lights and the camera. */
     data object Dimensional : SheetContent
 
+    /**
+     * Everything that can be done to a piece of text, in one panel with a section strip.
+     *
+     * The shape is taken from the mobile editor people actually use for this: select the words, get
+     * a labelled row, tap one and it opens where you are. The alternative — a control per sheet
+     * reached from a menu — is what this application had, and it is why colour, size and shadow sat
+     * three panels apart from each other while all three belong to the same decision.
+     *
+     * [section] is part of the identity so a control elsewhere can open the panel *at* the section
+     * it is about, rather than at a landing page the user then has to navigate. It is deliberately
+     * excluded from [identity] — see there.
+     */
+    data class TextStudio(val layer: LayerId, val section: TextSection = TextSection.CONTENT) : SheetContent
+
     /** The layer this sheet is about, if any — used to keep it out from under the sheet. */
     val subject: LayerId?
         get() = when (this) {
             is EffectParameters -> layer
             is LayerParameters -> layer
+            is TextStudio -> layer
             else -> null
         }
+
+    /**
+     * What counts as "the same panel" for the purpose of the ✕ and ✓ at its head.
+     *
+     * Those two buttons work by remembering where the undo stack stood when the panel opened, and
+     * that baseline is reset whenever the sheet's content changes. Moving between sections of one
+     * panel is not opening a new panel, so without this, «انصراف» would only ever undo back to the
+     * last section tap — the user would set a shadow, glance at the colour section, and find that
+     * cancelling no longer removed the shadow. Every other sheet is its own identity.
+     */
+    val identity: Any
+        get() = when (this) {
+            is TextStudio -> layer
+            else -> this
+        }
+}
+
+/**
+ * The sections of the text panel, in the order a hand reaches for them.
+ *
+ * Ordered by the sequence of decisions rather than by how the model is shaped: the words, then the
+ * face, then the colour, then the things that turn it into a title. Grouping by model structure is
+ * what produced a panel with «رنگ» in one sheet and «پوشش رنگ» in another.
+ */
+enum class TextSection {
+    /** The words themselves, and which part of them the rest of the panel is aimed at. */
+    CONTENT,
+
+    /** Which typeface, at which weight, with which of its alternates switched on. */
+    FONT,
+
+    /** The paint: a colour, a gradient or a texture — for the whole layer or one chosen word. */
+    COLOR,
+
+    /** Size, tracking, leading, alignment, direction, baseline. */
+    METRICS,
+
+    /** Outlines around the letters. */
+    STROKE,
+
+    /** Cast shadow and inner shadow. */
+    SHADOW,
+
+    /** Outer and inner glow, and the neon recipe built from them. */
+    GLOW,
+
+    /** Real extruded three-dimensional type. */
+    DIMENSIONAL,
+
+    /** What the letters are made of: how metallic, how rough, how lacquered. */
+    MATERIAL,
+
+    /** Warping the letters. */
+    CURVE,
+
+    /** A mirrored copy beneath the line. */
+    REFLECTION,
+
+    /** Opacity and blend mode. */
+    BLEND,
+
+    /** Satin, emboss, stacked extrude, grain, colour fringing, eroded edges. */
+    ADVANCED,
 }
 
 data class SheetState(
@@ -232,6 +310,19 @@ data class EditorState(
     val viewportBeforeSheet: Viewport? = null,
     /** Layers under the last long press, topmost first, for picking a buried one. */
     val pickCandidates: List<LayerId> = emptyList(),
+    /**
+     * Which part of the selected text every control in the text panel is aimed at.
+     *
+     * Null means the whole layer, which is what almost every edit wants and what the panel opens
+     * on. A range is set by choosing clusters in the glyph ribbon, and it is view state rather than
+     * document state for the same reason a pixel selection is: undoing a colour change must not
+     * also undo having pointed at the word.
+     *
+     * Cleared whenever the layer selection changes, because a range of characters means nothing
+     * once a different string is selected — and a stale one would silently aim the next edit at the
+     * wrong letters of the wrong layer.
+     */
+    val textRange: IntRange? = null,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
 ) {
@@ -239,6 +330,22 @@ data class EditorState(
         get() = selection.ids.mapNotNull { document.findLayer(it) }
 
     val primaryLayer: Layer? get() = selection.primary?.let(document::findLayer)
+
+    /**
+     * [textRange], but only when it still describes the text that is actually selected.
+     *
+     * Every control reads this rather than the field. A range of character indices is meaningless
+     * against a different string, and a stale one would quietly aim the next colour change at the
+     * wrong letters — so rather than relying on every place that changes the selection to remember
+     * to clear it, the range simply stops applying when it stops making sense.
+     */
+    val activeTextRange: IntRange?
+        get() {
+            val text = (primaryLayer as? Layer.Text)?.spec?.text ?: return null
+            val range = textRange ?: return null
+            if (range.isEmpty() || range.first < 0 || range.last >= text.length) return null
+            return range
+        }
 
     /** True when the contextual bar should be showing. */
     val hasSelection: Boolean get() = selection.ids.any { document.findLayer(it) != null }

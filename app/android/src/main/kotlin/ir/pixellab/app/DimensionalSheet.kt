@@ -239,7 +239,7 @@ fun DimensionalSheetBody(state: EditorState, model: EditorViewModel, modifier: M
 }
 
 @Composable
-private fun MaterialControls(label: String, material: Material, onChange: (Material) -> Unit) {
+internal fun MaterialControls(label: String, material: Material, onChange: (Material) -> Unit) {
     SheetHint(label)
     SheetChips {
         for (preset in MATERIALS) {

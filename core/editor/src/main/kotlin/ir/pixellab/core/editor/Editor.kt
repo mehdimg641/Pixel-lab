@@ -16,6 +16,7 @@ import ir.pixellab.core.model.LayerId
 import ir.pixellab.core.model.LayerMask
 import ir.pixellab.core.model.Rect
 import ir.pixellab.core.model.Style
+import ir.pixellab.core.model.TextSpec
 import ir.pixellab.core.model.Vec2
 import ir.pixellab.core.model.VectorMask
 import ir.pixellab.core.model.with
@@ -25,6 +26,7 @@ import ir.pixellab.core.model.withTransform
 import ir.pixellab.core.render.EffectRegistry
 import ir.pixellab.core.render.ParameterValue
 import ir.pixellab.core.render.builtinEffectRegistry
+import ir.pixellab.core.text.StyleRuns
 
 /**
  * The editor's behaviour, with no reference to any UI toolkit.
@@ -165,6 +167,27 @@ class Editor(
         state = state.copy(
             selection = if (additive) state.selection.toggle(id) else Selection.of(id),
             pickCandidates = emptyList(),
+            textRange = null,
+        )
+    }
+
+    /**
+     * Aims the text panel at part of the selected string, or at all of it when [range] is null.
+     *
+     * Not on the undo stack, and deliberately: pointing at a word is not an edit to the artwork,
+     * and a user who undoes a colour change expects the word to still be selected so they can try a
+     * different one. The same reasoning the pixel selection follows.
+     *
+     * The range is snapped outward to whole connected clusters, so it can never fall in the middle
+     * of a letter group — which in Persian is the difference between styling a word and breaking it.
+     */
+    fun selectTextRange(range: IntRange?) {
+        val text = (state.primaryLayer as? Layer.Text)?.spec?.text
+        state = state.copy(
+            textRange = when {
+                range == null || text == null -> null
+                else -> StyleRuns.snap(text, range).takeIf { !it.isEmpty() }
+            },
         )
     }
 
@@ -761,6 +784,18 @@ class Editor(
 
     fun setLayerBlendMode(id: LayerId, mode: ir.pixellab.core.model.BlendMode) =
         edit(id) { it.with(blendMode = mode) }
+
+    /**
+     * One change to a text layer's spec, coalescing a drag into a single undo entry.
+     *
+     * The panel's per-range controls are sliders like any other, so they need the same contract:
+     * the whole sweep is one step. Going through `replaceLayer` instead — which is what the
+     * existing typographic setters do, because none of them was draggable — would leave a hundred
+     * entries behind a two-second drag on the size of one word.
+     */
+    fun setTextSpec(id: LayerId, continuous: Boolean = false, change: (TextSpec) -> TextSpec) {
+        scrub(id, continuous) { layer -> if (layer is Layer.Text) layer.copy(spec = change(layer.spec)) else layer }
+    }
 
     /**
      * One change from a control the user is dragging.

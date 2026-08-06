@@ -456,6 +456,82 @@ data class ShadowCast(
     }
 }
 
+/**
+ * What one stretch of the text looks like, where it differs from the rest.
+ *
+ * Every property is optional and `null` means *inherit from the layer*, which is the only design
+ * that survives editing: a user who tints one word and later changes the type size expects the
+ * tinted word to change size too. Storing absolutes here would freeze that word at the old size and
+ * there would be no way to tell a deliberate override from a stale copy of the default.
+ *
+ * [sizeScale] is the exception that proves the rule — it is a multiplier rather than a size for the
+ * same reason, so «کابینت» set half as big again stays half as big again when the headline is
+ * resized.
+ */
+@Serializable
+data class CharacterStyle(
+    val fill: Fill? = null,
+    /** Multiplier on [TextSpec.size], not a size. */
+    val sizeScale: Float = 1f,
+    /** Em units, like [ParagraphStyle.letterSpacing]. */
+    val letterSpacing: Float? = null,
+    /** Fraction of the type size; positive lifts. */
+    val baselineShift: Float = 0f,
+    val opacity: Float = 1f,
+) {
+    init {
+        require(sizeScale > 0f) { "sizeScale is a multiplier and must be positive, got $sizeScale" }
+        require(opacity in 0f..1f) { "opacity is 0..1, got $opacity" }
+    }
+
+    /** True when this changes nothing and can be dropped rather than stored. */
+    val isDefault: Boolean
+        get() = fill == null && sizeScale == 1f &&
+            letterSpacing == null && baselineShift == 0f && opacity == 1f
+
+    /**
+     * Whether this style changes the *metrics* rather than only the paint.
+     *
+     * The distinction decides which of two rendering paths a line takes, and they are not equally
+     * good. A line whose runs differ only in paint is shaped **once, whole**, exactly as it was
+     * before per-run styling existed, and the runs are separated by cutting the finished outline —
+     * so the letters are provably the same letters, joins and all. A line that changes size or
+     * spacing partway cannot be shaped once, and has to be laid out run by run with the joining
+     * context restored artificially.
+     *
+     * Paint-only is overwhelmingly the common case — "make this word red" — so the exact path is
+     * the one almost every document takes.
+     *
+     * There is deliberately no per-run typeface here. It belongs in this class and it is not
+     * offered yet, because resolving a [FontRef] to a file needs a catalogue the rasteriser is not
+     * given, and this repository has been bitten enough times by a model that expresses something
+     * no control can reach.
+     */
+    val changesMetrics: Boolean
+        get() = sizeScale != 1f || letterSpacing != null || baselineShift != 0f
+
+    companion object {
+        val NONE = CharacterStyle()
+    }
+}
+
+/**
+ * A [CharacterStyle] applied to `[start, end)` of [TextSpec.text].
+ *
+ * Character indices into the source string, not glyph indices, because glyphs do not exist until
+ * shaping and the user's selection is made of characters. Turning these ranges into something that
+ * can be drawn without detaching Persian letters is `StyleRuns` in `core:text`.
+ */
+@Serializable
+data class StyleRun(val start: Int, val end: Int, val style: CharacterStyle) {
+    init {
+        require(start >= 0) { "a run cannot start before the text, got $start" }
+        require(end > start) { "an empty run is not a run, got $start..$end" }
+    }
+
+    val length: Int get() = end - start
+}
+
 /** Everything that turns a string into rendered artwork. */
 @Serializable
 data class TextSpec(
@@ -475,4 +551,18 @@ data class TextSpec(
      * state — it is what exists between the user starting a drag and finishing it.
      */
     val boxMode: TextBoxMode = TextBoxMode.POINT,
-)
+    /**
+     * Stretches of the string styled differently from the rest.
+     *
+     * Empty in almost every document, and that matters: an empty list must take the renderer down
+     * exactly the path it took before this existed, byte for byte. A feature that quietly changes
+     * how every other document renders is not a feature.
+     *
+     * Kept sorted and non-overlapping by `StyleRuns.normalise`; nothing else should construct this
+     * list directly.
+     */
+    val runs: List<StyleRun> = emptyList(),
+) {
+    /** Whether anything here needs the per-run path at all. */
+    val hasRuns: Boolean get() = runs.isNotEmpty()
+}
