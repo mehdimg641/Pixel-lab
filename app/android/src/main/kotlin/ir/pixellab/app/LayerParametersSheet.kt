@@ -4,6 +4,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import ir.pixellab.core.editor.EditorState
@@ -56,12 +60,29 @@ fun LayerParametersSheetBody(
         )
         SheetHint("فیل فقط رنگ خود لایه را کم می‌کند و افکت‌ها را دست‌نخورده می‌گذارد")
 
-        SheetSection("حالت ترکیب")
-        for (group in BLEND_GROUPS) {
-            SheetChips {
-                for (mode in group) {
-                    SheetChip(mode.persianLabel, chosen = layer.blendMode == mode) {
-                        model.act { setLayerBlendMode(layer.id, mode) }
+        // Collapsed, and named.
+        //
+        // Twenty-seven chips in six unlabelled blocks filled the whole sheet and read as one ragged
+        // mass — the opacity sliders above were pushed off the top of a panel most people open to
+        // change exactly those. Blend mode is a considered choice made occasionally, not a thing to
+        // wade past. So it shows what is in force and opens on request, and each group carries its
+        // heading the way Photoshop's own menu separates them: the groups are the only reason
+        // twenty-seven options are learnable at all, and hiding what they are wasted them.
+        var blendOpen by rememberSaveable(layer.id.value) { mutableStateOf(false) }
+        SheetDisclosure(
+            title = "حالت ترکیب",
+            summary = layer.blendMode.persianLabel,
+            open = blendOpen,
+            onToggle = { blendOpen = !blendOpen },
+        )
+        if (blendOpen) {
+            for ((heading, group) in BLEND_GROUPS) {
+                SheetHint(heading)
+                SheetChips {
+                    for (mode in group) {
+                        SheetChip(mode.persianLabel, chosen = layer.blendMode == mode) {
+                            model.act { setLayerBlendMode(layer.id, mode) }
+                        }
                     }
                 }
             }
@@ -110,22 +131,31 @@ fun LayerParametersSheetBody(
  * gentler" looks in one place. A flat list of twenty-seven names is a list nobody reads past the
  * fifth entry.
  */
-private val BLEND_GROUPS: List<List<BlendMode>> = listOf(
-    listOf(BlendMode.NORMAL, BlendMode.DISSOLVE),
-    listOf(
+/**
+ * The twenty-seven modes, in Photoshop's six families, each with what the family *does*.
+ *
+ * The grouping was already here and was the only thing making twenty-seven options learnable — and
+ * it was invisible, because nothing said what any group was. Six unlabelled blocks of chips is not
+ * six groups; it is a heap with gaps in it.
+ */
+private val BLEND_GROUPS: List<Pair<String, List<BlendMode>>> = listOf(
+    "معمولی" to listOf(BlendMode.NORMAL, BlendMode.DISSOLVE),
+    "تیره‌کننده" to listOf(
         BlendMode.DARKEN, BlendMode.MULTIPLY, BlendMode.COLOR_BURN,
         BlendMode.LINEAR_BURN, BlendMode.DARKER_COLOR,
     ),
-    listOf(
+    "روشن‌کننده" to listOf(
         BlendMode.LIGHTEN, BlendMode.SCREEN, BlendMode.COLOR_DODGE,
         BlendMode.LINEAR_DODGE, BlendMode.LIGHTER_COLOR,
     ),
-    listOf(
+    "کنتراست" to listOf(
         BlendMode.OVERLAY, BlendMode.SOFT_LIGHT, BlendMode.HARD_LIGHT, BlendMode.VIVID_LIGHT,
         BlendMode.LINEAR_LIGHT, BlendMode.PIN_LIGHT, BlendMode.HARD_MIX,
     ),
-    listOf(BlendMode.DIFFERENCE, BlendMode.EXCLUSION, BlendMode.SUBTRACT, BlendMode.DIVIDE),
-    listOf(BlendMode.HUE, BlendMode.SATURATION, BlendMode.COLOR, BlendMode.LUMINOSITY),
+    "تفاضلی" to listOf(
+        BlendMode.DIFFERENCE, BlendMode.EXCLUSION, BlendMode.SUBTRACT, BlendMode.DIVIDE,
+    ),
+    "رنگی" to listOf(BlendMode.HUE, BlendMode.SATURATION, BlendMode.COLOR, BlendMode.LUMINOSITY),
 )
 
 /** Opacity is shown as a percentage, which is the number the user knows it by. */

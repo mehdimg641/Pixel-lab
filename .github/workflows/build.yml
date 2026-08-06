@@ -12,6 +12,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # By hand, for a build to put on a phone. See the publish step at the end.
+  workflow_dispatch:
 
 # A second push to the same branch cancels the first. The older run is testing code nobody will
 # merge, and on a shared runner pool it is delaying the one that matters.
@@ -100,8 +102,11 @@ jobs:
       # `preview` is a rolling tag: deleted and recreated so it always points at the commit that
       # produced the binaries. A tag left behind on an old commit describing new files is worse than
       # no tag, because it is wrong rather than missing.
+      # Only when asked for. Every green run used to refresh it, which spends Actions minutes on a
+      # binary nobody had asked for — run the workflow by hand from the Actions tab when a build is
+      # actually wanted.
       - name: Publish the preview build
-        if: success()
+        if: success() && github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

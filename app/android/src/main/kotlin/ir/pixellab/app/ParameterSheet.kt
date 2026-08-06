@@ -23,6 +23,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color as UiColor
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import ir.pixellab.core.editor.Editor
 import ir.pixellab.core.editor.EditorState
@@ -122,13 +127,30 @@ fun ParameterSheetBody(
 
 @Composable
 private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    // The whole row is the target and the row carries the semantics, which is two fixes in one.
+    // Material's Switch is 52×32dp — under the minimum on its short axis, and there is no way to
+    // enlarge it without drawing a different switch — and it announced neither what it was for nor
+    // whether it was on, because the label beside it is a separate Text that means nothing to a
+    // screen reader. Making the row the control is also how every settings list on the platform
+    // behaves: the label is part of the switch, not a caption next to it.
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = Space.touch)
+            .toggleable(
+                value = checked,
+                onValueChange = onChange,
+                role = Role.Switch,
+            )
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .semantics { contentDescription = label },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = Ink.Text)
-        Switch(checked = checked, onCheckedChange = onChange)
+        // Null: the row above handles the press and owns the semantics, and a switch that also
+        // took the click would announce itself a second time and swallow taps meant for the row.
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 
@@ -141,25 +163,13 @@ private fun ChoiceRow(spec: ParameterSpec.Choice, selected: String?, onChange: (
             color = Ink.Text,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        // Through the shared chip. This was a fifth private one — a `Text` with a click and eight
+        // points of padding, 36dp tall and running off the edge of a scroller. It sits behind every
+        // layer effect in the application, which is the worst place to keep a private copy of a
+        // control that had already been fixed four times elsewhere.
+        SheetChips {
             for (option in spec.options) {
-                val active = option.value == selected
-                Text(
-                    option.label,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (active) Ink.OnAccent else Ink.TextMuted,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (active) Ink.Accent else Ink.ChromeSunken)
-                        .clickable { onChange(option.value) }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                )
+                SheetChip(option.label, chosen = option.value == selected) { onChange(option.value) }
             }
         }
     }
@@ -187,23 +197,15 @@ private fun SwatchRow(label: String, color: Color, onChange: (Color) -> Unit) {
                     .background(color.toUi()),
             )
         }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            for (swatch in PALETTE) {
-                Box(
-                    Modifier
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(swatch.toUi())
-                        .clickable { onChange(swatch) },
-                )
-            }
-        }
+        // The third copy of this row, and the last. Thirty-two point squares with the click on the
+        // square itself, no names for a screen reader, and a scroller that cut the last colour in
+        // half — the same three defects the other two had grown independently.
+        ColorSwatches(
+            swatches = BASIC_SWATCHES,
+            current = color,
+            modifier = Modifier.padding(horizontal = Space.gutter, vertical = Space.tight),
+            onPick = onChange,
+        )
     }
 }
 
@@ -236,14 +238,3 @@ fun SheetGrip(modifier: Modifier = Modifier) {
 
 private fun Color.toUi() = UiColor(r, g, b, a)
 
-private val PALETTE = listOf(
-    Color.BLACK,
-    Color.WHITE,
-    Color(0.95f, 0.23f, 0.23f),
-    Color(0.98f, 0.62f, 0.11f),
-    Color(0.99f, 0.87f, 0.21f),
-    Color(0.30f, 0.79f, 0.42f),
-    Color(0.30f, 0.55f, 1f),
-    Color(0.60f, 0.35f, 0.95f),
-    Color(0.95f, 0.35f, 0.70f),
-)

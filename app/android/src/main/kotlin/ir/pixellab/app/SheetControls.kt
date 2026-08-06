@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -350,3 +352,51 @@ private val CHOSEN_EDGE = 1.5.dp
  * point of having the token.
  */
 private val CHIP_HEIGHT = Space.touch
+
+/**
+ * A section that shows what it is set to and opens on request.
+ *
+ * The answer to a panel that spends its whole height on its most advanced control. Twenty-seven
+ * blend modes were the first case: they filled the layer sheet and pushed the two opacity sliders —
+ * the reason most people open it — off the top. Collapsing them is not hiding them, because the
+ * summary carries the part anyone actually needs at a glance, which is *which one is on*.
+ *
+ * A row rather than a chip, and the chevron on the leading edge rather than the trailing one: in a
+ * right-to-left interface the leading edge is the right, and a disclosure marker that sits where the
+ * eye starts is read as part of the heading rather than as a stray glyph at the end of it.
+ */
+@Composable
+fun SheetDisclosure(
+    title: String,
+    summary: String,
+    open: Boolean,
+    modifier: Modifier = Modifier,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = Space.touch)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = Space.gutter, vertical = Space.small)
+            .semantics {
+                role = Role.Button
+                // Announced as its state, not merely as a name: a collapsed section and an expanded
+                // one are the same button and a screen reader has no other way to tell them apart.
+                stateDescription = if (open) "باز" else "بسته"
+            },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (open) "▾" else "▸",
+                style = MaterialTheme.typography.labelLarge,
+                color = Ink.TextMuted,
+                modifier = Modifier.padding(end = Space.small),
+            )
+            Text(title, style = MaterialTheme.typography.labelMedium, color = Ink.TextMuted)
+        }
+        Text(summary, style = MaterialTheme.typography.labelLarge, color = Ink.Accent, maxLines = 1)
+    }
+}

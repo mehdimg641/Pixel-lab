@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color as UiColor
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -172,6 +173,10 @@ private fun LayoutSwatch(layout: Collage.Layout, chosen: Boolean, onClick: () ->
             .semantics {
                 role = Role.RadioButton
                 selected = chosen
+                // The layout's own name. Without it these are eleven identical buttons to a screen
+                // reader — and this is the one control in the sheet that is *entirely* a picture,
+                // so there is no text anywhere in it to fall back on.
+                contentDescription = layout.persianLabel
             }
             .padding(CELL_INSET),
     ) {
@@ -215,7 +220,7 @@ private fun BackgroundSwatches(model: EditorViewModel) {
         Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = Space.tight),
         horizontalArrangement = Arrangement.spacedBy(Space.small),
     ) {
-        for (colour in BACKGROUNDS) {
+        for ((name, colour) in BACKGROUNDS) {
             val chosen = colour == model.collageStyle.background
             Box(
                 Modifier
@@ -231,18 +236,26 @@ private fun BackgroundSwatches(model: EditorViewModel) {
                     .semantics {
                         role = Role.RadioButton
                         selected = chosen
+                        contentDescription = name
                     },
             )
         }
     }
 }
 
+/**
+ * The grounds a collage can sit on, each with the word for it.
+ *
+ * Not [BASIC_SWATCHES]: these are *paper*, not ink. A collage's ground is chosen from a handful of
+ * neutrals plus one warm accent, which is a different question from picking a colour to draw with,
+ * and offering nine saturated hues here would be offering the wrong nine things.
+ */
 private val BACKGROUNDS = listOf(
-    Color.WHITE,
-    Color(0.94f, 0.92f, 0.88f),
-    Color(0.15f, 0.15f, 0.16f),
-    Color.BLACK,
-    Color(0.85f, 0.35f, 0.30f),
+    "سفید" to Color.WHITE,
+    "کرم" to Color(0.94f, 0.92f, 0.88f),
+    "زغالی" to Color(0.15f, 0.15f, 0.16f),
+    "سیاه" to Color.BLACK,
+    "آجری" to Color(0.85f, 0.35f, 0.30f),
 )
 
 private val THUMB = 56.dp

@@ -32,6 +32,10 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import ir.pixellab.core.editor.EditorState
+import ir.pixellab.core.editor.SheetContent
+import ir.pixellab.core.model.Color
+import ir.pixellab.core.model.Effect
+import ir.pixellab.core.model.Fill
 import ir.pixellab.core.model.FontRef
 import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.LayerId
@@ -65,6 +69,14 @@ internal object AuditedInterface {
         val widthDp: Float,
         val heightDp: Float,
         val clickable: Boolean,
+        /**
+         * Whether the control announces which state it is in — by either of the two ways there are.
+         *
+         * A radio button or a tab carries `Selected`; a switch or a checkbox carries a
+         * `ToggleableState`. They are different properties for a real reason — a checkbox has three
+         * states and a radio button has two — and a test that demanded only the first reported a
+         * correctly-announced switch as silent.
+         */
         val selectable: Boolean,
     ) {
         /** For failure messages, where an unnamed control still has to be pointed at somehow. */
@@ -135,7 +147,8 @@ internal object AuditedInterface {
                         widthDp = node.size.width / density.density,
                         heightDp = node.size.height / density.density,
                         clickable = node.config.contains(SemanticsActions.OnClick),
-                        selectable = node.config.contains(SemanticsProperties.Selected),
+                        selectable = node.config.contains(SemanticsProperties.Selected) ||
+                            node.config.contains(SemanticsProperties.ToggleableState),
                     )
                 }
         }
@@ -333,7 +346,48 @@ internal object AuditedInterface {
             sheet("the library sheet") { state, model -> LibrarySheetBody(state, model) },
             sheet("the font picker") { state, model -> FontPickerBody(state, model) },
             sheet("the dimensional sheet") { state, model -> DimensionalSheetBody(state, model) },
+            sheet("the type sheet") { state, model -> TypeSheetBody(state, model) },
+            sheet("the shape sheet") { state, model -> ShapeSheetBody(state, model) },
+            sheet("the guide sheet") { state, model -> GuideSheetBody(state, model) },
+            sheet("the portrait sheet") { state, model -> PortraitSheetBody(state, model) },
+            sheet("the settings sheet") { state, model -> SettingsSheetBody(state, model) },
+            sheet("the arrange sheet") { state, model ->
+                ArrangeSheetBody(state, model, render = { null })
+            },
+            sheet("the collage sheet") { _, model -> CollageSheetBody(model, onPickPhotos = {}) },
+            sheet("the layer sheet") { state, model ->
+                LayerParametersSheetBody(
+                    state,
+                    SheetContent.LayerParameters(state.document.layers.first().id),
+                    model,
+                )
+            },
+            effectSheet(),
         )
+    }
+
+    /**
+     * The panel behind every layer effect, and the one that was missed.
+     *
+     * It needs a layer with an effect actually on it, which is why it cannot be built by the little
+     * helper above. Worth the extra lines: this is where two of the defects the audits were supposed
+     * to catch had been sitting — a fifth private chip and a third private swatch row — precisely
+     * because the audit listed its screens by hand and this one was not on the list.
+     */
+    private fun effectSheet(): Screen {
+        val model = editor()
+        val layer = model.state.document.layers.first().id
+        model.act { select(layer) }
+        model.act { addEffect(layer, Effect.Stroke(6f, Fill.Solid(Color.BLACK))) }
+        return Screen("the effect sheet") {
+            Column(Modifier.fillMaxWidth().requiredHeight(TALL).background(Ink.ChromeRaised)) {
+                ParameterSheetBody(
+                    model.state,
+                    SheetContent.EffectParameters(layer, effectIndex = 0),
+                    model,
+                )
+            }
+        }
     }
 
     /** Every screen above, for an audit that should sweep rather than name one. */

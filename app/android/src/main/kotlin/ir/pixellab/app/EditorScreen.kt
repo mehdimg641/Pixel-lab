@@ -75,6 +75,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -660,12 +663,47 @@ internal fun Ribbon(
     onSave: () -> Unit,
     onOpen: () -> Unit,
 ) {
+    val scroll = rememberScrollState()
     Row(
         Modifier
             .fillMaxWidth()
             .height(Frame.ribbon)
             .background(Ink.Chrome)
-            .horizontalScroll(rememberScrollState())
+            // A fade at whichever end still has something behind it.
+            //
+            // The strip scrolls and gave no sign of it, so the last entries were simply sliced off
+            // by the edge of the screen — a user photographed «خط د…» cut in half and reasonably
+            // read it as broken layout rather than as more controls. Drawn rather than reserved as
+            // space: an arrow or a gutter would cost width on the axis that is already short.
+            //
+            // `drawWithContent`, so the fade lands *over* the chips instead of under them, and
+            // driven by the scroll position, so it disappears at each end rather than implying
+            // there is always more.
+            .drawWithContent {
+                drawContent()
+                val fade = FADE.toPx()
+                if (scroll.value > 0) {
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            listOf(Ink.Chrome, Color.Transparent),
+                            endX = fade,
+                        ),
+                        size = androidx.compose.ui.geometry.Size(fade, size.height),
+                    )
+                }
+                if (scroll.value < scroll.maxValue) {
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            listOf(Color.Transparent, Ink.Chrome),
+                            startX = size.width - fade,
+                            endX = size.width,
+                        ),
+                        topLeft = Offset(size.width - fade, 0f),
+                        size = androidx.compose.ui.geometry.Size(fade, size.height),
+                    )
+                }
+            }
+            .horizontalScroll(scroll)
             .padding(horizontal = Space.small),
         horizontalArrangement = Arrangement.spacedBy(Space.small),
         verticalAlignment = Alignment.CenterVertically,
@@ -1084,6 +1122,9 @@ private const val SCRIM = 0.92f
 private val DOCK_ENTRY = 72.dp
 private val DOCK_PILL = 48.dp
 private val DOCK_PILL_HEIGHT = 28.dp
+
+/** How much of the ribbon's edge the fade covers. Wide enough to read as a fade, not a border. */
+private val FADE = 28.dp
 
 /** History marks. Small: there can be two hundred of them and they are a strip, not a control. */
 private val MARK = 6.dp
