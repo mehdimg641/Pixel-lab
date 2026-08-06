@@ -20,10 +20,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.AlignHorizontalLeft
@@ -65,6 +67,8 @@ import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VerticalAlignTop
 import androidx.compose.material.icons.outlined.ViewInAr
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -349,6 +353,10 @@ fun EditorScreen(
         // ribbon, and a rail on all four would be a fifth thing competing for the same job.
         if (LocalThemeSkin.current.layout == PanelLayout.DENSE && !state.sheet.isOpen) {
             ToolRail(state, model, Modifier.align(Alignment.CenterStart))
+            // The other half of Console's «tool rail + inspector» layout: the stack, always
+            // visible, on the trailing edge. On Ember and Iris the layer list is a panel you open;
+            // here it is furniture, which is the whole difference between the two directions.
+            LayerInspector(state, model, Modifier.align(Alignment.CenterEnd))
         }
 
         Column(Modifier.align(Alignment.TopCenter)) {
@@ -703,6 +711,126 @@ private fun ToolRail(state: EditorState, model: EditorViewModel, modifier: Modif
         }
     }
 }
+
+/**
+ * Console's inspector: the layer stack, permanently on screen.
+ *
+ * ### What it shows and what it deliberately does not
+ *
+ * The brief's inspector carries a histogram, a levels read-out and the stack. The stack is here;
+ * the histogram is not, and that is a decision rather than an omission. A real histogram means
+ * reading back the composited frame from the GPU every time anything changes — a full-canvas
+ * `glReadPixels` per edit — and the mock-up's version is twelve bars of sample data. Shipping
+ * twelve bars that do not describe the artwork would be a lie drawn in the interface, and this
+ * application already has a panel-shaped hole where a real one belongs: `AdjustmentSheet` computes
+ * the true histogram from an actual render, on demand, which is where it can afford to.
+ *
+ * What is here is real, cheap and the thing people actually look at: what is stacked, in what
+ * order, at what opacity, and which of it is switched off.
+ *
+ * Bottom-most layer last, matching how a stack is drawn everywhere else — the document stores paint
+ * order, which is the opposite.
+ */
+@Composable
+private fun LayerInspector(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
+    val layers = state.document.layers.asReversed()
+    Column(
+        modifier
+            .padding(end = Space.small)
+            .width(INSPECTOR)
+            .clip(Corners.card)
+            .background(Ink.Overlay)
+            .border(1.dp, Ink.Divider, Corners.card),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Space.small, vertical = Space.tight),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("لایه‌ها", style = androidx.compose.material3.MaterialTheme.typography.labelSmall, color = Ink.TextMuted)
+            Text(Digits.technical(layers.size), style = NumericStyle, color = Ink.TextMuted)
+        }
+        // Capped and scrolling. A document with forty layers would otherwise push the inspector off
+        // both ends of the screen, and an inspector taller than the canvas is not an inspector.
+        Column(
+            Modifier
+                .heightIn(max = INSPECTOR_MAX)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            for (layer in layers) {
+                val chosen = layer.id == state.selection.primary
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = INSPECTOR_ROW)
+                        .background(if (chosen) Ink.AccentSoft else Color.Transparent)
+                        .clickable(onClickLabel = layer.name) { model.act { select(layer.id) } }
+                        .padding(horizontal = Space.tight, vertical = 2.dp)
+                        .semantics {
+                            role = Role.Button
+                            selected = chosen
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Space.tight),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            layer.name,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                            color = if (layer.visible) Ink.Text else Ink.TextDisabled,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        // Opacity always, blend only when it is not Normal. The Persian blend
+                        // names are long — «روشنایی رنگی» is five times the width of «۱۰۰٪» — so
+                        // showing both unconditionally truncated the number, which is the half
+                        // somebody is actually reading.
+                        Text(
+                            buildString {
+                                append(Digits.technical((layer.opacity * 100).roundToInt()))
+                                append('%')
+                                if (layer.blendMode != ir.pixellab.core.model.BlendMode.NORMAL) {
+                                    append(" · ")
+                                    append(layer.blendMode.persianLabel)
+                                }
+                            },
+                            style = NumericStyle,
+                            color = Ink.TextMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    // Its own target rather than part of the row: hiding a layer and selecting one
+                    // are different intentions, and merging them means every glance at the stack
+                    // risks switching something off.
+                    Box(
+                        Modifier
+                            .size(28.dp)
+                            .clip(Corners.button)
+                            .clickable(onClickLabel = "نمایش ${layer.name}") {
+                                model.act { setLayerVisible(layer.id, !layer.visible) }
+                            }
+                            .semantics { role = Role.Switch },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            if (layer.visible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                            contentDescription = "نمایش ${layer.name}",
+                            tint = if (layer.visible) Ink.Text else Ink.TextDisabled,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Narrow enough to leave the canvas usable on a 411dp phone, wide enough for a Persian layer name. */
+private val INSPECTOR = 136.dp
+private val INSPECTOR_MAX = 260.dp
+private val INSPECTOR_ROW = 34.dp
 
 /** One rail entry: the tool it chooses and the word a screen reader says for it. */
 private class RailTool(val tool: Tool, val icon: ImageVector, val label: String)

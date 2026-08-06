@@ -324,6 +324,20 @@ class ScreenshotTest {
     }
 
     @Test
+    fun `Console lays a tool rail and an inspector over the canvas`() {
+        // The brief gives Console a «menu bar + tool rail + inspector» layout while the other two
+        // put their tools in the ribbon. Only a picture shows whether that happened: a colour test
+        // cannot tell a rail from its absence, and Console spent its first day being Ember in
+        // different colours.
+        val model = EditorViewModel(ApplicationProvider.getApplicationContext())
+            .also { it.autoSave.stop() }
+        model.act { select(state.document.layers.first().id) }
+        page("console-chrome", dark = true, skin = ThemeSkin.CONSOLE) {
+            EditorScreen(model = model)
+        }
+    }
+
+    @Test
     fun `the light theme draws`() {
         // The specification calls the light theme optional, which is exactly why it needs a picture:
         // an optional theme is the one that quietly stops being legible, and the failure is always
