@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.automirrored.outlined.AlignHorizontalLeft
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.Brush
@@ -54,6 +56,7 @@ import androidx.compose.material.icons.outlined.Highlight
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Star
@@ -61,6 +64,7 @@ import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VerticalAlignTop
 import androidx.compose.material.icons.outlined.ViewInAr
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -81,6 +85,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -98,6 +103,7 @@ import ir.pixellab.core.model.LayerId
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * The editor screen.
@@ -338,6 +344,11 @@ fun EditorScreen(
 
         Column(Modifier.align(Alignment.TopCenter)) {
             TopBar(state = state, model = model, onHome = onHome)
+            // Directly under the header and over the artwork, which is where a zoom read-out
+            // belongs: it is a fact about the *view*, not about the document, and putting it in the
+            // header alongside the file name says the opposite. Hidden while a sheet is open,
+            // because the canvas it describes is behind the sheet.
+            if (!state.sheet.isOpen) CanvasReadout(state, model)
             batch.progress?.let {
                 Text(
                     "در حال اعمال روی عکس ${it.done + 1} از ${it.total} — ${it.current}",
@@ -446,12 +457,33 @@ fun EditorScreen(
             exit = slideOutVertically(tween(Motion.SHEET, easing = Motion.ease)) { it },
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
+            // How the panel meets the canvas is the one decision that makes the four directions
+            // feel like different applications rather than four colour schemes of one. Ember and
+            // Console dock it — flat, full width, one hairline along the top. Iris floats it: an
+            // inset on three sides, every corner rounded, and a translucent fill so the artwork
+            // runs *behind* the panel instead of stopping at it.
+            val floating = LocalThemeSkin.current.layout == PanelLayout.FLOATING
+            val inset = LocalThemeSkin.current.panelInset
             Box(
                 Modifier
                     .fillMaxWidth()
+                    .padding(start = inset, end = inset, bottom = inset)
                     .height(screenHeight * state.sheet.detent.screenFraction)
-                    .clip(Corners.sheet)
-                    .background(Ink.Chrome),
+                    .clip(if (floating) Corners.panel else Corners.sheet)
+                    .then(
+                        if (floating) {
+                            // Not an opaque panel. A real backdrop blur needs a RenderEffect the
+                            // platform only offers from API 31, so rather than a glass panel on new
+                            // phones and a flat one on old, every device gets the same translucent
+                            // plate — which is what actually carries the effect anyway, and it is
+                            // legible over any artwork because the fill is near-opaque.
+                            Modifier
+                                .background(Ink.Chrome.copy(alpha = 0.94f))
+                                .border(1.dp, Ink.Divider, Corners.panel)
+                        } else {
+                            Modifier.background(Ink.Chrome)
+                        },
+                    ),
             ) {
                 Column(Modifier.fillMaxSize()) {
                     SheetHeader(state, model)
@@ -599,6 +631,95 @@ internal fun TopBar(
         }
     }
 }
+
+/**
+ * The read-outs that float on the canvas: zoom, document size, and the two zoom steps.
+ *
+ * ### Why these are not in the header
+ *
+ * They are facts about the **view**, not about the document. A header that says `IMG_4821` and `۶۸٪`
+ * in the same row invites the reading that sixty-eight percent is a property of the file. Sitting on
+ * a plate over the artwork, they read the way a camera's viewfinder overlay reads — information
+ * about what you are looking through, drawn on the glass.
+ *
+ * The plates are [Ink.Overlay] rather than a surface colour with alpha, and that is the whole reason
+ * the token exists: a translucent panel colour over a white sky is white, and the read-out
+ * disappears exactly when the user has zoomed into something bright.
+ *
+ * Both numbers are set in [NumericStyle] — tabular figures — because the zoom counts while a pinch
+ * is in progress, and proportional digits make a read-out that jitters sideways under the finger.
+ */
+@Composable
+private fun CanvasReadout(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
+    val zoom = state.viewport.zoom
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = Space.medium),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        Plate {
+            Text(
+                "${Digits.technical((zoom * 100f).roundToInt())}%",
+                style = NumericStyle,
+                color = Ink.Text,
+            )
+        }
+        Plate {
+            // The one line of metadata that changes what somebody does next. Not the colour space
+            // or the bit depth, which are the same for every document this application makes and
+            // would be decoration dressed as information.
+            Text(
+                "${Digits.technical(state.document.canvas.width)} × " +
+                    Digits.technical(state.document.canvas.height),
+                style = NumericStyle,
+                color = Ink.TextMuted,
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        // Steps rather than only pinch. Pinch is two fingers on a phone held in one hand, which is
+        // the gesture people cannot do while the other hand is holding the phone.
+        PlateIcon(Icons.Outlined.Remove, "کوچک‌نمایی") { model.stepZoom(1f / ZOOM_STEP) }
+        PlateIcon(Icons.Outlined.Add, "بزرگ‌نمایی") { model.stepZoom(ZOOM_STEP) }
+    }
+}
+
+/** A read-out plate: the shape every floating label on the canvas shares. */
+@Composable
+private fun Plate(content: @Composable () -> Unit) {
+    Box(
+        Modifier
+            .clip(Corners.button)
+            .background(Ink.Overlay)
+            .padding(horizontal = Space.small, vertical = Space.tight),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
+    }
+}
+
+/** The same plate, sized as a touch target and carrying an icon. */
+@Composable
+private fun PlateIcon(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(Space.touch)
+            .clip(Corners.button)
+            .background(Ink.Overlay)
+            .clickable(onClick = onClick, onClickLabel = label)
+            .semantics {
+                contentDescription = label
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = Ink.Text, modifier = Modifier.size(Frame.icon))
+    }
+}
+
+/** One tap is a quarter of an octave. Small enough to frame with, large enough to be worth a tap. */
+private const val ZOOM_STEP = 1.25f
 
 // Internal rather than private so TouchTargetTest can measure it on its own. The strip is empty
 // until the user has done something, so it is invisible to a test that renders a fresh editor —

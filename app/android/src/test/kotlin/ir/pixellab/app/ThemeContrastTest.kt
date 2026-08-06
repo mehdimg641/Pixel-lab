@@ -74,21 +74,33 @@ class ThemeContrastTest {
         )
     }
 
-    @Test
-    fun `every text colour is readable on every surface, light`() {
-        assertReadable("light", Palette.Light)
+    /**
+     * Every palette the application can be in: four directions, day and night.
+     *
+     * This used to be two entries. The four directions arrived from a browser mock-up, and a
+     * mock-up is checked by eye against the one panel the designer had open — which is exactly the
+     * failure described above, now with eight chances to happen instead of two. Five of the six
+     * supplied `dim` values and all three light accents were below the bar when measured; they were
+     * corrected in `Theme.kt` by shifting lightness only. This list is what stops the next hue
+     * adjustment from quietly undoing that.
+     */
+    private fun everyPalette(): List<Pair<String, Palette>> = buildList {
+        for (skin in ThemeSkin.entries) {
+            add("${skin.name}.dark" to skin.palette(dark = true))
+            add("${skin.name}.light" to skin.palette(dark = false))
+        }
     }
 
     @Test
-    fun `every text colour is readable on every surface, dark`() {
-        assertReadable("dark", Palette.Dark)
+    fun `every text colour is readable on every surface, in every direction`() {
+        for ((name, palette) in everyPalette()) assertReadable(name, palette)
     }
 
     @Test
     fun `a filled accent can be read by its own label`() {
         // The one pair that is not text-on-surface: a chosen chip is the accent with onAccent
         // written across it, and getting this wrong makes the *selected* item the unreadable one.
-        for ((name, palette) in listOf("light" to Palette.Light, "dark" to Palette.Dark)) {
+        for ((name, palette) in everyPalette()) {
             val ratio = contrast(palette.onAccent, palette.accent)
             assertTrue("$name onAccent on accent is %.2f:1".format(ratio), ratio >= AA_BODY)
         }
@@ -99,7 +111,7 @@ class ThemeContrastTest {
         // Deliberately *below* the text bar, and asserted from that side. A disabled colour that
         // passed 4.5:1 would look as definite as an enabled one, and the state would stop being
         // legible as a state — which is the failure the last three panels actually had.
-        for ((name, palette) in listOf("light" to Palette.Light, "dark" to Palette.Dark)) {
+        for ((name, palette) in everyPalette()) {
             val ratio = contrast(palette.textDisabled, palette.ground)
             assertTrue("$name textDisabled is %.2f:1 — too strong to read as disabled".format(ratio), ratio < AA_BODY)
             // ...but still visible. Invisible is not disabled either; it is missing.
@@ -111,11 +123,50 @@ class ThemeContrastTest {
     fun `a border separates the surfaces it sits between`() {
         // A hairline that cannot be seen is a hairline that is not doing its job, and it is why the
         // panels read as one undifferentiated slab in the screenshots that started this.
-        for ((name, palette) in listOf("light" to Palette.Light, "dark" to Palette.Dark)) {
+        for ((name, palette) in everyPalette()) {
             val ratio = contrast(palette.borderStrong, palette.surface1)
             assertTrue("$name borderStrong on surface1 is %.2f:1".format(ratio), ratio >= NON_TEXT)
         }
     }
+
+    @Test
+    fun `a read-out plate is opaque enough to read over any artwork`() {
+        // `Ink.Overlay` is the fill behind the zoom and size read-outs that float on the canvas,
+        // and it is the one surface whose *backdrop* is arbitrary — a photograph. A translucent
+        // panel colour over a white sky is white, and the read-out disappears exactly when somebody
+        // has zoomed into something bright. The guard is on the alpha rather than on a contrast
+        // ratio, because there is no second colour to measure against: the requirement is that the
+        // plate hides what is behind it.
+        for ((name, palette) in everyPalette()) {
+            val alpha = palette.overlay.alpha
+            assertTrue(
+                "$name overlay is %.2f opaque — a read-out on it would take the colour of whatever "
+                    .format(alpha) + "photograph is behind it",
+                alpha >= 0.85f,
+            )
+            // And the text has to survive on the *composite*, not on the token. Over black artwork
+            // the plate is at its darkest, so that is the case to measure.
+            val overBlack = composite(palette.overlay, Color.Black)
+            assertTrue(
+                "$name text on an overlay plate over black artwork is %.2f:1"
+                    .format(contrast(palette.textPrimary, overBlack)),
+                contrast(palette.textPrimary, overBlack) >= AA_BODY,
+            )
+            val overWhite = composite(palette.overlay, Color.White)
+            assertTrue(
+                "$name text on an overlay plate over white artwork is %.2f:1"
+                    .format(contrast(palette.textPrimary, overWhite)),
+                contrast(palette.textPrimary, overWhite) >= AA_BODY,
+            )
+        }
+    }
+
+    /** Source-over: what the eye actually sees when a translucent plate sits on a backdrop. */
+    private fun composite(top: Color, under: Color): Color = Color(
+        red = top.red * top.alpha + under.red * (1f - top.alpha),
+        green = top.green * top.alpha + under.green * (1f - top.alpha),
+        blue = top.blue * top.alpha + under.blue * (1f - top.alpha),
+    )
 
     private companion object {
         /** WCAG 2.2 AA, body text. */

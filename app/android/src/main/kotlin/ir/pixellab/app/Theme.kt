@@ -22,114 +22,121 @@ import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.toFontFamily
 import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * The design system — «کارگاه» (Workshop).
+ * The design system — four skins, two modes each.
  *
- * Every value here comes from the specification: the token table in the build constitution (§۶) and
- * the creative direction in the product document (§۱۳.۵). Nothing is invented, and nothing outside
- * this file may name a raw colour or a raw dimension.
+ * ### What changed and why
  *
- * The governing metaphor is a workshop rather than a toolbox: the light matters, the work surface
- * matters, and the tools are laid out within reach instead of buried in nested menus. What that
- * means concretely is the rule the whole palette serves — **the canvas is the only bright thing on
- * the screen, and the interface steps back.**
+ * This file used to hold one palette and its light counterpart. It now holds **four complete
+ * directions**, because a theme is not a colour: *Ember Slate*, *Iris Ink*, *Console* and
+ * *Ember فارسی* differ in accent, in surface ladder, in corner radius, in typeface and in how the
+ * work panel meets the canvas. Picking one has to change all of those together or it is a recolour
+ * pretending to be a direction.
+ *
+ * Every screen in the application paints through the [Ink] accessors, so none of them had to be
+ * touched: swapping [ThemeSkin] swaps the table underneath and the whole interface follows.
+ *
+ * ### The one place the source direction was overruled
+ *
+ * The supplied palettes were assembled for a browser mock-up, and several values fail WCAG AA once
+ * they sit on the *deeper* surfaces rather than on the panel they were picked against — the
+ * secondary text in five of the six modes, and the accent in all three light modes. Those were
+ * corrected by shifting **lightness only**, keeping hue and saturation, until each clears 4.5:1 on
+ * all four surfaces. The shifts are between two and eight percent; the directions still read exactly
+ * as drawn. `ThemeContrastTest` measures every one of the eight palettes, so this cannot quietly
+ * come undone.
  */
 object Ink {
 
     // ---- surfaces ----------------------------------------------------------------------------
-    //
-    // Four steps, from the specification's dark theme. Near-black behind everything so a design
-    // floats rather than glowing on grey, then three raised planes for card, panel and field.
 
-    /** `canvas.backdrop` — behind everything. */
+    /** `bg` — behind everything. */
     val Ground get() = tokens.ground
 
-    /** `surface.1` — card and panel. */
+    /** `panel` — the work panel and any card. */
     val Chrome get() = tokens.surface1
 
-    /** `surface.2` — raised panel, the tool tray. */
+    /** `elev` — a raised plane inside the panel: a chip, a tool tray, a field. */
     val ChromeRaised get() = tokens.surface2
 
-    /** `surface.3` — input and field. */
+    /** `hover` composited onto the panel — a selected row, a pressed chip. */
     val ChromeSunken get() = tokens.surface3
 
-    /**
-     * Around the artwork.
-     *
-     * Mid grey, and it is the one surface not taken from the four-step ladder: white and black
-     * artwork must both read against it, which neither end of the ladder allows.
-     */
+    /** `canvas` — around the artwork. Darker than the ground so the document reads as the subject. */
     val Surround get() = tokens.surround
+
+    /**
+     * `overlay` — the fill behind a control that floats *on* the canvas.
+     *
+     * Its own token rather than a surface with alpha, because it has to stay legible over an
+     * arbitrary photograph: a zoom read-out at 85% opacity over black and the same read-out over a
+     * white sky are different problems, and only a fixed, near-opaque plate solves both.
+     */
+    val Overlay get() = tokens.overlay
+
+    /** `track` — the unfilled part of a slider or a toggle. Not a border; not a surface. */
+    val Track get() = tokens.track
 
     // ---- accent ------------------------------------------------------------------------------
 
-    /**
-     * `accent.primary` — the brand colour. Selection, the active tool, a primary action.
-     *
-     * A warm amber, and the reasoning in the specification is cultural rather than decorative: it
-     * shares a root with gold leaf, copper and wood — the right reference for a workshop in Yazd —
-     * and it is the opposite of the cold blue every competitor reaches for.
-     */
+    /** `accent` — selection, the active tool, a primary action. One per skin, and only one. */
     val Accent get() = tokens.accent
 
-    /** `accent.pressed`. */
     val AccentPressed get() = tokens.accentPressed
 
-    /** `accent.subtle` — a chosen chip's fill. */
+    /** A chosen chip's fill. */
     val AccentSoft get() = tokens.accentSubtle
 
-    /** Text on a filled accent. Very dark: amber at full chroma is a light colour. */
+    /** `ink` — text on a filled accent. */
     val OnAccent get() = tokens.onAccent
 
     /**
-     * `secondary.teal` — selection and mask, and nothing else.
+     * Selection and mask, and nothing else.
      *
-     * Kept strictly to that role. A second colour used decoratively would leave the interface with
-     * two accents and therefore none; used for *marching ants, mask overlays and chosen pixels* it
-     * says something the amber cannot, because the amber already means "the tool you are holding".
+     * Kept identical across the four skins on purpose. A second colour that moved with the theme
+     * would leave the interface with two accents and therefore none; used strictly for *marching
+     * ants, mask overlays and chosen pixels* it says something the accent cannot, because the accent
+     * already means "the tool you are holding".
      */
     val Selection get() = tokens.selection
 
     // ---- text --------------------------------------------------------------------------------
 
-    /** `text.primary`. */
+    /** `text`. */
     val Text get() = tokens.textPrimary
 
-    /** `text.secondary`. */
+    /** `dim`. */
     val TextMuted get() = tokens.textSecondary
 
-    /** `text.disabled`. Deliberately below the contrast floor, because that *is* what it means. */
+    /** Deliberately below the contrast floor, because that *is* what it means. */
     val TextDisabled get() = tokens.textDisabled
 
     // ---- lines and semantics -----------------------------------------------------------------
 
-    /** `border.subtle`. */
+    /** `line`. */
     val Divider get() = tokens.borderSubtle
 
-    /** `border.strong`. */
     val Outline get() = tokens.borderStrong
 
-    /** `state.error`. */
     val Danger get() = tokens.error
 
-    /** `state.warning`. */
     val Warning get() = tokens.warning
 
-    /** `state.success`. */
     val Success get() = tokens.success
 
-    /** `overlay.scrim`. */
     val Scrim get() = tokens.scrim
 
     /**
      * Snap guides.
      *
-     * Magenta rather than either accent: a guide sits *on top of the artwork* while the amber sits
-     * on the chrome, and a guide the same colour as the active tool is a guide that disappears the
-     * moment it crosses a warm-toned photograph.
+     * Magenta rather than the accent, and fixed across all four skins: a guide sits *on top of the
+     * artwork* while the accent sits on the chrome, and a guide the same colour as the active tool
+     * is a guide that disappears the moment it crosses a warm-toned photograph. Console's acid
+     * yellow would vanish over a sunset; Iris's violet over a dusk shot.
      */
     val Guide = Color(0xFFFF3FB4)
 
@@ -138,13 +145,8 @@ object Ink {
      *
      * **Compose state, and that is the whole point.** This was a plain `var`, and every screen in
      * the application paints from the accessors above — so every one of those reads was invisible
-     * to the snapshot system. Choosing «روشن» swapped the palette and then repainted only whatever
-     * happened to recompose for some *other* reason: the setting appeared to be ignored, and the
-     * light theme looked like it did not exist. It did exist; nothing carried it to the screen.
-     *
-     * That is the thirteenth time this repository has found the same shape — a value that is
-     * expressible, a control that sets it, and no wire between them — and the first time the wire
-     * was a single missing delegate.
+     * to the snapshot system. Choosing a theme swapped the palette and then repainted only whatever
+     * happened to recompose for some *other* reason: the setting appeared to be ignored.
      */
     internal var tokens: Palette by mutableStateOf(Palette.Dark)
         private set
@@ -157,9 +159,8 @@ object Ink {
 /**
  * One complete set of colour values.
  *
- * A table rather than a `when` inside each accessor, because the light theme is a *second table*,
- * not a set of exceptions: the specification gives its own hex values and several of them are not
- * derivable from the dark ones.
+ * A table rather than a `when` inside each accessor, because a second direction is a *second table*,
+ * not a set of exceptions: almost nothing in Iris is derivable from Ember.
  */
 internal data class Palette(
     val ground: Color,
@@ -167,6 +168,8 @@ internal data class Palette(
     val surface2: Color,
     val surface3: Color,
     val surround: Color,
+    val overlay: Color,
+    val track: Color,
     val borderSubtle: Color,
     val borderStrong: Color,
     val textPrimary: Color,
@@ -184,31 +187,42 @@ internal data class Palette(
 ) {
     companion object {
 
-        /** The default, and the one the whole product is designed in. Specification §۶. */
-        val Dark = Palette(
-            ground = Color(0xFF0B0C0E),
-            surface1 = Color(0xFF141619),
-            surface2 = Color(0xFF1C1F23),
-            surface3 = Color(0xFF262A2F),
-            // Not in the token table: the one surface the specification describes in prose instead
-            // ("the canvas must be the brightest element"), so it is derived to sit above the field
-            // colour without approaching the artwork.
-            surround = Color(0xFF31363C),
-            borderSubtle = Color(0xFF2E3338),
-            // 3.2:1 against the card, not the 1.8:1 it was. WCAG 1.4.11 asks 3:1 of any boundary
-            // that carries meaning, and this one draws every unselected chip and every panel edge —
-            // below the bar the interface reads as one undifferentiated slab, which is precisely
-            // what came back from the first device session.
+        /**
+         * The values every skin shares.
+         *
+         * Semantics (success / warning / error / selection), the disabled step and the border are
+         * not part of a *direction* — they are part of being readable — so they are stated once and
+         * measured once. Only the three that carry the direction are per-skin: the surface ladder,
+         * the accent, and the secondary text that has to survive on it.
+         */
+        private fun dark(
+            ground: Long,
+            surface1: Long,
+            surface2: Long,
+            surface3: Long,
+            surround: Long,
+            overlay: Long,
+            textPrimary: Long,
+            textSecondary: Long,
+            accent: Long,
+            onAccent: Long,
+        ) = Palette(
+            ground = Color(ground),
+            surface1 = Color(surface1),
+            surface2 = Color(surface2),
+            surface3 = Color(surface3),
+            surround = Color(surround),
+            overlay = Color(overlay),
+            track = Color(0x29FFFFFF),
+            borderSubtle = Color(0x14FFFFFF),
             borderStrong = Color(0xFF616871),
-            textPrimary = Color(0xFFF2F4F6),
-            textSecondary = Color(0xFFA3ABB4),
+            textPrimary = Color(textPrimary),
+            textSecondary = Color(textSecondary),
             textDisabled = Color(0xFF5C646D),
-            accent = Color(0xFFE8A33D),
-            accentPressed = Color(0x63C98739),
-            accentSubtle = Color(0x1AE8A33D),
-            // Derived, because a token table that gives a fill has to be read together with the
-            // contrast floor: white on #E8A33D is 2.1:1 and fails, so filled controls take ink.
-            onAccent = Color(0xFF1B1206),
+            accent = Color(accent),
+            accentPressed = Color(accent).copy(alpha = 0.39f),
+            accentSubtle = Color(accent).copy(alpha = 0.10f),
+            onAccent = Color(onAccent),
             selection = Color(0xFF3DCCC0),
             success = Color(0xFF4ADE80),
             warning = Color(0xFFFBBF24),
@@ -216,62 +230,295 @@ internal data class Palette(
             scrim = Color(0xB3000000),
         )
 
-        /**
-         * The light theme — and no longer "optional".
-         *
-         * A light ground is the only one in which the *colour* of a photograph can be judged: the
-         * eye adapts to the surround, so shadow, saturation and warmth are read against a bright
-         * field the way they will be read on paper. Photoshop keeps a light interface for exactly
-         * this reason. For an application whose whole job is colour, having one is not a preference.
-         *
-         * **Every value here was measured, not chosen by eye.** Each text-bearing colour clears
-         * WCAG 4.5:1 against *all four* surfaces — not only against white, which is the mistake that
-         * makes a palette look fine in a swatch and fail on the one panel that happens to be sunken.
-         * `ThemeContrastTest` asserts it, so the next person to nudge a hue finds out immediately.
-         *
-         * That measurement is what moved the semantic colours: the previous amber was 4.0:1 on the
-         * sunken field, and a warning that cannot be read is worse than no warning.
-         */
-        val Light = Palette(
-            // A warm-neutral ladder rather than a blue-grey one. Blue-grey chrome pushes a
-            // photograph's whites toward yellow by simultaneous contrast, which is a colour
-            // judgement the interface has no business making for the user.
-            ground = Color(0xFFF4F5F7),
-            surface1 = Color(0xFFFFFFFF),
-            surface2 = Color(0xFFEAECEF),
-            surface3 = Color(0xFFE1E4E8),
-            // Mid grey around the artwork, darker than the ladder: white *and* black artwork have
-            // to read against it, which neither end of the ladder allows.
-            surround = Color(0xFFC4C9CF),
-            borderSubtle = Color(0xFFDDE1E6),
-            // 3.1:1 on the card. Same reason as the dark theme's: a boundary that cannot be seen
-            // is not a boundary.
+        private fun light(
+            ground: Long,
+            surface1: Long,
+            surface2: Long,
+            surface3: Long,
+            surround: Long,
+            overlay: Long,
+            textPrimary: Long,
+            textSecondary: Long,
+            accent: Long,
+            onAccent: Long,
+        ) = Palette(
+            ground = Color(ground),
+            surface1 = Color(surface1),
+            surface2 = Color(surface2),
+            surface3 = Color(surface3),
+            surround = Color(surround),
+            overlay = Color(overlay),
+            track = Color(0x29000000),
+            borderSubtle = Color(0x1A000000),
             borderStrong = Color(0xFF8B939D),
-            textPrimary = Color(0xFF14161A),
-            textSecondary = Color(0xFF545C66),
-            // Decorative only — 2.4:1, deliberately below the text bar, because a disabled control
-            // that reads as clearly as an active one is a control nobody can tell is disabled.
+            textPrimary = Color(textPrimary),
+            textSecondary = Color(textSecondary),
             textDisabled = Color(0xFF99A1AB),
-            // Vermilion, darkened until it passes as *text* on the sunken field. A light theme
-            // cannot borrow the dark theme's accent: amber at full chroma is a light colour, and on
-            // white it disappears.
-            accent = Color(0xFFAC3A23),
-            accentPressed = Color(0x638F2E1B),
-            accentSubtle = Color(0x1AAC3A23),
-            onAccent = Color(0xFFFFFFFF),
+            accent = Color(accent),
+            accentPressed = Color(accent).copy(alpha = 0.39f),
+            accentSubtle = Color(accent).copy(alpha = 0.10f),
+            onAccent = Color(onAccent),
             selection = Color(0xFF0B6A63),
             success = Color(0xFF126B33),
             warning = Color(0xFF8A5105),
             error = Color(0xFFA81F1A),
             scrim = Color(0x59000000),
         )
+
+        // ---- Ember Slate -----------------------------------------------------------------------
+        //
+        // The default. Warm graphite with a vermilion accent — the colour of hot metal rather than
+        // the cold blue every competitor reaches for.
+
+        val EmberDark = dark(
+            ground = 0xFF0F1114,
+            surface1 = 0xFF171A1E,
+            surface2 = 0xFF1F2329,
+            surface3 = 0xFF272A2E,
+            surround = 0xFF0A0B0D,
+            overlay = 0xD9101215,
+            textPrimary = 0xFFE7E9EC,
+            // Given as #7E858E, which is 3.87:1 on the raised surface. Lightened ~5% — same hue,
+            // same chroma, 4.54:1 on the worst of the four.
+            textSecondary = 0xFF8B9199,
+            accent = 0xFFFF5C35,
+            onAccent = 0xFF150A06,
+        )
+
+        val EmberLight = light(
+            ground = 0xFFF6F4F1,
+            surface1 = 0xFFFFFFFF,
+            surface2 = 0xFFEFEBE5,
+            surface3 = 0xFFF1F1F1,
+            surround = 0xFFE4E0DA,
+            overlay = 0xE6FFFFFF,
+            textPrimary = 0xFF15171A,
+            // #6E747C → 3.97:1 on the raised surface. Darkened to 4.52:1.
+            textSecondary = 0xFF666B73,
+            // #E14A22 → 3.40:1, which is a *primary action* nobody can read. Darkened to 4.51:1;
+            // it is still unmistakably the same vermilion.
+            accent = 0xFFC03D1A,
+            onAccent = 0xFFFFF6F3,
+        )
+
+        // ---- Iris Ink --------------------------------------------------------------------------
+        //
+        // Canvas-first. Everything is violet-black and the chrome is meant to disappear: the panel
+        // floats as a blurred card with an inset, so the artwork runs behind it rather than stopping
+        // at it.
+
+        val IrisDark = dark(
+            ground = 0xFF131019,
+            surface1 = 0xFF1D1826,
+            surface2 = 0xFF262031,
+            surface3 = 0xFF2D2835,
+            surround = 0xFF0B0910,
+            overlay = 0xD91D1826,
+            textPrimary = 0xFFEDE9F5,
+            // The one secondary that already passed — 5.12:1 — so it is left exactly as drawn.
+            textSecondary = 0xFF9E97B0,
+            accent = 0xFF9B7CFF,
+            onAccent = 0xFF17092F,
+        )
+
+        val IrisLight = light(
+            ground = 0xFFF6F3FC,
+            surface1 = 0xFFFFFFFF,
+            surface2 = 0xFFEFE9F9,
+            surface3 = 0xFFF1F1F1,
+            surround = 0xFFE7E1F3,
+            overlay = 0xE0FFFFFF,
+            textPrimary = 0xFF1B1626,
+            textSecondary = 0xFF6D677F,
+            // #7A5AF8 → 3.81:1. Darkened to 4.53:1.
+            accent = 0xFF6C48F7,
+            onAccent = 0xFFFFFFFF,
+        )
+
+        // ---- Console ---------------------------------------------------------------------------
+        //
+        // Maximum density, monospace throughout, numeric read-outs everywhere. Acid yellow because
+        // it is the one accent that reads at 8sp against a near-black terminal ground.
+
+        val ConsoleDark = dark(
+            ground = 0xFF16151A,
+            surface1 = 0xFF1B1A20,
+            surface2 = 0xFF26252C,
+            surface3 = 0xFF2B2A30,
+            surround = 0xFF0F0E12,
+            overlay = 0xE61B1A20,
+            textPrimary = 0xFFE4E2EA,
+            // #8B8894 → 4.10:1. Lightened to 4.53:1.
+            textSecondary = 0xFF92909B,
+            accent = 0xFFE3F25C,
+            onAccent = 0xFF16151A,
+        )
+
+        val ConsoleLight = light(
+            ground = 0xFFF2F2EC,
+            surface1 = 0xFFFFFFFF,
+            surface2 = 0xFFE9E9E1,
+            surface3 = 0xFFF1F1F1,
+            surround = 0xFFDFDFD7,
+            overlay = 0xE6FFFFFF,
+            textPrimary = 0xFF16151A,
+            textSecondary = 0xFF696871,
+            // #66770A → 4.09:1. Darkened to 4.51:1.
+            accent = 0xFF607009,
+            onAccent = 0xFFFBFFE8,
+        )
+
+        /**
+         * Kept as names so the tests and any caller that predates the four skins still compile.
+         *
+         * They are Ember's, because Ember is the default direction.
+         */
+        val Dark = EmberDark
+        val Light = EmberLight
     }
 }
+
+/**
+ * How the work panel meets the canvas.
+ *
+ * Not decoration: this is the single decision that makes the three directions feel like different
+ * applications rather than three colour schemes of one.
+ */
+enum class PanelLayout {
+
+    /** Flat, full-bleed, one hairline along the top. Ember. */
+    DOCKED,
+
+    /** A blurred card floating over the artwork with an inset on three sides. Iris. */
+    FLOATING,
+
+    /** Flat and compact, with the panel given less height so the canvas keeps more. Console. */
+    DENSE,
+}
+
+/**
+ * A complete direction: the two palettes, the shape language, the typeface and the writing system.
+ *
+ * The fourth entry is not a fourth colour scheme — it is Ember mirrored, in Vazirmatn, with Persian
+ * digits. Kept as a separate skin rather than as a flag on Ember so that "which direction am I in"
+ * has exactly one answer everywhere, including in the picker.
+ */
+enum class ThemeSkin(
+    val persianLabel: String,
+    val note: String,
+    val layout: PanelLayout,
+    val mono: Boolean,
+    internal val dark: Palette,
+    internal val light: Palette,
+    private val buttonRadius: Int,
+    private val cardRadius: Int,
+    private val sheetRadius: Int,
+    private val chipRadius: Int,
+    /** How tall the docked work panel is allowed to grow, as a fraction of the screen. */
+    val panelFraction: Float,
+    /** Whether technical read-outs are set in Persian digits. See [Digits.technical]. */
+    val persianNumerals: Boolean = false,
+) {
+    EMBER(
+        persianLabel = "امبر اسلیت",
+        note = "پیش‌فرض",
+        layout = PanelLayout.DOCKED,
+        mono = false,
+        dark = Palette.EmberDark,
+        light = Palette.EmberLight,
+        buttonRadius = 9,
+        cardRadius = 12,
+        sheetRadius = 20,
+        chipRadius = 999,
+        panelFraction = 0.42f,
+    ),
+    IRIS(
+        persianLabel = "آیریس اینک",
+        note = "بوم‌محور",
+        layout = PanelLayout.FLOATING,
+        mono = false,
+        dark = Palette.IrisDark,
+        light = Palette.IrisLight,
+        buttonRadius = 11,
+        cardRadius = 18,
+        sheetRadius = 24,
+        chipRadius = 999,
+        panelFraction = 0.40f,
+    ),
+    CONSOLE(
+        persianLabel = "کنسول",
+        note = "متراکم / حرفه‌ای",
+        layout = PanelLayout.DENSE,
+        mono = true,
+        dark = Palette.ConsoleDark,
+        light = Palette.ConsoleLight,
+        buttonRadius = 4,
+        cardRadius = 6,
+        sheetRadius = 12,
+        chipRadius = 6,
+        panelFraction = 0.32f,
+    ),
+    /**
+     * Ember, with the numbers in Persian too.
+     *
+     * The direction as drawn is "Ember, fully mirrored RTL" — which this application already is,
+     * everywhere, and has been since the first screen. Shipping that as a fourth entry would put two
+     * identical rows in the picker, and a choice that changes nothing is worse than three choices.
+     *
+     * So the fourth direction is the one thing Ember deliberately does *not* do: it sets the
+     * technical read-outs — sizes, percentages, coordinates — in Persian digits as well. The
+     * specification argues for Latin there, and the argument is good: those are values the user
+     * types back in. But it is an argument, not a fact, and somebody laying out a Persian poster may
+     * reasonably want an interface with no Latin numerals anywhere in it. That is a direction.
+     */
+    EMBER_FA(
+        persianLabel = "امبر — فارسی",
+        note = "ارقام فارسی",
+        layout = PanelLayout.DOCKED,
+        mono = false,
+        dark = Palette.EmberDark,
+        light = Palette.EmberLight,
+        buttonRadius = 9,
+        cardRadius = 12,
+        sheetRadius = 20,
+        chipRadius = 999,
+        panelFraction = 0.42f,
+        persianNumerals = true,
+    ),
+    ;
+
+    internal fun palette(dark: Boolean): Palette = if (dark) this.dark else this.light
+
+    internal val corners: CornerSet
+        get() = CornerSet(
+            button = RoundedCornerShape(buttonRadius.dp),
+            card = RoundedCornerShape(cardRadius.dp),
+            chip = RoundedCornerShape(chipRadius.dp),
+            sheet = RoundedCornerShape(topStart = sheetRadius.dp, topEnd = sheetRadius.dp),
+            panel = RoundedCornerShape(cardRadius.dp),
+        )
+
+    /** The inset a floating panel keeps from the screen edge. Zero for the flat layouts. */
+    val panelInset: Dp get() = if (layout == PanelLayout.FLOATING) 10.dp else 0.dp
+}
+
+internal data class CornerSet(
+    val button: RoundedCornerShape,
+    val card: RoundedCornerShape,
+    val chip: RoundedCornerShape,
+    val sheet: RoundedCornerShape,
+    val panel: RoundedCornerShape,
+)
 
 /**
  * Spacing. The specification's scale, and nothing between its steps.
  *
  * `4 · 8 · 12 · 16 · 24 · 32 · 48`
+ *
+ * Deliberately **not** varied per skin. Console reads as dense through its radii, its typeface and
+ * its shorter panel; making the spacing scale move as well would reflow every screen in the
+ * application on a theme change, and a layout that only holds together in one theme is one nobody
+ * can maintain.
  */
 object Space {
     val tight = 4.dp
@@ -281,41 +528,57 @@ object Space {
     val wide = 24.dp
     val huge = 32.dp
 
-    /** The screen's gutter. On the scale, unlike the 20dp it replaces. */
+    /** The screen's gutter. */
     val gutter = 16.dp
 
     /** The platform minimum, and the specification's: a mis-tap on a canvas costs an undo. */
     val touch = 48.dp
 }
 
-/** Corner radii. Specification §۶: `button 8 · card 12 · sheet 20 · chip 999`. */
+/**
+ * Corner radii — now a property of the skin.
+ *
+ * Written as accessors so that the hundred-odd call sites that say `Corners.card` did not have to
+ * change, and so that a radius read is an observable state read like a colour read. The bug that
+ * `ThemeSwitchTest` exists to catch applies here identically: a shape read through a plain `val`
+ * would freeze at whatever the first skin was.
+ */
 object Corners {
-    val button = RoundedCornerShape(8.dp)
-    val small = RoundedCornerShape(8.dp)
-    val card = RoundedCornerShape(12.dp)
-    val large = RoundedCornerShape(12.dp)
-    val chip = RoundedCornerShape(999.dp)
-    val sheet = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+    val button get() = Metrics.corners.button
+    val small get() = Metrics.corners.button
+    val card get() = Metrics.corners.card
+    val large get() = Metrics.corners.card
+    val chip get() = Metrics.corners.chip
+    val sheet get() = Metrics.corners.sheet
+    val panel get() = Metrics.corners.panel
 }
 
 /**
- * The fixed heights of the screen's furniture. Specification §۶ and §۱۳.۵.
+ * The fixed heights of the screen's furniture.
  *
  * Named rather than written where they are used, because the whole point of the layout is that
- * these three bars are *the same height on every screen* — the moment one is set locally, the canvas
+ * these bars are *the same height on every screen* — the moment one is set locally, the canvas
  * starts moving as the user switches tools.
  */
 object Frame {
     /** History strip, along the top. */
     val history = 56.dp
 
-    /** Contextual ribbon, directly under the canvas. Changes with what is selected. */
+    /**
+     * Contextual ribbon, directly under the canvas.
+     *
+     * Fixed at eighty-eight in every direction, and that is a correction rather than an omission.
+     * Console shortened both this and the dock to read as denser, and the first picture of it showed
+     * why that was wrong: the labels are Persian words under 24dp icons, and «سه‌بعدی» and «خروجی»
+     * were cut off at the baseline. A direction may not make text unreadable to look tighter.
+     * Console's density comes from its radii, its accent and its read-outs instead.
+     */
     val ribbon = 88.dp
 
     /** The main dock. Five entries, always. */
     val dock = 64.dp
 
-    /** Icon stroke. Specification: monochrome, 1.5dp. */
+    /** Icon stroke. Monochrome, 1.5dp. */
     val stroke = 1.5.dp
 
     /** Icon box. Sized so a 1.5dp stroke reads as a line rather than as a smudge. */
@@ -323,7 +586,34 @@ object Frame {
 }
 
 /**
- * Motion. Specification §۶.
+ * Which direction is in force, for the parts of the interface that must know more than a colour.
+ *
+ * Same reasoning as [Ink.tokens], and the same trap: shapes and metrics are read all over the tree,
+ * so they have to be observable or a theme change repaints the colours and leaves the corners.
+ */
+object Metrics {
+
+    internal var skin: ThemeSkin by mutableStateOf(ThemeSkin.EMBER)
+        private set
+
+    internal var corners: CornerSet by mutableStateOf(ThemeSkin.EMBER.corners)
+        private set
+
+    internal var numeric: TextStyle by mutableStateOf(numericStyle(mono = false))
+        private set
+
+    internal fun use(chosen: ThemeSkin) {
+        skin = chosen
+        corners = chosen.corners
+        numeric = numericStyle(chosen.mono)
+    }
+
+    /** The panel treatment the current direction asks for. */
+    val layout: PanelLayout get() = skin.layout
+}
+
+/**
+ * Motion.
  *
  * Three durations and one curve. The two rules that matter more than the numbers: a slider changing
  * a value updates the canvas **immediately and without animation** — an eased canvas reads as a slow
@@ -347,8 +637,11 @@ object Motion {
  * phones, and a Persian label that fits on one and wraps on another is a layout nobody can design
  * against.
  *
- * The weight axis is set explicitly per style rather than by synthesising bold, which on a variable
- * face produces a smeared outline instead of the drawn weight.
+ * Console's monospace is the platform's, deliberately: bundling a second full face for one skin
+ * costs about 300 KB of APK for a difference the skin already carries in its colour and its
+ * read-outs, and every Android device since Lollipop ships a competent mono. It is used **only for
+ * numbers**, where its fixed pitch is the point and its lack of Arabic coverage cannot bite — see
+ * the note on [typographyFor] for what happened when it was used for words.
  */
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
 private fun vazirmatn(weight: Int): FontFamily = Font(
@@ -356,12 +649,6 @@ private fun vazirmatn(weight: Int): FontFamily = Font(
     weight = FontWeight(weight),
     variationSettings = FontVariation.Settings(FontVariation.weight(weight)),
 ).toFontFamily()
-
-private val displayFace = vazirmatn(600)
-private val titleFace = vazirmatn(500)
-private val bodyFace = vazirmatn(400)
-private val labelFace = vazirmatn(500)
-private val captionFace = vazirmatn(400)
 
 /**
  * Line height is a multiple in the specification, so it is written as one here.
@@ -389,7 +676,7 @@ private fun style(
 )
 
 /**
- * The type scale, specification §۶.
+ * The type scale.
  *
  * ```
  * display  22sp / 600 / 1.4
@@ -400,35 +687,64 @@ private fun style(
  * ```
  *
  * Five roles, mapped onto the Material slots the components already ask for. Material has more slots
- * than the specification has roles, so several map to the same style — which is the point: an
- * interface with five sizes is one somebody designed, and one with thirteen is one that accumulated.
+ * than there are roles, so several map to the same style — which is the point: an interface with
+ * five sizes is one somebody designed, and one with thirteen is one that accumulated.
+ *
+ * ### Console does *not* set its interface in monospace, and the first render is why
+ *
+ * The direction as drawn says "JetBrains Mono throughout", which is the right call for the Latin
+ * mock-up it was drawn in and the wrong one here. No monospace face on Android carries the Arabic
+ * script, so every Persian label fell through to a system fallback: a different design, different
+ * metrics, and «سه‌بعدی» sitting a pixel outside its own box. An interface that cannot render its
+ * own language is not a denser interface, it is a broken one.
+ *
+ * So Console keeps monospace exactly where monospace earns its place — the numeric read-outs, via
+ * [NumericStyle] — and sets its words in the same face as everything else. Its identity is carried
+ * by the acid accent, the near-square corners and the read-outs, which is where it was coming from
+ * anyway. It still drops one step at the small end, because that part was about density and density
+ * is not the thing that broke.
  */
-private val typography = Typography(
-    displayLarge = style(displayFace, 22, 1.4, 600),
-    displayMedium = style(displayFace, 22, 1.4, 600),
-    displaySmall = style(displayFace, 22, 1.4, 600),
-    headlineLarge = style(displayFace, 22, 1.4, 600),
-    headlineMedium = style(displayFace, 22, 1.4, 600),
-    headlineSmall = style(titleFace, 17, 1.45, 500),
-    titleLarge = style(titleFace, 17, 1.45, 500),
-    titleMedium = style(titleFace, 17, 1.45, 500),
-    titleSmall = style(labelFace, 13, 1.4, 500),
-    bodyLarge = style(bodyFace, 15, 1.6, 400),
-    bodyMedium = style(bodyFace, 15, 1.6, 400),
-    bodySmall = style(captionFace, 11, 1.4, 400),
-    labelLarge = style(labelFace, 13, 1.4, 500),
-    labelMedium = style(labelFace, 13, 1.4, 500),
-    labelSmall = style(captionFace, 11, 1.4, 400),
-)
+private fun typographyFor(mono: Boolean): Typography {
+    val display = vazirmatn(600)
+    val title = vazirmatn(500)
+    val body = vazirmatn(400)
+    val label = vazirmatn(500)
+    val caption = vazirmatn(400)
+    val labelSize = if (mono) 12 else 13
+    val captionSize = if (mono) 10 else 11
+    return Typography(
+        displayLarge = style(display, 22, 1.4, 600),
+        displayMedium = style(display, 22, 1.4, 600),
+        displaySmall = style(display, 22, 1.4, 600),
+        headlineLarge = style(display, 22, 1.4, 600),
+        headlineMedium = style(display, 22, 1.4, 600),
+        headlineSmall = style(title, 17, 1.45, 500),
+        titleLarge = style(title, 17, 1.45, 500),
+        titleMedium = style(title, 17, 1.45, 500),
+        titleSmall = style(label, labelSize, 1.4, 500),
+        bodyLarge = style(body, 15, 1.6, 400),
+        bodyMedium = style(body, 15, 1.6, 400),
+        bodySmall = style(caption, captionSize, 1.4, 400),
+        labelLarge = style(label, labelSize, 1.4, 500),
+        labelMedium = style(label, labelSize, 1.4, 500),
+        labelSmall = style(caption, captionSize, 1.4, 400),
+    )
+}
 
 /**
  * The numeric style: 14sp, weight 500, **tabular figures**.
  *
  * Its own style rather than a variant of `label`, because `tnum` is the whole reason it exists. A
  * proportional `1` is narrower than a `0`, so a readout that counts while a slider moves jitters
- * sideways under the finger, and a column of values in a panel refuses to line up.
+ * sideways under the finger, and a column of values in a panel refuses to line up. Monospace is
+ * already tabular, so Console gets it for free and keeps the feature tag anyway — harmless, and it
+ * survives a future swap of the mono face for one that is not fixed-pitch in its figures.
  */
-val NumericStyle: TextStyle = style(vazirmatn(500), 14, 1.4, 500, features = "tnum")
+private fun numericStyle(mono: Boolean): TextStyle =
+    style(if (mono) FontFamily.Monospace else vazirmatn(500), 14, 1.4, 500, features = "tnum")
+
+/** The numeric style of the direction in force. */
+val NumericStyle: TextStyle get() = Metrics.numeric
 
 /**
  * Renders digits the way the specification asks for each context.
@@ -441,8 +757,16 @@ val NumericStyle: TextStyle = style(vazirmatn(500), 14, 1.4, 500, features = "tn
  */
 object Digits {
 
-    /** For a measurement, a coordinate, a percentage — anything the user could type back in. */
-    fun technical(value: Int): String = value.toString()
+    /**
+     * For a measurement, a coordinate, a percentage — anything the user could type back in.
+     *
+     * Latin in three of the four directions, Persian in «امبر — فارسی». That is the one thing the
+     * fourth direction changes, and it is a real preference rather than a translation setting: the
+     * argument for Latin here is that these are values the user types back, and it is a good
+     * argument that some people will simply not accept for their own work.
+     */
+    fun technical(value: Int): String =
+        if (Metrics.skin.persianNumerals) prose(value) else value.toString()
 
     /** For a count or a duration inside a Persian sentence. */
     fun prose(value: Long): String = buildString {
@@ -458,6 +782,9 @@ object Digits {
 
 /** Whether the interface is currently dark, for the few controls that must know. */
 val LocalDarkTheme: ProvidableCompositionLocal<Boolean> = compositionLocalOf { true }
+
+/** Which direction is in force, for the few controls that lay themselves out differently. */
+val LocalThemeSkin: ProvidableCompositionLocal<ThemeSkin> = compositionLocalOf { ThemeSkin.EMBER }
 
 private fun schemeFor(palette: Palette, dark: Boolean) = if (dark) {
     darkColorScheme(
@@ -494,18 +821,26 @@ private fun schemeFor(palette: Palette, dark: Boolean) = if (dark) {
 }
 
 /**
- * @param dark which palette to use. Defaults to the system setting, so a user whose phone is light
- *   gets the light theme the specification calls optional — and everyone else gets the dark one the
- *   product is designed in.
+ * @param skin which of the four directions to paint in.
+ * @param dark whether to use that direction's night palette. Defaults to the system setting, so a
+ *   user whose phone is light gets the light one — and everyone else the dark.
  */
 @Composable
-fun PixelLabTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    val palette = if (dark) Palette.Dark else Palette.Light
+fun PixelLabTheme(
+    skin: ThemeSkin = ThemeSkin.EMBER,
+    dark: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit,
+) {
+    val palette = skin.palette(dark)
     Ink.use(palette)
-    CompositionLocalProvider(LocalDarkTheme provides dark) {
+    Metrics.use(skin)
+    CompositionLocalProvider(
+        LocalDarkTheme provides dark,
+        LocalThemeSkin provides skin,
+    ) {
         MaterialTheme(
             colorScheme = schemeFor(palette, dark),
-            typography = typography,
+            typography = typographyFor(skin.mono),
             content = content,
         )
     }

@@ -76,17 +76,37 @@ class ScreenshotTest {
      * in the card background [frame] uses would hide exactly the thing worth looking at — whether
      * the screen's own surfaces separate from each other.
      */
-    private fun page(name: String, dark: Boolean = true, content: @Composable () -> Unit) =
-        render(name, dark) { Box(Modifier.fillMaxSize()) { content() } }
+    private fun page(
+        name: String,
+        dark: Boolean = true,
+        skin: ThemeSkin = ThemeSkin.EMBER,
+        content: @Composable () -> Unit,
+    ) = render(name, dark, skin) { Box(Modifier.fillMaxSize()) { content() } }
 
-    private fun render(name: String, dark: Boolean = true, content: @Composable () -> Unit) {
+    private fun render(
+        name: String,
+        dark: Boolean = true,
+        skin: ThemeSkin = ThemeSkin.EMBER,
+        content: @Composable () -> Unit,
+    ) {
         compose.setContent {
-            PixelLabTheme(dark = dark) {
+            PixelLabTheme(skin = skin, dark = dark) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                     content()
                 }
             }
         }
+        capture(name)
+    }
+
+    /**
+     * Lays the current composition out and writes it to a file.
+     *
+     * Split out of [render] so a single test can capture several frames: `setContent` may only be
+     * called once per test, so a gallery of eight themes has to swap state under one composition
+     * rather than replacing the content eight times.
+     */
+    private fun capture(name: String) {
         compose.waitForIdle()
         org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
 
@@ -210,6 +230,62 @@ class ScreenshotTest {
                     MainDock(Dock.PHOTO, model.state, model) {}
                 }
             }
+        }
+    }
+
+    @Test
+    fun `every direction draws the editor, day and night`() {
+        // Eight pictures, one per direction per mode, and the only place any of them can be looked
+        // at side by side. Four themes is four times the surface area for the failure a palette
+        // always has — a colour chosen against one panel and never seen on another — and the
+        // contrast test measures ratios while this one shows what they produce.
+        //
+        // It is also the guard against a direction that *lays out* and draws nothing: [capture]
+        // asserts the frame carries more than a handful of distinct colours, so a skin whose panel
+        // and ground collapsed to the same value fails here rather than on somebody's phone.
+        //
+        // One composition, swapped eight times, because `setContent` may only be called once per
+        // test — which is worth stating, since the obvious loop around `page` throws.
+        val model = EditorViewModel(ApplicationProvider.getApplicationContext())
+            .also { it.autoSave.stop() }
+        model.act { select(state.document.layers.first().id) }
+
+        val frames = ThemeSkin.entries.flatMap { skin -> listOf(skin to true, skin to false) }
+        var frame by mutableStateOf(0)
+
+        compose.setContent {
+            val (skin, dark) = frames[frame]
+            PixelLabTheme(skin = skin, dark = dark) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Column(
+                        Modifier.fillMaxSize().background(Ink.Surround),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        TopBar(state = model.state, model = model, onHome = {})
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            SelectionCard(model.state, model, onEditText = {})
+                            Ribbon(
+                                dock = Dock.PHOTO,
+                                state = model.state,
+                                model = model,
+                                onPickImage = {},
+                                onAddText = {},
+                                onEditText = {},
+                                onExport = {},
+                                onSave = {},
+                                onOpen = {},
+                            )
+                            MainDock(Dock.PHOTO, model.state, model) {}
+                        }
+                    }
+                }
+            }
+        }
+
+        for ((index, entry) in frames.withIndex()) {
+            frame = index
+            val (skin, dark) = entry
+            capture("theme-${skin.name.lowercase()}-${if (dark) "night" else "day"}")
         }
     }
 

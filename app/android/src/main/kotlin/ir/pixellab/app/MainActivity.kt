@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
                 enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
             }
 
-            PixelLabTheme(dark = dark) {
+            PixelLabTheme(skin = editor.preferences.skin, dark = dark) {
                 // The interface is right-to-left throughout. The canvas is not, and cannot be: a
                 // design's coordinates have nothing to do with the language of the tool editing it,
                 // and mirroring them is the mistake that makes Persianised editors unusable for

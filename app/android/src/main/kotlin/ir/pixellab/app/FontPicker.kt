@@ -16,6 +16,10 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.toFontFamily
+import java.io.File
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +36,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import ir.pixellab.core.editor.EditorState
+import ir.pixellab.core.fonts.FontFile
 import ir.pixellab.core.fonts.Script
 import ir.pixellab.core.fonts.Typeface
 import ir.pixellab.core.model.Layer
@@ -161,15 +166,64 @@ private fun SearchField(query: String, onChange: (String) -> Unit) {
 }
 
 /**
+ * Which file of a typeface to draw the sample with.
+ *
+ * Not `files.first()`, which is whatever order the directory scan happened to return: a face whose
+ * Black cut sorted first would preview as a slab, and the user would choose against a weight they
+ * never asked for. The variable file first, because one file that can be *any* weight is the
+ * truthful representation of a variable design; then the regular cut, because that is what a text
+ * layer starts at.
+ *
+ * Pulled out of the composable purely so it can be tested — the composable around it needs a real
+ * font file on disk and a Compose runtime, and this is the part that can actually be wrong.
+ */
+internal fun previewFile(face: Typeface): FontFile? =
+    face.variableFile ?: face.resolve(weight = REGULAR) ?: face.files.firstOrNull()
+
+/** OS/2 usWeightClass for Regular. */
+private const val REGULAR = 400
+
+/**
+ * A typeface's own outlines, for previewing it with.
+ *
+ * ### The defect this exists to close
+ *
+ * The picker drew every sample with `Text(face.previewText, fontSize = 22.sp)` and **no font
+ * family** — so all of them rendered in the interface face. Twelve Persian designs previewed as
+ * twelve identical lines of Vazirmatn, and the only way to find out what a face looked like was to
+ * apply it and look at the canvas. That is the same shape of bug this repository keeps finding: the
+ * model expresses it, the canvas honours it, and the control never reaches it. It is also exactly
+ * what "the text preview and the picture preview disagree" feels like from the outside.
+ *
+ * Loaded from the file the catalogue already found, so the preview and the canvas are reading the
+ * *same bytes* — a face that fails to parse for the rasteriser cannot silently succeed here.
+ *
+ * `remember`ed on the path because building a family opens and maps the file: doing that on every
+ * recomposition of a scrolling list is a stutter per row.
+ */
+@Composable
+private fun previewFamily(face: Typeface): FontFamily? {
+    val path = previewFile(face)?.path ?: return null
+    return remember(path) {
+        // A font that parsed during the scan can still fail to load here — the file can be deleted
+        // between the scan and the draw, and a throw during composition takes the whole picker down
+        // rather than one row of it.
+        runCatching { Font(File(path)).toFontFamily() }.getOrNull()
+    }
+}
+
+/**
  * One typeface.
  *
- * The preview is the face's own name plus a sample in its own script — previewing an Arabic face
- * with Latin text tells the user nothing about the only thing they are choosing between. The badges
- * carry what no other mobile picker shows: whether the face has a kashida axis, stylistic sets, or
- * Persian digits, all of which decide whether a given design is even possible.
+ * The preview is the face's own name plus a sample in its own script, **set in that face** —
+ * previewing an Arabic design with Latin text tells the user nothing about the only thing they are
+ * choosing between, and previewing it in somebody else's outlines tells them less than nothing. The
+ * badges carry what no other mobile picker shows: whether the face has a kashida axis, stylistic
+ * sets, or Persian digits, all of which decide whether a given design is even possible.
  */
 @Composable
 private fun TypefaceRow(face: Typeface, chosen: Boolean, onClick: () -> Unit) {
+    val family = previewFamily(face)
     Row(
         Modifier
             .fillMaxWidth()
@@ -185,6 +239,10 @@ private fun TypefaceRow(face: Typeface, chosen: Boolean, onClick: () -> Unit) {
                 // Large enough that a Persian face's actual letterforms are legible; at label size
                 // every Naskh design looks identical.
                 fontSize = 22.sp,
+                // Null falls back to the interface face, which is the honest outcome when the file
+                // will not load — the row still names the design, and the sample not matching is a
+                // truthful signal that something is wrong with that file.
+                fontFamily = family,
                 color = if (chosen) Ink.Accent else Ink.Text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

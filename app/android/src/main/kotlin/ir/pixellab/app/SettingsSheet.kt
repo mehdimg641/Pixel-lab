@@ -1,6 +1,22 @@
 package ir.pixellab.app
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -37,7 +53,15 @@ fun SettingsSheetBody(state: EditorState, model: EditorViewModel, modifier: Modi
 
         // First, because it is the setting people look for first and the one that decides whether
         // the rest of the panel is comfortable to read at all.
-        SheetSection("ظاهر")
+        SheetSection("تم")
+        // Cards rather than chips, because the thing being chosen is a colour and a shape — a row
+        // of four identical text pills would ask the user to pick a design they cannot see. Each
+        // card paints its own accent on its own panel colour, so the swatch *is* the preview.
+        ThemeSkinPicker(chosen = preferences.skin) { skin ->
+            update { it.copy(skin = skin) }
+        }
+
+        SheetSection("روز و شب")
         SheetChips {
             for (choice in ThemeChoice.entries) {
                 SheetChip(choice.persianLabel, chosen = preferences.theme == choice) {
@@ -191,3 +215,87 @@ private val CANVAS_PRESETS = listOf(
     CanvasPreset("کاور", 1400, 1400),
     CanvasPreset("تامبنیل", 1280, 720),
 )
+
+/**
+ * The four directions, each painting its own swatch.
+ *
+ * ### Why a card and not a chip
+ *
+ * The other settings in this sheet are chips because the thing being chosen is a *word* — «روشن»,
+ * «تیره». A direction is not a word: it is an accent, a panel colour and a corner radius, and a row
+ * of four identical pills labelled with names would ask somebody to choose a design they cannot see.
+ * So each card draws a plate in that direction's own panel colour with a dot of its own accent, at
+ * its own radius. Choosing is then recognition rather than recall, which is the whole difference
+ * between a theme picker people use and one they open once.
+ *
+ * The swatch follows the **day/night setting already in force**, not the direction's dark palette:
+ * a user working in the light theme who is shown four night swatches is being shown four things
+ * that will not happen when they tap.
+ */
+@Composable
+private fun ThemeSkinPicker(chosen: ThemeSkin, onPick: (ThemeSkin) -> Unit) {
+    val dark = LocalDarkTheme.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Space.gutter),
+        verticalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        for (skin in ThemeSkin.entries) {
+            val palette = skin.palette(dark)
+            val selected = skin == chosen
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Space.touch)
+                    .clip(Corners.card)
+                    .background(if (selected) Ink.AccentSoft else Ink.ChromeRaised)
+                    .border(
+                        width = if (selected) 1.5.dp else 1.dp,
+                        color = if (selected) Ink.Accent else Ink.Divider,
+                        shape = Corners.card,
+                    )
+                    // The whole row, not the swatch: a 26dp target inside a 48dp row is the
+                    // difference between a control and a game of darts.
+                    .selectable(
+                        selected = selected,
+                        role = Role.RadioButton,
+                        onClick = { onPick(skin) },
+                    )
+                    .padding(horizontal = Space.medium, vertical = Space.small),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Space.medium),
+            ) {
+                Box(
+                    Modifier
+                        .size(30.dp)
+                        // The direction's *own* radius, so Console's square corners and Iris's
+                        // round ones are visible before anything is applied.
+                        .clip(skin.corners.card)
+                        .background(palette.surface1)
+                        .border(1.dp, palette.borderSubtle, skin.corners.card),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        Modifier
+                            .size(13.dp)
+                            .clip(CircleShape)
+                            .background(palette.accent),
+                    )
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        skin.persianLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Ink.Text,
+                    )
+                    Text(
+                        skin.note,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Ink.TextMuted,
+                    )
+                }
+            }
+        }
+    }
+}

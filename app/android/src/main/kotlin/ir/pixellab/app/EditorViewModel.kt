@@ -856,6 +856,24 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (!framedByHand) fitCanvas()
     }
 
+    /**
+     * Zooms about the middle of the visible area by a fixed factor.
+     *
+     * About the middle rather than about the document's centre: at 400% the document's centre is off
+     * screen, and zooming toward a point the user cannot see makes the buttons feel like they scroll
+     * rather than magnify. The middle of the *screen* is the one pivot that keeps whatever is under
+     * the user's eye under their eye.
+     *
+     * It counts as framing by hand, for the same reason a pinch does — someone who has chosen a zoom
+     * should not have it thrown away the next time a bar changes height.
+     */
+    fun stepZoom(factor: Float) = edit {
+        val screen = state.viewport.screenSize
+        if (screen.x <= 0f || screen.y <= 0f) return@edit
+        framedByHand = true
+        setViewport(state.viewport.zoomBy(factor, Vec2(screen.x * 0.5f, screen.y * 0.5f)))
+    }
+
     /** Set the moment a gesture moves the camera, so an automatic fit never overrides the user. */
     private var framedByHand = false
 

@@ -53,6 +53,14 @@ data class Preferences(
      * offered — it is simply no longer assumed.
      */
     val theme: ThemeChoice = ThemeChoice.LIGHT,
+    /**
+     * Which of the four directions to paint in.
+     *
+     * Separate from [theme], and the separation is the point: *day or night* and *which design* are
+     * two questions, and folding them into one list of six would mean a user who prefers Console
+     * has to re-pick their direction every time they move between a dark room and a bright one.
+     */
+    val skin: ThemeSkin = ThemeSkin.EMBER,
 ) {
     val snap: SnapConfig
         get() = SnapConfig(
@@ -87,12 +95,19 @@ data class Preferences(
                 theme = runCatching {
                     ThemeChoice.valueOf(store.getString("theme", defaults.theme.name) ?: defaults.theme.name)
                 }.getOrDefault(defaults.theme),
+                // `runCatching` rather than a lookup, for the same reason as the line above: a
+                // direction removed in a later version leaves its name behind in the file, and
+                // `valueOf` on a name that no longer exists throws on the launch after an update.
+                skin = runCatching {
+                    ThemeSkin.valueOf(store.getString("skin", defaults.skin.name) ?: defaults.skin.name)
+                }.getOrDefault(defaults.skin),
             ).sane()
         }
 
         fun save(context: Context, preferences: Preferences) {
             context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().apply {
                 putString("theme", preferences.theme.name)
+                putString("skin", preferences.skin.name)
                 putBoolean("snapEnabled", preferences.snapEnabled)
                 putBoolean("snapToCanvas", preferences.snapToCanvas)
                 putBoolean("snapToLayers", preferences.snapToLayers)
