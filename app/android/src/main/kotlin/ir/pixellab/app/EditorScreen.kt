@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.FitScreen
+import androidx.compose.material.icons.outlined.Flip
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.FormatColorFill
 import androidx.compose.material.icons.outlined.BorderColor
@@ -372,7 +373,10 @@ fun EditorScreen(
             // I do to *this*". Merging them means the ribbon's contents change under the user
             // every time they tap the canvas.
             AnimatedVisibility(
-                visible = state.hasSelection && !state.sheet.isOpen,
+                // Shown whenever the canvas is visible, not only when a layer is selected: the two
+                // states it used to skip — an empty canvas and a live pixel selection — are the
+                // two where somebody most needs to be told what happens next.
+                visible = !state.sheet.isOpen,
                 enter = slideInVertically(tween(Motion.STANDARD, easing = Motion.ease)) { it },
                 exit = slideOutVertically(tween(Motion.STANDARD, easing = Motion.ease)) { it },
             ) {
@@ -1100,16 +1104,38 @@ private fun DockButton(entry: Dock, active: Boolean, onClick: () -> Unit) {
 }
 
 /**
- * What to do with what is selected.
+ * The contextual bar — what to do next, given what is in front of you.
  *
- * A floating card above the ribbon rather than a third full-width strip. Three stacked bars of equal
- * weight is the arrangement that makes an editor feel walled in at the bottom; a card that is
- * visibly narrower than the canvas reads as *about the selection* rather than as more chrome.
+ * ### What it was, and why that was not enough
+ *
+ * It offered the same six actions no matter what was selected — only «متن» was conditional — and it
+ * appeared **only when a layer was selected**. That left the two moments a beginner is most stuck
+ * showing nothing at all:
+ *
+ *   - a fresh document with an empty canvas, where the honest question is "how do I put something
+ *     here", and
+ *   - a live pixel selection with marching ants on screen, which is the single state where a
+ *     contextual bar earns its place, because *every* useful next step is a different panel.
+ *
+ * The deep Photoshop reading behind this session put its Contextual Task Bar at the top of what
+ * their interface gets right, and the reason is precisely this: it is not a toolbar, it is a
+ * **guess at the next step**, and a guess that is the same in every state is not a guess.
+ *
+ * ### The four states
+ *
+ * Ordered by how specific the answer is, most specific first. A pixel selection wins over a layer
+ * selection because you almost always have both and the marching ants are the thing you just made.
+ *
+ * The bar stays small on purpose — one row of icons on a pill over the artwork. This is the
+ * *opposite* of the panel that covered the canvas: it names the next step and gets out of the way,
+ * and the panel it opens is the thing that takes room.
  */
 @Composable
 internal fun SelectionCard(state: EditorState, model: EditorViewModel, onEditText: (LayerId) -> Unit) {
-    val id = state.selection.primary ?: return
-    val isText = state.selectedLayers.any { it.id == id && it is Layer.Text }
+    val actions = LocalEditorActions.current
+    val id = state.selection.primary
+    val layer = state.selectedLayers.firstOrNull { it.id == id }
+
     Row(
         Modifier
             .padding(horizontal = Space.large, vertical = Space.small)
@@ -1120,33 +1146,103 @@ internal fun SelectionCard(state: EditorState, model: EditorViewModel, onEditTex
         horizontalArrangement = Arrangement.spacedBy(Space.tight),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (isText) {
-            BarAction(Icons.Outlined.TextFields, "متن") { onEditText(id) }
-        }
-        BarAction(Icons.Outlined.Tune, "لایه") {
-            // Blend mode, both opacities, clipping and masking — the panel people open most often
-            // after moving something.
-            model.act { openSheet(SheetContent.LayerParameters(id), SheetDetent.FULL) }
-        }
-        // The same glyph the home screen puts on «افکت», so the two places agree about what an
-        // effect is. A plus would have meant "add" — true, and silent about what.
-        BarAction(Icons.Outlined.AutoAwesome, "افکت") {
-            // A stroke is the effect people reach for first, and it is immediately visible, so the
-            // sheet that opens has something to show.
-            model.act {
-                addEffect(id, Effect.Stroke(8f, Fill.Solid(ir.pixellab.core.model.Color.WHITE)))
+        when {
+            // ---- a live pixel selection ----------------------------------------------------
+            //
+            // Marching ants on screen and, until now, nothing offered. Every entry here is a
+            // different destination, which is exactly what a contextual bar is for.
+            model.select.selection != null -> {
+                BarAction(Icons.Outlined.Tune, "اصلاح لبه") {
+                    model.act { openSheet(SheetContent.PixelSelection, SheetDetent.HALF) }
+                }
+                BarAction(Icons.Outlined.Flip, "معکوس") {
+                    model.select.invert(state.document.canvas.width, state.document.canvas.height)
+                }
+                // Only when there is a layer to put it on. A mask button that silently does
+                // nothing is worse than one that is not there.
+                if (id != null) {
+                    BarAction(Icons.Outlined.Layers, "ماسک") { model.maskFromSelection() }
+                }
+                BarAction(Icons.Outlined.Close, "لغو انتخاب") { model.select.clear() }
+            }
+
+            // ---- a text layer ---------------------------------------------------------------
+            id != null && layer is Layer.Text -> {
+                BarAction(Icons.Outlined.TextFields, "متن") { onEditText(id) }
+                BarAction(Icons.Outlined.FontDownload, "فونت") {
+                    model.act { openSheet(SheetContent.FontPicker, SheetDetent.FULL) }
+                }
+                BarAction(Icons.Outlined.AutoAwesome, "افکت") {
+                    model.act { openSheet(SheetContent.TextStudio(id, TextSection.STROKE), SheetDetent.FULL) }
+                }
+                LayerActions(id, model)
+            }
+
+            // ---- a picture ------------------------------------------------------------------
+            id != null && layer is Layer.Image -> {
+                BarAction(Icons.Outlined.Tune, "تنظیم") {
+                    model.act { openSheet(SheetContent.Adjustments, SheetDetent.FULL) }
+                }
+                BarAction(Icons.Outlined.AutoFixHigh, "جدا کردن سوژه") {
+                    model.act { openSheet(SheetContent.PixelSelection, SheetDetent.HALF) }
+                }
+                BarAction(Icons.Outlined.AutoAwesome, "افکت") { addStarterStroke(id, model) }
+                LayerActions(id, model)
+            }
+
+            // ---- anything else that is selected ---------------------------------------------
+            id != null -> {
+                BarAction(Icons.Outlined.Tune, "لایه") {
+                    model.act { openSheet(SheetContent.LayerParameters(id), SheetDetent.FULL) }
+                }
+                BarAction(Icons.Outlined.AutoAwesome, "افکت") { addStarterStroke(id, model) }
+                LayerActions(id, model)
+            }
+
+            // ---- nothing selected -----------------------------------------------------------
+            //
+            // The state the old bar had no answer for, and the one a new user starts in. Two ways
+            // to put something on the canvas, and the way to a ready-made layout.
+            else -> {
+                BarAction(Icons.Outlined.Image, "افزودن عکس", onClick = actions.pickImage)
+                BarAction(Icons.Outlined.TextFields, "افزودن متن", onClick = actions.addText)
+                BarAction(Icons.Outlined.GridView, "قالب") {
+                    model.act { openSheet(SheetContent.LibraryPanel, SheetDetent.FULL) }
+                }
             }
         }
-        BarAction(Icons.AutoMirrored.Outlined.AlignHorizontalLeft, "چیدمان") {
-            model.act { openSheet(SheetContent.Arrange, SheetDetent.HALF) }
-        }
-        BarAction(Icons.Outlined.ContentCopy, "کپی") {
-            // The id comes from the document rather than from a count: a count collides the first
-            // time a layer is deleted, and two layers with one id is an editor that loses work.
-            model.act { duplicateLayer(id, nextLayerId(id.value)) }
-        }
-        BarAction(Icons.Outlined.VerticalAlignTop, "به جلو") { model.act { bringToFront(id) } }
-        BarAction(Icons.Outlined.Delete, "حذف", tint = Ink.Danger) { model.act { deleteLayer(id) } }
+    }
+}
+
+/**
+ * The four things that apply to any layer, in the order people reach for them.
+ *
+ * Shared rather than repeated in each branch: they were already identical across the old bar's one
+ * state, and three copies of «کپی · به جلو · حذف» is three chances for them to drift apart.
+ */
+@Composable
+private fun LayerActions(id: LayerId, model: EditorViewModel) {
+    BarAction(Icons.AutoMirrored.Outlined.AlignHorizontalLeft, "چیدمان") {
+        model.act { openSheet(SheetContent.Arrange, SheetDetent.HALF) }
+    }
+    BarAction(Icons.Outlined.ContentCopy, "کپی") {
+        // The id comes from the document rather than from a count: a count collides the first
+        // time a layer is deleted, and two layers with one id is an editor that loses work.
+        model.act { duplicateLayer(id, nextLayerId(id.value)) }
+    }
+    BarAction(Icons.Outlined.VerticalAlignTop, "به جلو") { model.act { bringToFront(id) } }
+    BarAction(Icons.Outlined.Delete, "حذف", tint = Ink.Danger) { model.act { deleteLayer(id) } }
+}
+
+/**
+ * A white stroke, because it is the effect people reach for first and it is immediately visible.
+ *
+ * The sheet that opens then has something to show. Opening an empty effect panel and asking someone
+ * to pick from fourteen kinds is the version where nothing happens on the first tap.
+ */
+private fun addStarterStroke(id: LayerId, model: EditorViewModel) {
+    model.act {
+        addEffect(id, Effect.Stroke(8f, Fill.Solid(ir.pixellab.core.model.Color.WHITE)))
     }
 }
 

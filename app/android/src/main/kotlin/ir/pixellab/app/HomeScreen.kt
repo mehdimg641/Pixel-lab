@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -76,6 +78,10 @@ fun HomeScreen(
     onQuickAction: (QuickAction) -> Unit,
     onSettings: () -> Unit,
 ) {
+    // Read here rather than inside the list: a lazy item's body is not a composable context, so
+    // asking for the direction down there does not compile — and the layout choice belongs to the
+    // screen anyway, not to each row.
+    val layout = LocalThemeSkin.current.layout
     LazyColumn(
         Modifier.fillMaxSize().background(Ink.Ground).systemBarsPadding(),
         contentPadding = PaddingValues(
@@ -100,12 +106,173 @@ fun HomeScreen(
         if (projects.isEmpty()) {
             item { EmptyRecents() }
         } else {
-            items(projects, key = { it.absolutePath }) { file ->
-                ProjectRow(file, onOpen = { onOpen(file) })
+            // Three shapes, one per direction, and this is where the four themes stop being four
+            // colour schemes. A recent-work list is the first thing anybody sees, and «a row of
+            // cards» versus «a dense table» is a different claim about what the application is
+            // for — which is exactly what the four mock-ups were saying.
+            when (layout) {
+                // Console: NAME / LAYERS / MODIFIED, the way a file browser lists things. It fits
+                // three times as many projects on a screen and it is the point of the direction.
+                PanelLayout.DENSE -> {
+                    item { ProjectTableHead() }
+                    items(projects, key = { it.absolutePath }) { file ->
+                        ProjectTableRow(file, onOpen = { onOpen(file) })
+                    }
+                }
+                // Ember and Iris: a two-column grid of thumbnails. Iris staggers the heights, so
+                // the column edges never line up and the page reads as a board rather than a list.
+                else -> {
+                    val staggered = layout == PanelLayout.FLOATING
+                    items(projects.chunked(2)) { pair ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(Space.medium),
+                        ) {
+                            for ((offset, file) in pair.withIndex()) {
+                                ProjectCard(
+                                    file = file,
+                                    // The absolute index decides the height, not the position in
+                                    // the pair — otherwise every left card is tall and every right
+                                    // card is short, which is a stripe rather than a stagger.
+                                    tall = staggered && (projects.indexOf(file) % 3 == 0),
+                                    modifier = Modifier.weight(1f),
+                                    onOpen = { onOpen(file) },
+                                )
+                            }
+                            // Keeps a lone last card at half width instead of letting it stretch
+                            // across the page and read as a different kind of item.
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
             }
         }
     }
 }
+
+/**
+ * One project as a thumbnail card. Ember's grid and Iris's masonry.
+ *
+ * The plate is a tint rather than a rendered preview, and that is a deliberate limit rather than a
+ * placeholder: rendering a thumbnail means opening the document, building the render graph and
+ * running it once per card, which on a list of twenty projects is several seconds of work before
+ * the screen appears. The tint is derived from the file name, so a given project keeps the same
+ * colour and becomes recognisable by it.
+ */
+@Composable
+private fun ProjectCard(file: File, tall: Boolean, modifier: Modifier = Modifier, onOpen: () -> Unit) {
+    Column(
+        modifier
+            .clickable(onClick = onOpen)
+            .semantics { role = Role.Button },
+        verticalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(if (tall) TALL_CARD else SHORT_CARD)
+                .clip(Corners.card)
+                .background(tintOf(file.name))
+                .border(1.dp, Ink.Divider, Corners.card),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Outlined.Description,
+                contentDescription = null,
+                tint = Ink.Text.copy(alpha = 0.5f),
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Text(
+            file.nameWithoutExtension,
+            style = MaterialTheme.typography.labelLarge,
+            color = Ink.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            relativeTime(file.lastModified()),
+            style = MaterialTheme.typography.labelSmall,
+            color = Ink.TextMuted,
+            maxLines = 1,
+        )
+    }
+}
+
+/** Console's column titles. Set in the numeric style, because the rows under them are data. */
+@Composable
+private fun ProjectTableHead() {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Ink.ChromeRaised)
+            .padding(horizontal = Space.medium, vertical = Space.small),
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        Text("نام", style = MaterialTheme.typography.labelSmall, color = Ink.TextMuted, modifier = Modifier.weight(1f))
+        Text("حجم", style = MaterialTheme.typography.labelSmall, color = Ink.TextMuted, modifier = Modifier.width(72.dp))
+        Text("تغییر", style = MaterialTheme.typography.labelSmall, color = Ink.TextMuted, modifier = Modifier.width(72.dp))
+    }
+}
+
+/**
+ * One project as a table row.
+ *
+ * Still [Space.touch] tall, which is the whole compromise: Console is a dense direction and a dense
+ * direction on a phone still has to be operable by a thumb. The density comes from dropping the
+ * card, the padding and the icon plate — not from shrinking the target.
+ */
+@Composable
+private fun ProjectTableRow(file: File, onOpen: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = Space.touch)
+            .clickable(onClick = onOpen)
+            .padding(horizontal = Space.medium)
+            .semantics { role = Role.Button },
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(width = 26.dp, height = 20.dp)
+                .clip(Corners.small)
+                .background(tintOf(file.name)),
+        )
+        Text(
+            file.nameWithoutExtension,
+            style = MaterialTheme.typography.labelMedium,
+            color = Ink.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(sizeOf(file.length()), style = NumericStyle, color = Ink.TextMuted, modifier = Modifier.width(72.dp), maxLines = 1)
+        Text(
+            relativeTime(file.lastModified()),
+            style = MaterialTheme.typography.labelSmall,
+            color = Ink.TextMuted,
+            modifier = Modifier.width(72.dp),
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * A stable colour per project, derived from its name.
+ *
+ * Not random: a card that changes colour between two openings of the same screen is a card nobody
+ * can learn to find. The hue is the name's hash; the saturation and lightness are fixed so that
+ * every plate sits at the same distance from the panel and none of them competes with the accent.
+ */
+private fun tintOf(name: String): androidx.compose.ui.graphics.Color {
+    val hue = ((name.hashCode() % 360) + 360) % 360
+    return androidx.compose.ui.graphics.Color.hsl(hue.toFloat(), 0.32f, 0.42f)
+}
+
+private val TALL_CARD = 168.dp
+private val SHORT_CARD = 118.dp
 
 /**
  * The name, and the one action the screen is about.

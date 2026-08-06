@@ -290,6 +290,40 @@ class ScreenshotTest {
     }
 
     @Test
+    fun `each direction lists recent work in its own shape`() {
+        // The table in the brief gives the four directions three different galleries — a card grid,
+        // a staggered board, and a dense NAME/SIZE/MODIFIED table — and that is the point at which
+        // they stop being four colour schemes of one screen. A picture each, because "the layout
+        // changed" is not something a colour assertion can see.
+        val projects = listOf("پوستر شمارهٔ ۳", "پرترهٔ استودیو", "گلدان سرامیکی", "خیابان ۴۸۲۱", "کاور آلبوم")
+            .map { File(output, "$it.pxl").apply { if (!exists()) writeText(" ") } }
+
+        val frames = listOf(ThemeSkin.EMBER, ThemeSkin.IRIS, ThemeSkin.CONSOLE)
+        var frame by mutableStateOf(0)
+
+        compose.setContent {
+            PixelLabTheme(skin = frames[frame], dark = true) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Box(Modifier.fillMaxSize()) {
+                        HomeScreen(
+                            projects = projects,
+                            onNew = {},
+                            onOpen = {},
+                            onQuickAction = {},
+                            onSettings = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        for ((index, skin) in frames.withIndex()) {
+            frame = index
+            capture("gallery-${skin.name.lowercase()}")
+        }
+    }
+
+    @Test
     fun `the light theme draws`() {
         // The specification calls the light theme optional, which is exactly why it needs a picture:
         // an optional theme is the one that quietly stops being legible, and the failure is always
