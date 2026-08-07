@@ -1,6 +1,7 @@
 package ir.pixellab.core.canvas
 
 import ir.pixellab.core.model.Rect
+import ir.pixellab.core.model.Perspective
 import ir.pixellab.core.model.Transform
 import ir.pixellab.core.model.Vec2
 import kotlin.math.abs
@@ -285,6 +286,89 @@ object Handles {
         val after = localToCanvas(fixedLocal, bounds, resized)
         return resized.copy(translation = resized.translation + (before - after))
     }
+
+    /**
+     * Moves one corner freely, leaving the other three where they are.
+     *
+     * ### Why this is a separate operation and not a flag on [resize]
+     *
+     * A resize keeps the box a parallelogram: every handle drag is expressed as a scale, and the
+     * opposite handle is pinned. That is the right model for the common case and it cannot express
+     * a trapezium at all, which is what "distort" means — four corners that move independently, and
+     * therefore a *projective* map rather than an affine one.
+     *
+     * ### The model already had this
+     *
+     * [Transform.perspective] has always held four destination corners, `Affine.warpAware` has
+     * always built the projective matrix from them, and the compositor has always sampled through
+     * it. What was missing was any way for a finger to reach it: the one control in the interface
+     * produced a symmetric trapezium from a single slider, which is one number standing in for
+     * eight. This is the eight.
+     *
+     * ### Which space the corners live in
+     *
+     * Not canvas space, despite what [Perspective]'s own documentation used to say. `Affine.warpAware`
+     * composes `affine * corners * toUnitSquare`, so the four stored corners are in the layer's
+     * *pre-affine* frame and the rotation, scale and translation are applied on top of them.
+     *
+     * That distinction is invisible on an untransformed layer and wrong on every other one — a
+     * finger drag arrives in canvas units, so it has to be carried back through the affine part
+     * before it can be stored. Writing canvas coordinates straight in makes a rotated layer jump
+     * the moment a corner is touched, and doubles its translation.
+     *
+     * Existing corners are read from the transform when there are any, so a second drag builds on
+     * the first instead of resetting it.
+     *
+     * @param handle must be a corner; edges and the body have no meaning here and are returned
+     *   unchanged rather than guessed at.
+     * @param dragCanvas total movement since the drag began, in canvas units.
+     */
+    fun distort(
+        handle: Handle,
+        bounds: Rect,
+        start: Transform,
+        dragCanvas: Vec2,
+    ): Transform {
+        if (!handle.isCorner || bounds.width <= 0f || bounds.height <= 0f) return start
+
+        // The affine part alone, which is exactly the map between the space the corners are stored
+        // in and the space the finger moved in.
+        val affine = ir.pixellab.core.model.Affine.warpAware(bounds, start.copy(perspective = null))
+        val inverse = affine.inverse()
+
+        val existing = start.perspective
+        val local = if (existing != null) {
+            listOf(existing.topLeft, existing.topRight, existing.bottomRight, existing.bottomLeft)
+        } else {
+            listOf(
+                Vec2(bounds.left, bounds.top),
+                Vec2(bounds.right, bounds.top),
+                Vec2(bounds.right, bounds.bottom),
+                Vec2(bounds.left, bounds.bottom),
+            )
+        }
+        val order = listOf(Handle.TOP_LEFT, Handle.TOP_RIGHT, Handle.BOTTOM_RIGHT, Handle.BOTTOM_LEFT)
+        val moved = local.mapIndexed { i, corner ->
+            if (order[i] != handle) corner else inverse.map(affine.map(corner) + dragCanvas)
+        }
+        return start.copy(
+            perspective = Perspective(
+                topLeft = moved[0],
+                topRight = moved[1],
+                bottomRight = moved[2],
+                bottomLeft = moved[3],
+            ),
+        )
+    }
+
+    /**
+     * Throws the four-corner warp away, keeping the affine part.
+     *
+     * The way back. A distort that could only be undone through the history stack would make the
+     * control a one-way door. Clearing the corners is the whole reset, and it keeps the affine part
+     * — there is no partial state between "warped" and "not".
+     */
+    fun undistort(start: Transform): Transform = start.copy(perspective = null)
 
     /**
      * Applies a rotation drag.

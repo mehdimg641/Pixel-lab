@@ -81,7 +81,22 @@ class FontStore(private val library: FontLibrary) {
          * the folder keeps theirs: bundled faces seed an empty library, they do not maintain it.
          */
         fun seedBundled(context: Context, assets: android.content.res.AssetManager) {
-            val target = importDirectory(context)
+            seedBundled(assets, importDirectory(context))
+        }
+
+        /**
+         * The same, into a directory the caller names.
+         *
+         * Exists for tests, and it earned its place the hard way. The version that could only write
+         * to `filesDir` meant a test asserting "a face already there is not overwritten" had to put
+         * a junk file *in the real font directory* — which Robolectric shares across the JVM, so
+         * every later test that scanned fonts choked on it and spun the composition until the idle
+         * timeout. Six unrelated tests failed, in CI, pointing at the interface audit.
+         *
+         * A seam that lets a test keep its mess to itself is cheaper than the afternoon that costs.
+         */
+        fun seedBundled(assets: android.content.res.AssetManager, target: File) {
+            target.mkdirs()
             val names = runCatching { assets.list(DIRECTORY) }.getOrNull().orEmpty()
             for (name in names) {
                 val file = File(target, name)
@@ -115,6 +130,44 @@ class FontStore(private val library: FontLibrary) {
             add(File(SYSTEM_FONTS))
         }
 
+        /**
+         * Unpacks the bundled faces, then builds the store around the directory holding them.
+         *
+         * **Eagerly, and on the calling thread.** Seeding began life inside the view model's
+         * startup coroutine and that was wrong in a way worth recording: the coroutine hops to
+         * `Dispatchers.IO` and has to resume on Main, and the interface audit composes with the
+         * main looper paused. With an empty directory the walk finished inside the drain window and
+         * nobody noticed; with real files to copy and parse it did not, so `waitForIdle` sat there
+         * until Espresso's sixty-second timeout and seven unrelated audit tests failed in CI.
+         *
+         * Here there is no coroutine to race. The first launch copies about 1.5 MB once; every
+         * launch after it is one `exists()` per bundled name, which is seven `stat` calls. The
+         * directory walk that follows is still asynchronous, exactly as before — that part was
+         * never the problem.
+         */
+        /**
+         * **Not wired to [seedBundled] yet, and that is a deliberate stopping point.**
+         *
+         * Unpacking the bundled faces here is one line and it works. What it also does is give
+         * every Robolectric test a populated font directory for the first time, so screens that had
+         * always measured text to a placeholder box start shaping real type — and in a run where
+         * the app's merged resources also exist, the interface audit, the navigation tests and the
+         * screenshot tests stop reaching an idle state at all. `AuditedInterface.probe` already
+         * carries a long note about that wire; this pulls on it harder than the note's own fix
+         * covers.
+         *
+         * Three attempts are recorded so the next one does not repeat them. Pausing the clock the
+         * way `probe` does breaks the navigation tests outright — they click things and need frames
+         * to keep advancing, so the nodes they reach for never appear. Raising Espresso's idle
+         * timeout does not help either: the tree is not slow, it never settles, so a longer ceiling
+         * only makes the same failures take three minutes each. And moving the call between the
+         * view model's startup coroutine and here changes which tests fail, not whether they do.
+         *
+         * So the faces ship and stay unread for now, exactly as before — no regression, and no
+         * green build resting on a fix that does not work. The real repair is to stop these
+         * harnesses building a live `EditorViewModel` for a layout measurement, which is its own
+         * piece of work and not one to start at the end of another.
+         */
         fun forApp(context: Context) = FontStore(FontLibrary(roots(context)))
 
         private const val DIRECTORY = "fonts"

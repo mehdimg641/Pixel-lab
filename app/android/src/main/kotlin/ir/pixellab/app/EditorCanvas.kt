@@ -402,9 +402,24 @@ private fun DrawScope.drawSelection(state: EditorState, bounds: LayerBounds) {
         if (layer.id != state.selection.primary) continue
         for ((handle, position) in layout.positions) {
             if (handle == Handle.BODY) continue
-            val radius = if (handle == Handle.ROTATE) 9f else 7f
-            drawCircle(UiColor.White, radius, Offset(position.x, position.y))
-            drawCircle(UiColor(0xFF4C8DFF), radius, Offset(position.x, position.y), style = Stroke(2f))
+            // In distort mode a corner drag warps instead of resizing, and an edge drag does
+            // nothing at all. A mode that changes what a drag means without changing how the
+            // control looks is a mode nobody trusts, so the corners grow and go amber and the
+            // edges — which have no meaning in a four-corner warp — fade back.
+            val warping = state.distorting
+            val inert = warping && !handle.isCorner && handle != Handle.ROTATE
+            val radius = when {
+                handle == Handle.ROTATE -> 9f
+                warping && handle.isCorner -> 9f
+                else -> 7f
+            }
+            val ring = when {
+                inert -> UiColor(0xFF4C8DFF).copy(alpha = 0.25f)
+                warping && handle.isCorner -> UiColor(0xFFFF7A1A)
+                else -> UiColor(0xFF4C8DFF)
+            }
+            drawCircle(UiColor.White.copy(alpha = if (inert) 0.3f else 1f), radius, Offset(position.x, position.y))
+            drawCircle(ring, radius, Offset(position.x, position.y), style = Stroke(2f))
         }
         val rotate = layout.positions[Handle.ROTATE]
         val top = layout.positions[Handle.TOP]

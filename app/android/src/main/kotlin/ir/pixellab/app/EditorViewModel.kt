@@ -140,10 +140,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             // and it settles long before anyone reaches the library.
             assetStore.loadBundled(application.assets)
 
-            // Unpacks the bundled faces before the walk that would otherwise not find them. See
-            // [FontStore.seedBundled]: an APK entry is not a `File`, so every face shipped in
-            // `assets/fonts/` was invisible until this line existed.
-            withContext(Dispatchers.IO) { FontStore.seedBundled(application, application.assets) }
             fontStore.rescan()
             // The chrome measures through this too, so the handles would otherwise keep the
             // placeholder box the text was measured with before the scan landed. The screen
@@ -1121,6 +1117,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      * against the layer's own box so the same value means the same tilt on a caption and on a
      * headline.
      */
+    /** Corner handles warp instead of resizing. A view mode, so it is not recorded. */
+    fun setDistorting(on: Boolean) = act { setDistorting(on) }
+
+    fun clearDistortion() = act { clearDistortion() }
+
     fun setPerspective(id: LayerId, amount: Float) = edit {
         val layer = state.document.findLayer(id) ?: return@edit
         val box = bounds.of(layer)

@@ -271,6 +271,33 @@ private fun Placement(state: EditorState, model: EditorViewModel, modifier: Modi
             // worse than no button, because the two that did work prove it is not broken.
             model.setPerspective(id, perspectiveAmount)
         }
+
+        // **Free distort — the eight numbers the slider above stands in for.**
+        //
+        // Perspective is one degree of freedom: a corner and its pair move together, which is what
+        // makes it perspective. Distort is four independent corners, and the model has carried them
+        // in `Transform.perspective` from the beginning — `Affine.warpAware` builds the projective
+        // matrix and the compositor samples through it. There was simply no way for a finger to
+        // reach any of it.
+        //
+        // A mode rather than a held modifier, because a phone has no modifier key and every
+        // two-finger variant collides with the pinch that zooms the canvas.
+        SheetSection("اعوجاج آزاد")
+        SheetChips {
+            SheetChip("کشیدن گوشه‌ها", chosen = state.distorting) {
+                model.setDistorting(!state.distorting)
+            }
+            SheetChip("بازنشانی اعوجاج", enabled = layer.transform.perspective != null) {
+                model.clearDistortion()
+            }
+        }
+        SheetHint(
+            if (state.distorting) {
+                "حالا هر گوشه آزاد است — سه گوشهٔ دیگر سرِ جایشان می‌مانند"
+            } else {
+                "روشن کنید، بعد گوشه‌های کادر انتخاب را روی بوم بکشید"
+            },
+        )
     }
 }
 

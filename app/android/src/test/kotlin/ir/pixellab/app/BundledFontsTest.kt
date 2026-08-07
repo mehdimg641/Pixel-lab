@@ -4,7 +4,9 @@ import ir.pixellab.core.fonts.Script
 import ir.pixellab.engine.android.FontLibrary
 import io.kotest.matchers.collections.shouldNotBeEmpty
 import io.kotest.matchers.shouldBe
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -73,16 +75,42 @@ class BundledFontsTest {
         persian.shouldNotBeEmpty()
     }
 
-    @Test
-    fun `seeding twice does not overwrite what the user put there`() {
-        val context = RuntimeEnvironment.getApplication()
-        FontStore.seedBundled(context, context.assets)
+}
 
+/**
+ * Seeding into a directory of the test's own, so the mess stays here.
+ *
+ * Separate from [BundledFontsTest] because it deliberately writes a broken file, and the first
+ * version of it wrote that file into the shared font directory — where it stayed for the rest of
+ * the JVM and made six unrelated interface tests hang until the Compose idle timeout. The failure
+ * pointed at the touch-target audit, which had nothing to do with it.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class BundledFontSeedingTest {
+
+    @get:Rule
+    val temporary = TemporaryFolder()
+
+    @Test
+    fun `unpacks every bundled face`() {
+        val target = temporary.newFolder("fonts")
+
+        FontStore.seedBundled(RuntimeEnvironment.getApplication().assets, target)
+
+        (target.listFiles()?.size ?: 0 > 0) shouldBe true
+    }
+
+    @Test
+    fun `does not overwrite what the user put there`() {
         // Somebody drops in their own cut under a name the APK also ships. Theirs wins: bundled
         // faces seed an empty library, they do not maintain it.
-        val mine = File(FontStore.importDirectory(context), "Lalezar-Regular.ttf")
+        val target = temporary.newFolder("fonts")
+        FontStore.seedBundled(RuntimeEnvironment.getApplication().assets, target)
+        val mine = File(target, "Lalezar-Regular.ttf")
         mine.writeText("not really a font, but it is mine")
-        FontStore.seedBundled(context, context.assets)
+
+        FontStore.seedBundled(RuntimeEnvironment.getApplication().assets, target)
 
         mine.readText() shouldBe "not really a font, but it is mine"
     }

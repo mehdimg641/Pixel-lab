@@ -119,7 +119,17 @@ data class Transform(
     }
 }
 
-/** Destination of the layer's four corners, in canvas space. */
+/**
+ * Destination of the layer's four corners, in the layer's **pre-affine** frame.
+ *
+ * Not canvas space, which is what this said until a distort control was written against it and the
+ * tests caught the difference. `Affine.warpAware` composes `affine * corners * toUnitSquare`, so
+ * rotation, scale, skew and translation are applied *on top of* these — a corner written here in
+ * canvas coordinates comes out doubly translated on any moved layer.
+ *
+ * The two spaces coincide exactly when the affine part is the identity, which is why the mistake
+ * survives every test written against an untransformed layer.
+ */
 @Serializable
 data class Perspective(
     val topLeft: Vec2,

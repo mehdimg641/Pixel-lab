@@ -256,15 +256,27 @@ class Editor(
             return
         }
 
-        val moved = Handles.resize(
-            handle = session.handle,
-            bounds = local,
-            start = session.startTransform,
-            dragCanvas = current - session.startCanvas,
-            lockAspect = lockAspect,
-            fromCentre = fromCentre,
-            config = handleConfig,
-        )
+        // Distort mode turns the four corner handles into free corners. It is a mode rather than a
+        // modifier because a phone has no modifier key, and it is scoped to corners because an edge
+        // handle in a four-corner warp would have to invent which of its corners followed it.
+        val moved = if (state.distorting && session.handle.isCorner) {
+            Handles.distort(
+                handle = session.handle,
+                bounds = local,
+                start = session.startTransform,
+                dragCanvas = current - session.startCanvas,
+            )
+        } else {
+            Handles.resize(
+                handle = session.handle,
+                bounds = local,
+                start = session.startTransform,
+                dragCanvas = current - session.startCanvas,
+                lockAspect = lockAspect,
+                fromCentre = fromCentre,
+                config = handleConfig,
+            )
+        }
 
         // Only a move snaps. Snapping a resize would fight the finger on both axes at once, and the
         // handle would stop tracking it.
@@ -1345,6 +1357,30 @@ class Editor(
 
     fun setSnapEnabled(enabled: Boolean) {
         state = state.copy(snapEnabled = enabled)
+    }
+
+    /** Corner handles warp instead of resizing while this is on. Never a document edit. */
+    fun setDistorting(distorting: Boolean) {
+        state = state.copy(distorting = distorting)
+    }
+
+    /**
+     * Throws away the selected layer's four-corner warp, keeping everything else.
+     *
+     * A document edit, unlike the mode switch above — which is why it is recorded and the toggle is
+     * not. Without it a distort is a one-way door out of every shape but the history stack.
+     */
+    fun clearDistortion() {
+        val layer = state.primaryLayer ?: return
+        if (layer.transform.perspective == null) return
+        history.record(state.document)
+        state = state.copy(
+            document = state.document.mapLayer(layer.id) {
+                it.withTransform(Handles.undistort(it.transform))
+            },
+            canUndo = history.canUndo,
+            canRedo = history.canRedo,
+        )
     }
 
     /** The `fx` badge: hides every effect so the bare shape is visible. Never a document edit. */

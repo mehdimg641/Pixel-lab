@@ -293,6 +293,15 @@ data class EditorState(
     val guides: List<SnapGuide> = emptyList(),
     val snapEnabled: Boolean = true,
     /**
+     * Whether a corner handle warps instead of resizes.
+     *
+     * A mode rather than a held modifier, because a phone has no modifier key and a two-finger
+     * variant would collide with the pinch that zooms the canvas. It lives in the state rather than
+     * in the view so that the handles can be *drawn* differently while it is on — a control that
+     * silently changes what a drag means and looks identical is a control nobody trusts.
+     */
+    val distorting: Boolean = false,
+    /**
      * The grid. A working preference rather than part of the artwork, so it lives here and is not
      * saved with the document — unlike the guides, which are.
      */
