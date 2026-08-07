@@ -1,0 +1,142 @@
+# The faces bundled in the APK, one per line.
+#
+# Format:  <source>  <identifier>
+#
+#   gf      a Google Fonts family name, resolved against the google/fonts repository
+#   gh      owner/repo/path — a file in some other repository, path given exactly
+#
+# Blank lines and `#` comments are ignored. `tools/fonts/fetch.py` reads this and writes
+# `app/android/src/main/assets/fonts/`; nothing in that directory should be added by hand, because a
+# binary nobody can reproduce is a binary nobody can correct.
+#
+# Where a family publishes a variable font, the fetcher takes it: one file carries every weight, the
+# OpenType parser already reads `fvar`, and `Typeface.resolve` already prefers it.
+
+# ---- Arabic and Persian, from Google Fonts ------------------------------------------------------
+# Every family in the `arabic` subset except Cascadia Code and Cascadia Mono, which are code faces
+# that happen to cover the block and have no business in a cover-art picker.
+
+gf  Alexandria
+gf  Alkalami
+gf  Almarai
+gf  Alyamama
+gf  Amiri
+gf  Amiri Quran
+gf  Aref Ruqaa
+gf  Aref Ruqaa Ink
+gf  Badeen Display
+gf  Baloo Bhaijaan 2
+gf  Beiruti
+gf  Blaka
+gf  Blaka Hollow
+gf  Blaka Ink
+gf  Cairo
+gf  Cairo Play
+gf  Changa
+gf  El Messiri
+gf  Estedad
+gf  Fustat
+gf  Gulzar
+gf  Handjet
+gf  Harmattan
+gf  IBM Plex Sans Arabic
+gf  Jomhuria
+gf  Katibeh
+gf  Kufam
+gf  Lalezar
+gf  Lateef
+gf  Lemonada
+gf  Mada
+gf  Marhey
+gf  Markazi Text
+gf  Mirza
+gf  Noto Kufi Arabic
+gf  Noto Naskh Arabic
+gf  Noto Nastaliq Urdu
+gf  Noto Sans Arabic
+gf  Oi
+gf  Parastoo
+gf  Playpen Sans Arabic
+gf  Qahiri
+gf  Rakkas
+gf  Readex Pro
+gf  Reem Kufi
+gf  Reem Kufi Fun
+gf  Reem Kufi Ink
+gf  Rubik
+gf  Ruwudu
+gf  Scheherazade New
+gf  Tajawal
+gf  Vazirmatn
+gf  Vibes
+gf  Zain
+
+# ---- Persian, from Saber Rastikerdar ------------------------------------------------------------
+# The families Iranian designers actually reach for, and not on Google Fonts. All SIL OFL except
+# Tanha and Nahid, whose changes are public domain over Apache-licensed Roboto data.
+
+gh  rastikerdar/samim-font/dist/Samim.ttf
+gh  rastikerdar/shabnam-font/dist/Shabnam.ttf
+gh  rastikerdar/sahel-font/dist/Sahel.ttf
+gh  rastikerdar/gandom-font/dist/Gandom.ttf
+gh  rastikerdar/tanha-font/dist/Tanha.ttf
+gh  rastikerdar/nahid-font/dist/Nahid.ttf
+
+# ---- Latin display and text, from Google Fonts --------------------------------------------------
+# Chosen for a cover: heavy slabs, condensed sans, high-contrast serifs, scripts and a few oddities.
+# A picker full of near-identical grotesques helps nobody.
+
+gf  Anton
+gf  Bebas Neue
+gf  Oswald
+gf  Archivo Black
+gf  Alfa Slab One
+gf  Bungee
+gf  Bungee Shade
+gf  Abril Fatface
+gf  Playfair Display
+gf  Bodoni Moda
+gf  DM Serif Display
+gf  Libre Baskerville
+gf  Cormorant Garamond
+gf  Lobster
+gf  Pacifico
+gf  Righteous
+gf  Monoton
+gf  Audiowide
+gf  Orbitron
+gf  Russo One
+gf  Black Ops One
+gf  Bowlby One
+gf  Titan One
+gf  Fredoka
+gf  Baloo 2
+gf  Chewy
+gf  Bangers
+gf  Permanent Marker
+gf  Caveat
+gf  Dancing Script
+gf  Great Vibes
+gf  Sacramento
+gf  Satisfy
+gf  Shadows Into Light
+gf  Amatic SC
+gf  Special Elite
+gf  Press Start 2P
+gf  VT323
+gf  Silkscreen
+gf  Rye
+gf  Ultra
+gf  Nosifer
+gf  Creepster
+gf  Faster One
+gf  Bungee Inline
+gf  Rampart One
+gf  Rubik Mono One
+gf  Staatliches
+gf  Teko
+gf  Barlow Condensed
+gf  Archivo Narrow
+gf  Yeseva One
+gf  Cinzel
+gf  Philosopher

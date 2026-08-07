@@ -1,0 +1,733 @@
+package ir.pixellab.app
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Brush
+import androidx.compose.material.icons.outlined.ContentCut
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Face
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.ViewInAr
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import ir.pixellab.core.editor.Library
+import ir.pixellab.core.editor.TemplatePreset
+import java.io.File
+
+/**
+ * What the app opens on.
+ *
+ * The app used to launch straight into the editor with a grey rectangle on the canvas, which asked
+ * the user to understand nine tools before they had decided what they were making. This is the Canva
+ * half of the brief: a screen whose only job is to get someone from "I want a cover" to a canvas of
+ * the right size, in one press.
+ *
+ * The order down the page is the order the decisions actually happen in. What am I making (a size),
+ * or what am I doing (a job), or what was I already working on (a recent file). Everything else —
+ * every filter, every adjustment, every one of the twenty-seven blend modes — is behind the canvas,
+ * because none of it is a thing a person opens the app *to do*.
+ */
+@Composable
+fun HomeScreen(
+    projects: List<File>,
+    onNew: (TemplatePreset) -> Unit,
+    onOpen: (File) -> Unit,
+    onQuickAction: (QuickAction) -> Unit,
+    onSettings: () -> Unit,
+    /**
+     * The way to the full library.
+     *
+     * This page shows the sizes because the first decision anybody makes is how big, but it shows
+     * them inside a page that also carries the jobs and the recent work — so the print sizes, which
+     * are the ones somebody goes looking for on purpose, are the ones below the fold. A page of
+     * their own is where browsing belongs. Defaulted so the screen still composes alone.
+     */
+    onAllTemplates: () -> Unit = {},
+) {
+    // Read here rather than inside the list: a lazy item's body is not a composable context, so
+    // asking for the direction down there does not compile — and the layout choice belongs to the
+    // screen anyway, not to each row.
+    val layout = LocalThemeSkin.current.layout
+    // Which group of sizes is showing. Beside the screen rather than in the document, because a
+    // filter is a way of looking at a list and not a fact about anybody's work.
+    var category by remember { mutableStateOf(ALL_TEMPLATES) }
+    val visibleTemplates = remember(category) {
+        if (category == ALL_TEMPLATES) Library.templates else Library.templates.filter { it.group == category }
+    }
+    LazyColumn(
+        Modifier.fillMaxSize().background(Ink.Ground).systemBarsPadding(),
+        contentPadding = PaddingValues(
+            start = Space.gutter,
+            end = Space.gutter,
+            // Enough that the last card clears the gesture bar and does not sit against it.
+            bottom = Space.huge,
+        ),
+        verticalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        item { Masthead(onSettings) }
+        // Size first, then jobs. The first decision anybody actually makes is *how big* or *from
+        // which photograph*, and everything else is a thing to do once that is settled. Leading
+        // with the jobs put "3D text" ahead of the canvas it needs, so the first press in the
+        // application landed on a document nobody had chosen the shape of.
+        item { SectionHeader("اندازه را انتخاب کنید") }
+        item {
+            TemplateCategories(
+                chosen = category,
+                onPick = { category = it },
+                onAll = onAllTemplates,
+            )
+        }
+        templateSection(layout, visibleTemplates, onNew)
+        item { SectionHeader("یا از این‌ها شروع کنید") }
+        item { QuickActionRow(onQuickAction) }
+        item { SectionHeader("کارهای اخیر") }
+
+        if (projects.isEmpty()) {
+            item { EmptyRecents() }
+        } else {
+            // Three shapes, one per direction, and this is where the four themes stop being four
+            // colour schemes. A recent-work list is the first thing anybody sees, and «a row of
+            // cards» versus «a dense table» is a different claim about what the application is
+            // for — which is exactly what the four mock-ups were saying.
+            when (layout) {
+                // Console: NAME / LAYERS / MODIFIED, the way a file browser lists things. It fits
+                // three times as many projects on a screen and it is the point of the direction.
+                PanelLayout.DENSE -> {
+                    item { ProjectTableHead() }
+                    items(projects, key = { it.absolutePath }) { file ->
+                        ProjectTableRow(file, onOpen = { onOpen(file) })
+                    }
+                }
+                // Ember and Iris: a two-column grid of thumbnails. Iris staggers the heights, so
+                // the column edges never line up and the page reads as a board rather than a list.
+                else -> {
+                    val staggered = layout == PanelLayout.FLOATING
+                    items(projects.chunked(2)) { pair ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(Space.medium),
+                        ) {
+                            for ((offset, file) in pair.withIndex()) {
+                                ProjectCard(
+                                    file = file,
+                                    // The absolute index decides the height, not the position in
+                                    // the pair — otherwise every left card is tall and every right
+                                    // card is short, which is a stripe rather than a stagger.
+                                    tall = staggered && (projects.indexOf(file) % 3 == 0),
+                                    modifier = Modifier.weight(1f),
+                                    onOpen = { onOpen(file) },
+                                )
+                            }
+                            // Keeps a lone last card at half width instead of letting it stretch
+                            // across the page and read as a different kind of item.
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One project as a thumbnail card. Ember's grid and Iris's masonry.
+ *
+ * The plate is a tint rather than a rendered preview, and that is a deliberate limit rather than a
+ * placeholder: rendering a thumbnail means opening the document, building the render graph and
+ * running it once per card, which on a list of twenty projects is several seconds of work before
+ * the screen appears. The tint is derived from the file name, so a given project keeps the same
+ * colour and becomes recognisable by it.
+ */
+@Composable
+private fun ProjectCard(file: File, tall: Boolean, modifier: Modifier = Modifier, onOpen: () -> Unit) {
+    Column(
+        modifier
+            .clickable(onClick = onOpen)
+            .semantics { role = Role.Button },
+        verticalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(if (tall) TALL_CARD else SHORT_CARD)
+                .clip(Corners.card)
+                .background(tintOf(file.name))
+                .border(1.dp, Ink.Divider, Corners.card),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Outlined.Description,
+                contentDescription = null,
+                tint = Ink.Text.copy(alpha = 0.5f),
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Text(
+            file.nameWithoutExtension,
+            style = MaterialTheme.typography.labelLarge,
+            color = Ink.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            relativeTime(file.lastModified()),
+            style = MaterialTheme.typography.labelSmall,
+            color = Ink.TextMuted,
+            maxLines = 1,
+        )
+    }
+}
+
+/** Console's column titles. Set in the numeric style, because the rows under them are data. */
+@Composable
+private fun ProjectTableHead() {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Ink.ChromeRaised)
+            .padding(horizontal = Space.medium, vertical = Space.small),
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        Text("نام", style = MaterialTheme.typography.labelSmall, color = Ink.TextMuted, modifier = Modifier.weight(1f))
+        Text("حجم", style = MaterialTheme.typography.labelSmall, color = Ink.TextMuted, modifier = Modifier.width(72.dp))
+        Text("تغییر", style = MaterialTheme.typography.labelSmall, color = Ink.TextMuted, modifier = Modifier.width(72.dp))
+    }
+}
+
+/**
+ * One project as a table row.
+ *
+ * Still [Space.touch] tall, which is the whole compromise: Console is a dense direction and a dense
+ * direction on a phone still has to be operable by a thumb. The density comes from dropping the
+ * card, the padding and the icon plate — not from shrinking the target.
+ */
+@Composable
+private fun ProjectTableRow(file: File, onOpen: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = Space.touch)
+            .clickable(onClick = onOpen)
+            .padding(horizontal = Space.medium)
+            .semantics { role = Role.Button },
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(width = 26.dp, height = 20.dp)
+                .clip(Corners.small)
+                .background(tintOf(file.name)),
+        )
+        Text(
+            file.nameWithoutExtension,
+            style = MaterialTheme.typography.labelMedium,
+            color = Ink.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(sizeOf(file.length()), style = NumericStyle, color = Ink.TextMuted, modifier = Modifier.width(72.dp), maxLines = 1)
+        Text(
+            relativeTime(file.lastModified()),
+            style = MaterialTheme.typography.labelSmall,
+            color = Ink.TextMuted,
+            modifier = Modifier.width(72.dp),
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * A stable colour per project, derived from its name.
+ *
+ * Not random: a card that changes colour between two openings of the same screen is a card nobody
+ * can learn to find. The hue is the name's hash; the saturation and lightness are fixed so that
+ * every plate sits at the same distance from the panel and none of them competes with the accent.
+ */
+private fun tintOf(name: String): androidx.compose.ui.graphics.Color {
+    val hue = ((name.hashCode() % 360) + 360) % 360
+    return androidx.compose.ui.graphics.Color.hsl(hue.toFloat(), 0.32f, 0.42f)
+}
+
+private val TALL_CARD = 168.dp
+private val SHORT_CARD = 118.dp
+
+/**
+ * The name, and the one action the screen is about.
+ *
+ * A blank canvas rather than a template, because the primary action must not require a decision
+ * first — the strip below is where a size gets chosen, and a person who already knows they want a
+ * square starts here and resizes later.
+ */
+@Composable
+private fun Masthead(onSettings: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = Space.medium)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column {
+                Text("پیکسل‌لب", style = MaterialTheme.typography.displaySmall, color = Ink.Text)
+                Text(
+                    "طراحی کاور، متن سه‌بعدی فارسی، ویرایش عکس",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Ink.TextMuted,
+                )
+            }
+            BarIcon(Icons.Outlined.Settings, "تنظیمات", onClick = onSettings)
+        }
+    }
+}
+
+/**
+ * The jobs, as opposed to the tools.
+ *
+ * Named for the outcome — "پس‌زمینه رو حذف کن" — rather than for the machinery that produces it.
+ * The engine underneath is a segmentation pass and an edge refinement, and a row that said so would
+ * be accurate and useless. Every one of these lands on a canvas with the right tool already open.
+ */
+@Composable
+private fun QuickActionRow(onQuickAction: (QuickAction) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = Space.large)
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        QuickAction.entries.forEach { action ->
+            IconTile(action.icon, action.label) { onQuickAction(action) }
+        }
+    }
+}
+
+/**
+ * What a person opens the app to do.
+ *
+ * Each one lands on a canvas with the right dock entry chosen and the right panel already open, so
+ * the ribbon underneath is showing the tools for the job rather than a default the user has to
+ * navigate away from.
+ */
+enum class QuickAction(val icon: ImageVector, val label: String, val panelTab: PanelTab) {
+    /** The reason this app exists. First, and it stays first. */
+    DIMENSIONAL(Icons.Outlined.ViewInAr, "متن سه‌بعدی", PanelTab.TEXT),
+    PHOTO(Icons.Outlined.Image, "ویرایش عکس", PanelTab.ADJUST),
+    CUTOUT(Icons.Outlined.ContentCut, "حذف پس‌زمینه", PanelTab.AI),
+    RETOUCH(Icons.Outlined.Face, "روتوش چهره", PanelTab.AI),
+    TEXT(Icons.Outlined.TextFields, "متن", PanelTab.TEXT),
+    PAINT(Icons.Outlined.Brush, "نقاشی", PanelTab.LAYERS),
+    EFFECTS(Icons.Outlined.AutoAwesome, "افکت", PanelTab.LAYERS),
+}
+
+/**
+ * The sizes, as pictures of themselves.
+ *
+ * Each card is drawn at the template's own aspect ratio, so a story is tall and a business card is
+ * wide without anybody reading the numbers. That shape is the fastest thing on the screen to
+ * recognise, and it is why the dimensions can stay small and grey underneath rather than competing.
+ */
+@Composable
+internal fun TemplateCategories(
+    chosen: String,
+    onPick: (String) -> Unit,
+    /**
+     * Null on the templates page itself, where there is nowhere further to go. The chip is the last
+     * entry rather than the first because the row's job is filtering, and a chip that navigates
+     * away sitting where «همه» belongs would be pressed by mistake by everybody.
+     */
+    onAll: (() -> Unit)? = null,
+) {
+    // «همه» first, then the groups in the order the library declares them — alphabetical would put
+    // «چاپ» before «شبکهٔ اجتماعی», and the social sizes are what nine users in ten came for.
+    val groups = remember { listOf(ALL_TEMPLATES) + Library.templates.map { it.group }.distinct() }
+    SheetChips {
+        for (group in groups) {
+            SheetChip(group, chosen = group == chosen) { onPick(group) }
+        }
+        onAll?.let { SheetChip("همهٔ قالب‌ها", onClick = it) }
+    }
+}
+
+/**
+ * The sizes, in whichever shape the direction asks for.
+ *
+ * A `LazyListScope` extension rather than a composable, so the rows are lazy items like everything
+ * else on this screen. Wrapping a grid in one `item {}` would lay out every card whether or not it
+ * is on screen, which on the print sizes means measuring text nobody has scrolled to.
+ *
+ * The blank canvas leads in every shape. It is the one entry that requires no decision, and putting
+ * it after eight named sizes makes «I just want to start» the ninth-easiest thing to do.
+ */
+internal fun LazyListScope.templateSection(
+    layout: PanelLayout,
+    templates: List<TemplatePreset>,
+    onNew: (TemplatePreset) -> Unit,
+) {
+    when (layout) {
+        // Console: one line each, name and dimensions, the way a size list reads in a print shop.
+        PanelLayout.DENSE -> {
+            item { TemplateRow(BLANK, blank = true, onNew = { onNew(BLANK) }) }
+            items(templates, key = { it.name }) { template ->
+                TemplateRow(template, blank = false, onNew = { onNew(template) })
+            }
+        }
+        else -> {
+            val staggered = layout == PanelLayout.FLOATING
+            // The blank card rides in the first pair rather than on a row of its own, so the grid
+            // has no gap at the top.
+            val entries: List<TemplatePreset?> = listOf(null) + templates
+            items(entries.chunked(2)) { pair ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = Space.tight),
+                    horizontalArrangement = Arrangement.spacedBy(Space.medium),
+                ) {
+                    for (template in pair) {
+                        val tall = staggered && (entries.indexOf(template) % 3 == 1)
+                        Box(Modifier.weight(1f)) {
+                            if (template == null) {
+                                BlankCard { onNew(BLANK) }
+                            } else {
+                                TemplateTile(template, tall = tall) { onNew(template) }
+                            }
+                        }
+                    }
+                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+/** A template as a proportioned plate with its name and pixel size under it. */
+@Composable
+private fun TemplateTile(template: TemplatePreset, tall: Boolean, onNew: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onNew)
+            .semantics { role = Role.Button },
+        verticalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(if (tall) TALL_TILE else SHORT_TILE)
+                .clip(Corners.card)
+                .background(Ink.ChromeRaised)
+                .border(1.dp, Ink.Divider, Corners.card),
+            contentAlignment = Alignment.Center,
+        ) {
+            // The plate inside is the template's *actual* proportion, which is the one thing a
+            // list of numbers does not tell you: 1080×1920 and 1080×1350 are both "tall" until
+            // you see them beside each other.
+            Box(
+                Modifier
+                    .fillMaxHeight(0.7f)
+                    .wrapToAspect(template.width.toFloat() / template.height.toFloat())
+                    .clip(Corners.small)
+                    .background(Ink.Ground),
+            )
+        }
+        Text(
+            template.name,
+            style = MaterialTheme.typography.labelLarge,
+            color = Ink.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            "${Digits.technical(template.width)} × ${Digits.technical(template.height)}",
+            style = NumericStyle,
+            color = Ink.TextMuted,
+            maxLines = 1,
+        )
+    }
+}
+
+/** Console's one-line form: name on the leading edge, size on the trailing one. */
+@Composable
+private fun TemplateRow(template: TemplatePreset, blank: Boolean, onNew: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = Space.touch)
+            .clickable(onClick = onNew)
+            .padding(horizontal = Space.medium)
+            .semantics { role = Role.Button },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        Icon(
+            if (blank) Icons.Outlined.Add else Icons.Outlined.Description,
+            contentDescription = null,
+            tint = if (blank) Ink.Accent else Ink.TextMuted,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            if (blank) "بوم خالی" else template.name,
+            style = MaterialTheme.typography.labelMedium,
+            color = Ink.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "${Digits.technical(template.width)} × ${Digits.technical(template.height)}",
+            style = NumericStyle,
+            color = Ink.TextMuted,
+            maxLines = 1,
+        )
+    }
+}
+
+/** The chip that means "no filter". Not a group name, so it cannot collide with one. */
+internal const val ALL_TEMPLATES = "همه"
+
+private val TALL_TILE = 156.dp
+private val SHORT_TILE = 112.dp
+
+/** The first card in the strip: no size decided, start drawing. */
+@Composable
+private fun BlankCard(onClick: () -> Unit) {
+    Column(
+        Modifier
+            .width(CARD)
+            .clip(Corners.card)
+            .clickable(onClick = onClick)
+            .semantics { role = Role.Button },
+        verticalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(PREVIEW)
+                .clip(Corners.card)
+                .background(Ink.AccentSoft)
+                .border(1.dp, Ink.Accent, Corners.card),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Outlined.Add,
+                contentDescription = null,
+                tint = Ink.Accent,
+                modifier = Modifier.size(28.dp),
+            )
+        }
+        Text("بوم خالی", style = MaterialTheme.typography.labelLarge, color = Ink.Text, maxLines = 1)
+        Numeric("${BLANK.width} × ${BLANK.height}")
+    }
+}
+
+@Composable
+private fun TemplateCard(template: TemplatePreset, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .width(CARD)
+            .clip(Corners.card)
+            .clickable(onClick = onClick)
+            .semantics { role = Role.Button },
+        verticalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        // A fixed-height well with the proportional page floating inside it, rather than a card that
+        // changes height with its aspect. A strip of cards whose tops and bottoms do not line up
+        // reads as broken layout, however correct each individual card is.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(PREVIEW)
+                .clip(Corners.card)
+                .background(Ink.ChromeRaised),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                Modifier
+                    .padding(Space.small)
+                    .fillMaxSize()
+                    .wrapToAspect(template.width.toFloat() / template.height)
+                    .clip(Corners.small)
+                    // Paper, not a token. This little rectangle *depicts the canvas*, and the
+                    // canvas is white whichever theme the interface is wearing — following
+                    // `text.primary` turned every page black the moment the light theme was
+                    // looked at.
+                    .background(PAPER),
+            )
+        }
+        Text(
+            template.name,
+            style = MaterialTheme.typography.labelLarge,
+            color = Ink.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        // Latin digits, because a canvas dimension is technical input the user types back in —
+        // specification §۱۳.۳. The prose above and below it stays in Persian numerals.
+        Numeric("${Digits.technical(template.width)} × ${Digits.technical(template.height)}")
+    }
+}
+
+/**
+ * Fits a box of the given ratio inside whatever space is left, centred.
+ *
+ * `aspectRatio` alone grows to fill one axis and overflows the other, which for a 2480×3508 poster
+ * means a page taller than its own card. `matchHeightConstraintsFirst` picks the axis by which
+ * constraint binds, which is what "fit inside" means.
+ */
+private fun Modifier.wrapToAspect(ratio: Float): Modifier =
+    this.aspectRatio(ratio, matchHeightConstraintsFirst = ratio < 1f)
+
+@Composable
+private fun EmptyRecents() {
+    Panel {
+        Text("هنوز پروژه‌ای ذخیره نکرده‌اید", style = MaterialTheme.typography.titleMedium, color = Ink.Text)
+        Note("هر طرحی که ذخیره کنید اینجا می‌آید و با یک ضربه باز می‌شود.")
+    }
+}
+
+/**
+ * One saved project.
+ *
+ * A row rather than a grid tile, and the reason is that there is no thumbnail to show. A grid of
+ * identical placeholder squares is worse than a list: it promises a picture and delivers a shape,
+ * and the name — which is the only thing that distinguishes two projects — ends up truncated to fit
+ * a tile it did not need to be in.
+ */
+@Composable
+private fun ProjectRow(file: File, onOpen: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(Corners.card)
+            .background(Ink.ChromeRaised)
+            .clickable(onClick = onOpen)
+            .padding(Space.large)
+            .semantics { role = Role.Button },
+        horizontalArrangement = Arrangement.spacedBy(Space.large),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(Space.touch)
+                .clip(Corners.small)
+                .background(Ink.ChromeSunken),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Outlined.Description, contentDescription = null, tint = Ink.TextMuted, modifier = Modifier.size(20.dp))
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.tight)) {
+            Text(
+                file.nameWithoutExtension,
+                style = MaterialTheme.typography.titleMedium,
+                color = Ink.Text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "${relativeTime(file.lastModified())}، ${sizeOf(file.length())}",
+                style = MaterialTheme.typography.labelSmall,
+                color = Ink.TextMuted,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/**
+ * How long ago, in words.
+ *
+ * A timestamp is the wrong answer to "which of these was I working on". Nobody remembers that they
+ * saved at 14:32; they remember that it was this morning.
+ */
+internal fun relativeTime(millis: Long, now: Long = System.currentTimeMillis()): String {
+    val elapsed = (now - millis).coerceAtLeast(0)
+    val minutes = elapsed / 60_000
+    val hours = minutes / 60
+    val days = hours / 24
+    return when {
+        minutes < 1 -> "همین حالا"
+        minutes < 60 -> "${Digits.prose(minutes)} دقیقه پیش"
+        hours < 24 -> "${Digits.prose(hours)} ساعت پیش"
+        days < 30 -> "${Digits.prose(days)} روز پیش"
+        else -> "${Digits.prose(days / 30)} ماه پیش"
+    }
+}
+
+/** Bytes, at the precision a person actually wants: none. */
+internal fun sizeOf(bytes: Long): String = when {
+    bytes < 1024 -> "${Digits.prose(bytes)} بایت"
+    bytes < 1024 * 1024 -> "${Digits.prose(bytes / 1024)} کیلوبایت"
+    else -> "${Digits.prose(bytes / (1024 * 1024))} مگابایت"
+}
+
+/** The blank start. Square, because a cover is square more often than it is anything else. */
+private val BLANK = TemplatePreset("سند تازه", 1080, 1080, "عمومی")
+
+/** The colour of the page a template starts as. See [TemplateCard]. */
+private val PAPER = androidx.compose.ui.graphics.Color.White
+
+private val CARD = 132.dp
+private val PREVIEW = 132.dp
+
+/**
+ * Reads the saved projects, off the main thread, whenever the screen comes back.
+ *
+ * Re-read on every appearance rather than cached: the user returns here after saving, and a list
+ * that still shows what was there before the save is a list that looks like the save failed.
+ */
+@Composable
+fun rememberProjects(reloadKey: Any): List<File> {
+    val context = LocalContext.current
+    var projects by remember { mutableStateOf(emptyList<File>()) }
+    LaunchedEffect(reloadKey) {
+        projects = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            Storage.listProjects(context)
+        }
+    }
+    return projects
+}

@@ -1,0 +1,471 @@
+package ir.pixellab.app
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import ir.pixellab.core.render.ParameterSpec
+
+/**
+ * The controls every sheet is built from.
+ *
+ * Shared rather than copied into each sheet, which is what the last few of them did. Two sheets with
+ * their own private chip drift apart within a week — one gets a pressed state, the other does not —
+ * and the interface starts feeling assembled rather than designed.
+ *
+ * Everything here now draws through [Ink], [Space] and [Corners]. That is the whole reason twenty
+ * sheets could be restyled without opening twenty files: a sheet names a *control*, and the control
+ * names a token. The version this replaced had each of these functions carrying its own literal
+ * dimensions, which is why the interface read as grey and cramped no matter which panel you opened.
+ */
+@Composable
+fun SheetSection(title: String, modifier: Modifier = Modifier) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelMedium,
+        // Uppercase-ish emphasis is unavailable in Persian — the script has no case — so the
+        // heading separates itself from its controls by colour and by the space above it instead.
+        color = Ink.TextMuted,
+        modifier = modifier.padding(
+            start = Space.gutter,
+            end = Space.gutter,
+            top = Space.wide,
+            bottom = Space.tight,
+        ),
+    )
+}
+
+@Composable
+fun SheetHint(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = Ink.TextMuted,
+        modifier = modifier.padding(horizontal = Space.gutter, vertical = Space.tight),
+    )
+}
+
+/**
+ * A row of chips that wraps.
+ *
+ * Wrapping rather than scrolling sideways: a horizontal scroller hides its own contents, and a user
+ * who cannot see that there are twenty-seven blend modes will never find the one they want.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun SheetChips(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    FlowRow(
+        modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = Space.tight),
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+        verticalArrangement = Arrangement.spacedBy(Space.small),
+    ) { content() }
+}
+
+/**
+ * One choice among several.
+ *
+ * Outlined when unchosen and tinted when chosen, rather than two greys one step apart. The two-grey
+ * arrangement is what the previous interface used, and in a row of six the user could not tell which
+ * one was on without moving their head — an outline against a fill is unambiguous at arm's length.
+ */
+@Composable
+fun SheetChip(
+    label: String,
+    chosen: Boolean = false,
+    enabled: Boolean = true,
+    tint: Color = Ink.Accent,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            // Both axes, not just the height: a chip labelled «۱» or «خ» is as tall as its
+            // neighbours and half as wide, and the narrow axis is the one a thumb misses.
+            .sizeIn(minWidth = CHIP_HEIGHT, minHeight = CHIP_HEIGHT)
+            .clip(Corners.chip)
+            .background(if (chosen) tint.copy(alpha = CHOSEN_TINT) else Color.Transparent)
+            .border(
+                width = if (chosen) CHOSEN_EDGE else PLAIN_EDGE,
+                color = when {
+                    !enabled -> Ink.Divider
+                    chosen -> tint
+                    else -> Ink.Outline
+                },
+                shape = Corners.chip,
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = Space.large, vertical = Space.small)
+            // A screen reader announces a chip as a button and reads its label; without this it
+            // cannot say whether the chip is the *chosen* one, which is the only thing that
+            // distinguishes the six chips in a row from each other.
+            .semantics {
+                role = Role.RadioButton
+                selected = chosen
+                if (!enabled) disabled()
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = when {
+                !enabled -> Ink.TextDisabled
+                chosen -> tint
+                else -> Ink.Text
+            },
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * A chip that shows a picture instead of a word.
+ *
+ * ### Why some controls must not be words
+ *
+ * «چپ»، «وسط افقی»، «راست»، «بالا»، «وسط عمودی»، «پایین» — six pills of Persian text where every
+ * editor in the world draws six little diagrams, and the diagrams are *better*: an alignment is a
+ * spatial fact, and a picture of it is read at a glance while a word has to be parsed and then
+ * imagined. The same is true of flipping, of rotating, of the marquee shapes and of the Pathfinder
+ * operations. A row of text pills for these is not a stylistic preference, it is asking the user to
+ * translate before they can act, every single time.
+ *
+ * The label does not disappear — it becomes the thing a screen reader says, which is exactly where
+ * a word belongs and where an icon is useless. So this is not a trade between legibility and
+ * accessibility; it is both, each in the medium that suits it.
+ *
+ * Square, because an icon has no natural width and a row of chips that are each as wide as their
+ * hidden label would be a ragged row of identical pictures.
+ */
+@Composable
+fun SheetIconChip(
+    icon: ImageVector,
+    label: String,
+    chosen: Boolean = false,
+    enabled: Boolean = true,
+    tint: Color = Ink.Accent,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(CHIP_HEIGHT)
+            .clip(Corners.chip)
+            .background(if (chosen) tint.copy(alpha = CHOSEN_TINT) else Color.Transparent)
+            .border(
+                width = if (chosen) CHOSEN_EDGE else PLAIN_EDGE,
+                color = when {
+                    !enabled -> Ink.Divider
+                    chosen -> tint
+                    else -> Ink.Outline
+                },
+                shape = Corners.chip,
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics {
+                role = Role.RadioButton
+                selected = chosen
+                // The word, for the reader that cannot see the diagram. Without it this control is
+                // silent, and a silent row of six is unusable rather than merely inconvenient.
+                contentDescription = label
+                if (!enabled) disabled()
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = when {
+                !enabled -> Ink.TextDisabled
+                chosen -> tint
+                else -> Ink.Text
+            },
+            modifier = Modifier.size(Frame.icon),
+        )
+    }
+}
+
+/**
+ * A labelled slider over a plain range, for the many controls that are not effect parameters.
+ *
+ * [enabled] swallows the change rather than hiding the control. A slider that vanishes when its
+ * precondition is unmet makes the panel jump about as the user works; one that stays put, dimmed,
+ * says what the tool *will* offer and why it cannot yet.
+ */
+@Composable
+fun SheetSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    enabled: Boolean = true,
+    onChange: (value: Float, continuous: Boolean) -> Unit,
+    onCommit: () -> Unit = {},
+) {
+    PrecisionSlider(
+        spec = ParameterSpec.Slider(key = label, label = label, range = range, default = value),
+        value = value,
+        onChange = { v, continuous -> if (enabled) onChange(v, continuous) },
+        onCommit = { if (enabled) onCommit() },
+        modifier = if (enabled) Modifier else Modifier.alpha(DISABLED_ALPHA),
+    )
+}
+
+/**
+ * A number the user types.
+ *
+ * A slider is wrong for a canvas dimension: the useful values span four orders of magnitude and the
+ * user almost always has an exact one in mind, taken from wherever the artwork is going.
+ */
+@Composable
+fun SheetNumberField(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    onValueChange: (String) -> Unit,
+) = SheetTextField(label, value, KeyboardType.Number, modifier, onValueChange)
+
+/**
+ * Words the user types — a Look's name, a layer's.
+ *
+ * The same field as [SheetNumberField] with a different keyboard, rather than a second one styled to
+ * match: two fields that only look alike drift apart within a week, and this one is Persian text
+ * where that one is digits, so the keyboard is the entire difference.
+ */
+@Composable
+fun SheetTextField(
+    label: String,
+    value: String,
+    keyboard: KeyboardType = KeyboardType.Text,
+    modifier: Modifier = Modifier,
+    onValueChange: (String) -> Unit,
+) {
+    Column(
+        modifier.padding(horizontal = Space.tight),
+        verticalArrangement = Arrangement.spacedBy(Space.tight),
+    ) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Ink.TextMuted)
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(
+                color = Ink.Text,
+                fontSize = MaterialTheme.typography.bodyLarge.fontSize,
+            ),
+            cursorBrush = SolidColor(Ink.Accent),
+            keyboardOptions = KeyboardOptions(keyboardType = keyboard),
+            // The visible label is a separate Text, so the field itself would otherwise be
+            // announced as an unnamed edit box.
+            modifier = Modifier
+                .semantics { contentDescription = label }
+                .fillMaxWidth()
+                .clip(Corners.small)
+                .background(Ink.ChromeSunken)
+                // Sunken rather than outlined, and the outline is on top of the sink: a well with
+                // no edge disappears into a card of nearly the same value, which is what made the
+                // old fields hard to find on a sheet.
+                .border(PLAIN_EDGE, Ink.Divider, Corners.small),
+            // The height and the inset live in the decoration rather than on the modifier above,
+            // and that is not a style choice. A field's pointer handling sits *inside* whatever
+            // padding the caller wraps it in, so a well that looked 48dp tall had a 17dp strip in
+            // the middle of it that answered a tap and a ring of dead space around that. Put the
+            // room inside the decoration and the whole well is the target.
+            decorationBox = { field ->
+                Box(
+                    Modifier
+                        .heightIn(min = Space.touch)
+                        .fillMaxWidth()
+                        .padding(horizontal = Space.medium, vertical = Space.small),
+                    contentAlignment = Alignment.CenterStart,
+                ) { field() }
+            },
+        )
+    }
+}
+
+/**
+ * A full-width action. Used where a press *does* something rather than choosing a mode.
+ *
+ * Tinted rather than gradient-filled: the gradient belongs to [PrimaryAction], which is the one
+ * action a *screen* is about. A sheet has several of these and none of them is the app's headline.
+ */
+@Composable
+fun SheetAction(
+    label: String,
+    enabled: Boolean = true,
+    tint: Color = Ink.Accent,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = Space.gutter, vertical = Space.tight)
+            .heightIn(min = Space.touch)
+            .clip(Corners.chip)
+            .background(if (enabled) tint.copy(alpha = CHOSEN_TINT) else Color.Transparent)
+            .border(PLAIN_EDGE, if (enabled) tint.copy(alpha = EDGE_TINT) else Ink.Divider, Corners.chip)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = Space.large, vertical = Space.small)
+            .semantics {
+                role = Role.Button
+                // Announced as unavailable rather than simply not responding, which is what a
+                // greyed control that only *looks* greyed sounds like.
+                if (!enabled) disabled()
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            color = if (enabled) tint else Ink.TextDisabled,
+        )
+    }
+}
+
+/**
+ * The two things a panel may need that only the screen can do.
+ *
+ * Passed as a composition local rather than as a parameter on nine sheets, because the alternative
+ * is nine signatures and nine call sites carrying a callback that only the empty state ever uses.
+ */
+data class EditorActions(
+    val pickImage: () -> Unit = {},
+    val addText: () -> Unit = {},
+    /** Opens the picker and runs a saved grade over everything chosen. */
+    val applyLookToPhotos: (ir.pixellab.core.editor.Look) -> Unit = {},
+)
+
+val LocalEditorActions = staticCompositionLocalOf { EditorActions() }
+
+/**
+ * What a panel shows when the thing it works on is not there.
+ *
+ * **The rule this exists to enforce: a panel that names a precondition has to offer the way to meet
+ * it.** Nine sheets said some version of "select an image layer" and stopped, and the two worst were
+ * the ones this application is *for* — تایپوگرافی and سه‌بعدی both told the user to select a text
+ * layer that nothing in the interface could create. From the outside that is indistinguishable from
+ * an application that does not work, and it is what a real user reported after ten minutes with it.
+ *
+ * The action is a button rather than a line of instructions for the same reason: telling somebody
+ * where to go is a worse answer than taking them there, and it is one press either way.
+ */
+@Composable
+fun MissingSubject(
+    message: String,
+    action: String,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    onAct: () -> Unit,
+) {
+    Column(modifier.fillMaxWidth()) {
+        SheetHint(message)
+        SheetAction(action, enabled = enabled, onClick = onAct)
+    }
+}
+
+/** How much of the accent a chosen chip's fill carries. Low: the label has to stay readable on it. */
+/** Dim enough to read as unavailable, bright enough that the label is still legible. */
+private const val DISABLED_ALPHA = 0.4f
+
+private const val CHOSEN_TINT = 0.16f
+
+/** The same colour at the strength an edge needs, which is more than a fill does. */
+private const val EDGE_TINT = 0.55f
+
+private val PLAIN_EDGE = 1.dp
+private val CHOSEN_EDGE = 1.5.dp
+
+/**
+ * The platform's touch minimum, and not a pixel under it.
+ *
+ * This was 40dp, with a comment claiming it was "comfortably inside the platform's touch minimum
+ * once the row's own spacing is counted" — which is not how a touch target works. Spacing *between*
+ * targets is a separate requirement; it does not enlarge the target. Forty is eight short of the
+ * minimum on the single most-tapped control in the application: every blend mode, every filter,
+ * every layout, every effect is one of these.
+ *
+ * [Space.touch] already held the right number. Naming it here rather than repeating 48 is the whole
+ * point of having the token.
+ */
+private val CHIP_HEIGHT = Space.touch
+
+/**
+ * A section that shows what it is set to and opens on request.
+ *
+ * The answer to a panel that spends its whole height on its most advanced control. Twenty-seven
+ * blend modes were the first case: they filled the layer sheet and pushed the two opacity sliders —
+ * the reason most people open it — off the top. Collapsing them is not hiding them, because the
+ * summary carries the part anyone actually needs at a glance, which is *which one is on*.
+ *
+ * A row rather than a chip, and the chevron on the leading edge rather than the trailing one: in a
+ * right-to-left interface the leading edge is the right, and a disclosure marker that sits where the
+ * eye starts is read as part of the heading rather than as a stray glyph at the end of it.
+ */
+@Composable
+fun SheetDisclosure(
+    title: String,
+    summary: String,
+    open: Boolean,
+    modifier: Modifier = Modifier,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = Space.touch)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = Space.gutter, vertical = Space.small)
+            .semantics {
+                role = Role.Button
+                // Announced as its state, not merely as a name: a collapsed section and an expanded
+                // one are the same button and a screen reader has no other way to tell them apart.
+                stateDescription = if (open) "باز" else "بسته"
+            },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (open) "▾" else "▸",
+                style = MaterialTheme.typography.labelLarge,
+                color = Ink.TextMuted,
+                modifier = Modifier.padding(end = Space.small),
+            )
+            Text(title, style = MaterialTheme.typography.labelMedium, color = Ink.TextMuted)
+        }
+        Text(summary, style = MaterialTheme.typography.labelLarge, color = Ink.Accent, maxLines = 1)
+    }
+}

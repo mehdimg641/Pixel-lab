@@ -1,0 +1,2198 @@
+package ir.pixellab.app
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.AlignHorizontalLeft
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Redo
+import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.AutoFixHigh
+import androidx.compose.material.icons.outlined.Brush
+import androidx.compose.material.icons.outlined.Category
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Compare
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Crop
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Draw
+import androidx.compose.material.icons.outlined.Face
+import androidx.compose.material.icons.outlined.FitScreen
+import androidx.compose.material.icons.outlined.Flip
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.FormatColorFill
+import androidx.compose.material.icons.outlined.BorderColor
+import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.Deblur
+import androidx.compose.material.icons.outlined.FontDownload
+import androidx.compose.material.icons.outlined.Grid4x4
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Highlight
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.VerticalAlignTop
+import androidx.compose.material.icons.outlined.ViewInAr
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import ir.pixellab.core.editor.EditorState
+import ir.pixellab.core.editor.SheetContent
+import ir.pixellab.core.editor.SheetDetent
+import ir.pixellab.core.editor.TextSection
+import ir.pixellab.core.editor.Tool
+import ir.pixellab.core.model.Effect
+import ir.pixellab.core.model.Fill
+import ir.pixellab.core.model.Layer
+import ir.pixellab.core.model.LayerId
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
+
+/**
+ * The editor screen.
+ *
+ * The layout is the specification's, §۱۳.۵, and its three fixed bars are not arbitrary:
+ *
+ * ```
+ * نوار تاریخچه   ۵۶dp   ← where you have been
+ * بوم            انعطاف‌پذیر
+ * ریبون بافتار    ۸۸dp   ← what you can do to what is selected
+ * داک اصلی       ۶۴dp   ← what kind of work you are doing
+ * ```
+ *
+ * The dock names five *kinds of work* rather than nine tools. Nine tools across a 411dp phone gives
+ * each 45dp of everything — target, icon and Persian label — which is under the platform's touch
+ * minimum, and the version this replaces solved that by making the row scroll, which hides tools
+ * instead. Five entries fit at 82dp each with nothing hidden, and the tools themselves move up into
+ * the ribbon, where they change with what is actually selected.
+ *
+ * @param entry what the user pressed on the home screen, or null if they came in another way. It is
+ *   consumed once — [onEntryHandled] — so that returning later does not re-open a sheet the user has
+ *   since closed.
+ */
+@Composable
+fun EditorScreen(
+    model: EditorViewModel,
+    entry: QuickAction? = null,
+    onEntryHandled: () -> Unit = {},
+    onHome: (() -> Unit)? = null,
+    /**
+     * The way out to one of the studios.
+     *
+     * Three parameters rather than three callbacks because only one destination carries anything —
+     * the text studio needs to know *which* headline and, when the caller has an opinion, which
+     * section to open on. A separate `onOpenTextStudio` beside a general `onNavigate` would leave
+     * two ways to reach the same screen, and the second one always ends up wired differently.
+     *
+     * Defaulted to a no-op so the editor still composes on its own, which is what every screenshot
+     * and layout test does.
+     */
+    onNavigate: (Destination, LayerId?, TextSection?) -> Unit = { _, _, _ -> },
+) {
+    val state = model.state
+    val bounds = model.bounds
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val handle = remember { CanvasHandle() }
+    var outcome by remember { mutableStateOf<FileOutcome?>(null) }
+    var exporting by remember { mutableStateOf(false) }
+    var opening by remember { mutableStateOf<List<java.io.File>?>(null) }
+    var editingText by remember { mutableStateOf<LayerId?>(null) }
+    // Which of the brief's five places the work panel is showing. Replaces the dock's
+    // "kind of work", which swapped a ribbon of buttons rather than a body.
+    var tab by remember { mutableStateOf(PanelTab.LAYERS) }
+
+    // The ribbon's own state: which cluster is chosen and at what granularity. Beside the editor
+    // rather than inside the document, because a chosen chip is not part of the artwork.
+    val ribbon = remember { RibbonState() }
+
+    /**
+     * The panel to open once an imported picture has actually landed.
+     *
+     * "Remove the background" needs a background to remove. Opening the selection panel over an
+     * empty canvas and then asking for a photo is the order that makes a quick action feel like a
+     * detour; this way the picker comes first and the tool is waiting when the image arrives.
+     */
+    var afterImport by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    // Registered once for the screen rather than inside the sheet: a launcher created inside a
+    // conditionally composed subtree is unregistered the moment that subtree leaves, and the result
+    // then arrives with nowhere to go.
+    val picking = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val pending = afterImport
+        afterImport = null
+        if (uri != null) {
+            scope.launch {
+                loadImage(context, uri)
+                    .onSuccess { (image, name) ->
+                        model.placeImage(image, name)
+                        pending?.invoke()
+                    }
+                    .onFailure { outcome = FileOutcome.Refused(it.message ?: "تصویر خوانده نشد") }
+            }
+        }
+    }
+
+    // A collage is picked several photographs at a time, which is a different contract rather than
+    // the same one used repeatedly: making someone return to the gallery eleven times to fill a
+    // nine-cell layout is the difference between a feature people use and one they try once.
+    val pickingCollage = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents(),
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            scope.launch {
+                for (uri in uris) {
+                    loadImage(context, uri)
+                        .onSuccess { (image, name) -> model.addCollagePhoto(image, name) }
+                        .onFailure { outcome = FileOutcome.Refused(it.message ?: "تصویر خوانده نشد") }
+                }
+            }
+        }
+    }
+
+    // Which saved grade the batch picker was opened for. Held beside the launcher because the
+    // choice is made before the picker opens and the result arrives long afterwards.
+    var batchLook by remember { mutableStateOf<ir.pixellab.core.editor.Look?>(null) }
+    val batch = remember { BatchRun() }
+
+    val pickingBatch = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents(),
+    ) { uris ->
+        val look = batchLook
+        batchLook = null
+        if (look != null && uris.isNotEmpty()) {
+            scope.launch {
+                val result = batch.run(context, handle, look, uris, IMAGE_EXPORT_FORMAT, model.assets)
+                outcome = if (result.failed.isEmpty()) {
+                    FileOutcome.Exported("${result.written} عکس با «${look.name}»", 0, 0)
+                } else {
+                    // Named rather than counted: "three failed" leaves the user to work out which
+                    // three, and the answer is not in the gallery because they are not there.
+                    FileOutcome.Refused(
+                        "${result.written} از ${result.total} نوشته شد — این‌ها نشد: " +
+                            result.failed.joinToString("، "),
+                    )
+                }
+            }
+        }
+    }
+
+    // Its own launcher rather than a mode flag on the image one: the two want different MIME
+    // filters, and a picker that offers a photo when the user asked for a curve preset is the kind
+    // of thing that makes people give up on a feature rather than report it.
+    val pickingPreset = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                loadCurvePreset(context, uri)
+                    .onSuccess { (curves, name) -> model.addAdjustment(curves, name) }
+                    .onFailure { outcome = FileOutcome.Refused(it.message ?: "پریست خوانده نشد") }
+            }
+        }
+    }
+
+    // A third launcher, for the same reason there is a second: a picker offering a photograph when
+    // the user asked for a grading table is how a feature gets abandoned rather than reported.
+    val pickingLut = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                loadColorLookup(context, uri)
+                    .onSuccess { (strip, name) ->
+                        val selected = state.primaryLayer as? Layer.AdjustmentLayer
+                        // Replace the table on the layer the user is already editing; only start a
+                        // new one when they are not on a Color Lookup, or importing from the
+                        // catalogue would silently leave the layer they were adjusting untouched.
+                        if (selected?.adjustment is ir.pixellab.core.model.Adjustment.ColorLookup) {
+                            model.setColorLookup(selected.id, strip, name)
+                        } else {
+                            model.addColorLookup(strip, name)
+                        }
+                    }
+                    .onFailure { outcome = FileOutcome.Refused(it.message ?: "جدول رنگ خوانده نشد") }
+            }
+        }
+    }
+
+    LaunchedEffect(entry) {
+        val action = entry ?: return@LaunchedEffect
+        // The quick action names a place in the panel now, not a kind of work.
+        tab = action.panelTab
+        when (action) {
+            QuickAction.DIMENSIONAL -> model.act {
+                setTool(Tool.TEXT)
+                openSheet(SheetContent.Dimensional, SheetDetent.FULL)
+            }
+            QuickAction.TEXT -> model.act {
+                setTool(Tool.TEXT)
+                openSheet(SheetContent.FontPicker, SheetDetent.FULL)
+            }
+            // Straight into the studio: painting needs no photograph — a paint layer is made on
+            // the spot — so there is nothing to wait for.
+            QuickAction.PAINT -> {
+                if (model.state.primaryLayer !is Layer.Image) model.addPaintLayer()
+                model.act { setTool(Tool.BRUSH) }
+                onNavigate(Destination.BRUSH, null, null)
+            }
+            QuickAction.EFFECTS -> model.act {
+                setTool(Tool.ADJUST)
+                openSheet(SheetContent.Adjustments, SheetDetent.FULL)
+            }
+            // The three that need a photograph first, and this is the whole reason the
+            // continuation is a *function* rather than a sheet to open: two of them still land on a
+            // panel and the third now lands on a different screen. "Remove the background" needs a
+            // background to remove, so the picker comes first and the destination is waiting when
+            // the picture arrives.
+            QuickAction.PHOTO -> {
+                afterImport = { model.act { openSheet(SheetContent.CanvasTools, SheetDetent.FULL) } }
+                picking.launch(IMAGE_MIME)
+            }
+            QuickAction.CUTOUT -> {
+                afterImport = { model.act { openSheet(SheetContent.PixelSelection, SheetDetent.FULL) } }
+                picking.launch(IMAGE_MIME)
+            }
+            QuickAction.RETOUCH -> {
+                afterImport = { onNavigate(Destination.RETOUCH, null, null) }
+                picking.launch(IMAGE_MIME)
+            }
+        }
+        onEntryHandled()
+    }
+
+    // Every panel's empty state can reach these. A sheet that says "select an image layer" and
+    // offers no way to get one is the shape of bug that makes a whole application feel broken.
+    val actions = EditorActions(
+        pickImage = { picking.launch(IMAGE_MIME) },
+        addText = { model.addTextLayer()?.let { editingText = it } },
+        applyLookToPhotos = { look ->
+            batchLook = look
+            pickingBatch.launch(IMAGE_MIME)
+        },
+    )
+
+    CompositionLocalProvider(LocalEditorActions provides actions) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Ink.Ground)) {
+        val screenHeight = maxHeight
+        val skin = LocalThemeSkin.current
+
+        // **The chrome is no longer drawn on top of the canvas, so the canvas no longer has to be
+        // told how much of itself is hidden.**
+        //
+        // It used to be: the surface filled the screen, every bar floated over it, and the editor
+        // was handed a running total of their heights so it could centre the artboard in what was
+        // left. That total was a guess maintained by hand in two places, it went stale whenever a
+        // direction changed the panel's height, and getting it wrong put the document's bottom edge
+        // under the ribbon.
+        //
+        // The header, the canvas and the panel are now siblings in a column and the canvas measures
+        // *itself* — `onSize` reports the real working area — so the correction is zero and the
+        // whole class of bug is gone rather than fixed. This still has to be said out loud, because
+        // the editor's own default assumes a top bar drawn over the artwork.
+        LaunchedEffect(Unit) { model.onChromeInsets(top = 0f, bottom = 0f) }
+
+        Column(Modifier.fillMaxSize().systemBarsPadding()) {
+            // Console opens with a menu bar and the other three do not. It is the first thing you
+            // see of the direction and the clearest statement of what it is for: this is the one
+            // that assumes you have used a desktop editor.
+            if (skin.layout == PanelLayout.DENSE) {
+                MenuBar(
+                    state = state,
+                    model = model,
+                    onExport = { exporting = true },
+                    onSave = { scope.launch { outcome = saveProject(context, model.currentProject()) } },
+                    onOpen = { opening = Storage.listProjects(context) },
+                    onPickImage = { picking.launch(IMAGE_MIME) },
+                    onOpenRetouch = { onNavigate(Destination.RETOUCH, null, null) },
+                )
+            }
+
+            TopBar(
+                state = state,
+                model = model,
+                onHome = onHome,
+                onExport = { exporting = true },
+                onSave = { scope.launch { outcome = saveProject(context, model.currentProject()) } },
+                onOpen = { opening = Storage.listProjects(context) },
+            )
+
+            // The middle band. On Ember, Iris and «امبر — فارسی» it is the canvas and nothing else;
+            // on Console it is a rail, the canvas and an inspector, which is what that direction's
+            // brief means by «menu bar + tool rail + inspector». They are real columns rather than
+            // panels floating over the artwork: a rail drawn on top of the picture covers the part
+            // of the picture nearest the hand, which is the part being worked on.
+            Row(Modifier.weight(1f).fillMaxWidth()) {
+                if (skin.layout == PanelLayout.DENSE) ToolRail(state, model)
+
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    EditorCanvas(
+                        state = state,
+                        bounds = bounds,
+                        fonts = model.fonts,
+                        assets = model.assets,
+                        assetGeneration = model.paint.generation,
+                        selection = SelectionOverlay(
+                            model.select.outline,
+                            model.select.draft,
+                            mask = if (model.quickMask) model.select.selection else null,
+                        ),
+                        pen = PenOverlay(model.pen.path, model.pen.active),
+                        handle = handle,
+                        onGesture = model::onGesture,
+                        onSize = model::onScreenSize,
+                    )
+
+                    Rulers(state, model, Modifier.align(Alignment.TopStart))
+
+                    Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                        // On the glass rather than in the header: these are facts about the *view*,
+                        // and a header that says `IMG_4821` and `۶۸٪` in one row invites the reading
+                        // that sixty-eight percent is a property of the file.
+                        //
+                        // No longer hidden while a panel is open. It used to be, because the panel
+                        // was a sheet over the canvas and a zoom read-out describing a canvas
+                        // nobody could see was noise. The panel is docked now — the canvas is right
+                        // there — so the zoom is exactly what somebody adjusting a curve wants.
+                        CanvasReadout(state, model)
+                        batch.progress?.let {
+                            Text(
+                                "در حال اعمال روی عکس ${it.done + 1} از ${it.total} — ${it.current}",
+                                color = Ink.TextMuted,
+                                modifier = Modifier.padding(horizontal = Space.medium, vertical = Space.small),
+                            )
+                        }
+                        outcome?.let {
+                            OutcomeBanner(
+                                it,
+                                Modifier.padding(horizontal = Space.medium, vertical = Space.small),
+                            ) { outcome = null }
+                        }
+                    }
+
+                    // Iris's answer to «chrome hidden until needed»: the two numbers your hand is
+                    // actually changing, upright on the glass, and nothing else.
+                    if (skin.layout == PanelLayout.FLOATING) {
+                        // Under the zoom plate rather than centred on the canvas: centred put the
+                        // value under the dial straight on top of the contextual bar, and the two
+                        // controls a hand reaches for cannot be stacked on each other.
+                        CanvasSliders(
+                            state,
+                            model,
+                            Modifier.align(Alignment.TopStart).padding(top = DIALS_TOP),
+                        )
+                    }
+
+                    Column(
+                        Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        // Shown whenever the canvas is visible, not only when a layer is selected:
+                        // the two states it used to skip — an empty canvas and a live pixel
+                        // selection — are the two where somebody most needs to be told what next.
+                        AnimatedVisibility(
+                            // Hidden only while a *detail* is open, and for a reason that survived
+                            // the panels being docked: the bar's job is "what do I do to this
+                            // next", and inside a panel the answer is the panel. It would be a
+                            // second, quieter suggestion competing with the one being acted on.
+                            visible = !state.sheet.isOpen,
+                            enter = slideInVertically(tween(Motion.STANDARD, easing = Motion.ease)) { it },
+                            exit = slideOutVertically(tween(Motion.STANDARD, easing = Motion.ease)) { it },
+                        ) {
+                            SelectionCard(
+                                state,
+                                model,
+                                onEditText = { editingText = it },
+                                onOpenTextStudio = { id, section ->
+                                    onNavigate(Destination.TEXT_STUDIO, id, section)
+                                },
+                            )
+                        }
+                        val editing = state.primaryLayer as? Layer.Text
+                        if (editing != null && tab == PanelTab.TEXT && !state.sheet.isOpen) {
+                            GlyphRibbonPanel(
+                                text = editing.spec.text,
+                                state = ribbon,
+                                onStretch = { cluster, amount ->
+                                    model.setText(editing.id, stretched(editing.spec.text, cluster, amount))
+                                },
+                            )
+                        }
+                    }
+                }
+
+                if (skin.layout == PanelLayout.DENSE) LayerInspector(state, model)
+            }
+
+            WorkPanel(
+                tab = tab,
+                onPickTab = { tab = it },
+                state = state,
+                model = model,
+                // A detail is a *deeper* place in the same panel, so it gets the room it asks for
+                // — the detent it was opened at — floored at the tab's own height so drilling in
+                // never makes the panel smaller, and capped so the artwork it is editing keeps a
+                // band of screen. That cap is the whole reason these are panels and not sheets.
+                height = if (state.sheet.isOpen) {
+                    // The cap subtracts the header and the tab row as well as the band of canvas,
+                    // because all four are siblings in the same column. Subtracting only the band
+                    // left about sixty dp of artwork at the `FULL` detent — the document fitted
+                    // itself to that at ten percent, which is a thumbnail, not a canvas.
+                    (screenHeight * state.sheet.detent.screenFraction)
+                        .coerceIn(skin.panelMin, screenHeight - MIN_CANVAS - Frame.history - Frame.dock)
+                } else {
+                    (screenHeight * skin.panelFraction).coerceIn(skin.panelMin, skin.panelMax)
+                },
+                onPickImage = { picking.launch(IMAGE_MIME) },
+                onPickPhotos = { pickingCollage.launch(IMAGE_MIME) },
+                // The studio is a screen now. It used to be a sheet over the canvas it was
+                // setting type against, which is the one thing a type studio must not be.
+                onOpenTextStudio = { id -> onNavigate(Destination.TEXT_STUDIO, id, null) },
+                onOpenRetouch = { onNavigate(Destination.RETOUCH, null, null) },
+                onOpenBrush = { onNavigate(Destination.BRUSH, null, null) },
+                onImportPreset = { pickingPreset.launch(PRESET_MIME) },
+                onImportLut = { pickingLut.launch(PRESET_MIME) },
+                render = { document -> renderDocument(handle, document) },
+            )
+        }
+
+        opening?.let { projects ->
+            OpenDialog(projects, onDismiss = { opening = null }) { file ->
+                opening = null
+                scope.launch {
+                    openProject(file)
+                        .onSuccess { model.openProject(it) }
+                        .onFailure { outcome = FileOutcome.Refused(it.message ?: "باز نشد") }
+                }
+            }
+        }
+
+        editingText?.let { id ->
+            val layer = state.selectedLayers.firstOrNull { it.id == id } as? Layer.Text
+            if (layer == null) {
+                editingText = null
+            } else {
+                TextEditDialog(layer.spec.text, onDismiss = { editingText = null }) { updated ->
+                    editingText = null
+                    model.setText(id, updated)
+                }
+            }
+        }
+
+        if (exporting) {
+            ExportSheet(
+                canvasWidth = state.document.canvas.width,
+                canvasHeight = state.document.canvas.height,
+                onDismiss = { exporting = false },
+            ) { format, scale, quality ->
+                exporting = false
+                if (format == ir.pixellab.core.codec.Format.PDF) {
+                    scope.launch {
+                        outcome = exportPdf(context, handle, state.document, scale)
+                    }
+                    return@ExportSheet
+                }
+                scope.launch {
+                    outcome = exportImage(context, handle, state.document, format, scale, quality)
+                }
+            }
+        }
+
+    }
+    }
+}
+
+/**
+ * The five kinds of work. Specification §۱۳.۵: `عکس · متن · سه‌بعدی · لایه · خروجی`.
+ *
+ * Fixed at five and in this order. The dock is the one part of the interface a user builds muscle
+ * memory for, so it may not reorder itself, grow with context, or hide an entry that happens to be
+ * unavailable — everything conditional belongs in the ribbon above it.
+ */
+enum class Dock(val icon: ImageVector, val label: String) {
+    PHOTO(Icons.Outlined.Image, "عکس"),
+    TEXT(Icons.Outlined.TextFields, "متن"),
+    DIMENSIONAL(Icons.Outlined.ViewInAr, "سه‌بعدی"),
+    LAYERS(Icons.Outlined.Layers, "لایه"),
+    EXPORT(Icons.Outlined.IosShare, "خروجی"),
+}
+
+/**
+ * The history strip, along the top. Specification §۱۳.۵ and interaction idea ۷.
+ *
+ * One chip per step, the current position filled. Tapping a chip moves the document to that point,
+ * which is what makes this a history *strip* rather than a pair of arrows: undo and redo answer
+ * "one more" while this answers "back to before I started the shadow", and on a phone the second
+ * question is the one people actually have.
+ *
+ * The chips are marks rather than thumbnails. A thumbnail per step would mean rendering the document
+ * once per history entry, which on a 4000-pixel canvas is seconds of work for a 40dp picture — and a
+ * strip of *fake* thumbnails would be worse than none.
+ */
+@Composable
+internal fun TopBar(
+    state: EditorState,
+    model: EditorViewModel,
+    onHome: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    onExport: (() -> Unit)? = null,
+    onSave: (() -> Unit)? = null,
+    onOpen: (() -> Unit)? = null,
+) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            // Opaque, with a hairline under it. It used to be a translucent scrim because the
+            // artwork ran underneath; it does not any more — the header is a band above the canvas,
+            // so a scrim would be a translucent panel over the ground colour, which is a smudge
+            // rather than an effect.
+            .background(Ink.Chrome)
+            .systemBarsPadding(),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().height(Frame.history).padding(horizontal = Space.small),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Space.tight),
+        ) {
+            if (onHome != null) {
+                // Auto-mirrored, so it resolves to the right-pointing arrow that means "back" in a
+                // right-to-left interface — specification §۱۳.۳, which requires every directional
+                // icon to mirror.
+                BarIcon(Icons.AutoMirrored.Outlined.ArrowBack, "خانه", onClick = onHome)
+            }
+
+            Text(
+                state.document.name,
+                style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                color = Ink.TextMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = Space.small),
+            )
+
+            HistoryStrip(model, Modifier.weight(1f))
+
+            // Through the view model, not the editor: painted pixels are on the same stack, and an
+            // undo that only knew about the document would skip every stroke.
+            BarIcon(Icons.AutoMirrored.Outlined.Undo, "برگشت", enabled = model.canUndo, onClick = model::undo)
+            BarIcon(Icons.AutoMirrored.Outlined.Redo, "جلو", enabled = model.canRedo, onClick = model::redo)
+            // Next to undo because it answers the neighbouring question — "was that better?" — and
+            // because on a phone the only place a compare gets used is the place a thumb already is.
+            HeldBarIcon(
+                Icons.Outlined.Compare,
+                "مقایسه با اول کار",
+                enabled = model.historyPosition > 0,
+                held = model.comparing,
+                onPress = model::beginCompare,
+                onRelease = model::endCompare,
+            )
+            BarIcon(Icons.Outlined.FitScreen, "اندازهٔ صفحه") { model.act { fitCanvas() } }
+            // Saving and opening had no entry point at all between the ribbon coming out and this.
+            // They belong in the header rather than in a panel because the header is the *file's*
+            // row — it is the one place already showing which document you are in.
+            onSave?.let { BarIcon(Icons.Outlined.Save, "ذخیره", onClick = it) }
+            onOpen?.let { BarIcon(Icons.Outlined.FolderOpen, "باز کردن", onClick = it) }
+            BarIcon(Icons.Outlined.Settings, "تنظیمات") {
+                model.act { openSheet(SheetContent.Settings, SheetDetent.FULL) }
+            }
+            // The accent button the brief puts at the end of the header. Export is the one thing
+            // you do once, at the end — it earns a filled button and it does not earn a fifth of
+            // the panel, which is where it used to live as a dock entry.
+            onExport?.let { export ->
+                Box(
+                    Modifier
+                        .heightIn(min = Space.touch)
+                        .clip(Corners.button)
+                        .background(Ink.Accent)
+                        .clickable(onClick = export, onClickLabel = "خروجی")
+                        .padding(horizontal = Space.medium)
+                        .semantics { role = Role.Button },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "خروجی",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                        color = Ink.OnAccent,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Console's menu bar. Thirty dp, above the header, and only in this direction.
+ *
+ * ### Why a menu at all, on a phone
+ *
+ * Because the direction is *for* somebody who has used a desktop editor, and the whole argument for
+ * offering four directions is that one of them may be denser than a phone convention allows. A menu
+ * holds thirty verbs in the height of one, and its cost — that you have to open it to see what is
+ * inside — is exactly the cost a professional has already paid a thousand times elsewhere.
+ *
+ * Every entry here does something that exists. That is not a low bar: the mock-up's bar also carries
+ * `316 MB` and `GPU 12.4ms`, and both of those are numbers somebody typed. The two read-outs at the
+ * trailing edge are the true versions — the heap this process is actually holding, and the size of
+ * the artboard in megapixels, which is the number that predicts whether the next filter will be
+ * quick. A read-out that is decoration is worse than an empty corner.
+ */
+@Composable
+private fun MenuBar(
+    state: EditorState,
+    model: EditorViewModel,
+    onExport: () -> Unit,
+    onSave: () -> Unit,
+    onOpen: () -> Unit,
+    onPickImage: () -> Unit,
+    onOpenRetouch: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.fillMaxWidth().background(Ink.ChromeRaised)) {
+        // Not scrolling, and that is a constraint rather than an oversight: a menu bar you can push
+        // sideways is one where the fifth menu does not exist until you find it, which is the whole
+        // failure a menu bar is supposed to avoid. Five Persian menu names and two read-outs fit on
+        // a 411dp phone with room over — the app's own name, which the mock-up carries, does not,
+        // and it is the one item here that tells the user nothing they do not know.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(MENU_BAR)
+                .padding(horizontal = Space.small),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Space.tight),
+        ) {
+            Menu("فایل") { close ->
+                MenuEntry("ذخیره") { close(); onSave() }
+                MenuEntry("باز کردن") { close(); onOpen() }
+                MenuEntry("افزودن عکس") { close(); onPickImage() }
+                MenuEntry("خروجی گرفتن") { close(); onExport() }
+            }
+            Menu("ویرایش") { close ->
+                MenuEntry("برگشت", enabled = model.canUndo) { close(); model.undo() }
+                MenuEntry("جلو", enabled = model.canRedo) { close(); model.redo() }
+                MenuEntry("لغو انتخاب", enabled = model.select.selection != null) {
+                    close()
+                    model.select.clear()
+                }
+                MenuEntry("تنظیمات") {
+                    close()
+                    model.act { openSheet(SheetContent.Settings, SheetDetent.FULL) }
+                }
+            }
+            Menu("تصویر") { close ->
+                MenuEntry("بوم") { close(); model.act { openSheet(SheetContent.CanvasTools, SheetDetent.HALF) } }
+                MenuEntry("تنظیم") { close(); model.act { openSheet(SheetContent.Adjustments, SheetDetent.FULL) } }
+                MenuEntry("فیلترها") { close(); model.act { openSheet(SheetContent.StyleLibrary, SheetDetent.FULL) } }
+                MenuEntry("اندازهٔ صفحه") { close(); model.act { fitCanvas() } }
+            }
+            Menu("لایه") { close ->
+                MenuEntry("لایهٔ رنگ") { close(); model.addPaintLayer() }
+                MenuEntry("افزودن متن") { close(); model.addTextLayer() }
+                MenuEntry("چیدمان") { close(); model.act { openSheet(SheetContent.Arrange, SheetDetent.HALF) } }
+                MenuEntry("راهنما") { close(); model.act { openSheet(SheetContent.Guides, SheetDetent.HALF) } }
+            }
+            Menu("هوش") { close ->
+                MenuEntry("جدا کردن سوژه") { close(); model.act { openSheet(SheetContent.PixelSelection, SheetDetent.HALF) } }
+                MenuEntry("پرتره") { close(); onOpenRetouch() }
+                MenuEntry("ترمیم") { close(); onOpenRetouch() }
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            // Recomputed when the document changes rather than every frame: a heap figure that
+            // counts while you drag a slider is a distraction, and the moment it is worth reading
+            // is the moment after an edit landed.
+            val heap = remember(state.document) { usedHeapMegabytes() }
+            Text(
+                "${Digits.technical(heap)} م‌ب",
+                style = MeasureStyle,
+                color = Ink.TextMuted,
+                maxLines = 1,
+            )
+            Text(
+                "${megapixels(state.document.canvas.width, state.document.canvas.height)} مپ",
+                style = MeasureStyle,
+                color = Ink.Accent,
+                maxLines = 1,
+            )
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Ink.Divider))
+    }
+}
+
+/** One menu title and the panel it drops. */
+@Composable
+private fun Menu(title: String, content: @Composable ((() -> Unit)) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Text(
+            title,
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            color = if (open) Ink.Accent else Ink.TextMuted,
+            maxLines = 1,
+            modifier = Modifier
+                .clip(Corners.button)
+                .clickable(onClickLabel = title) { open = true }
+                // The row is 30dp tall by the direction's own brief, so the target cannot be 48.
+                // Padding it out to the full height of the bar and giving it the whole width of the
+                // word is the most that shape allows, and it is why this bar exists in exactly one
+                // of the four directions rather than in all of them.
+                .padding(horizontal = Space.small, vertical = Space.tight)
+                .semantics { role = Role.Button },
+        )
+        androidx.compose.material3.DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            content { open = false }
+        }
+    }
+}
+
+/** One line of a menu. */
+@Composable
+private fun MenuEntry(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    androidx.compose.material3.DropdownMenuItem(
+        text = {
+            Text(
+                label,
+                color = if (enabled) Ink.Text else Ink.TextDisabled,
+                style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+            )
+        },
+        enabled = enabled,
+        onClick = onClick,
+    )
+}
+
+/** What this process is holding, now. Not a running average and not a prediction. */
+private fun usedHeapMegabytes(): Int {
+    val runtime = Runtime.getRuntime()
+    return ((runtime.totalMemory() - runtime.freeMemory()) / (1024L * 1024L)).toInt()
+}
+
+/** The artboard's area, to one decimal — the number that predicts what a filter will cost. */
+private fun megapixels(width: Int, height: Int): String {
+    val tenths = ((width.toLong() * height.toLong()) / 100_000L).toInt()
+    return Digits.technical(tenths / 10) + "٫" + Digits.technical(tenths % 10)
+}
+
+/** The brief's menu bar height. */
+private val MENU_BAR = 30.dp
+
+/**
+ * Iris's floating controls: the value your hand is changing, upright, on the glass.
+ *
+ * ### Why this direction and no other
+ *
+ * «canvas-first, chrome hidden until needed». Iris is the direction that gives the artwork the
+ * screen and asks the interface to get out of the way — which is a promise it cannot keep if
+ * changing a brush size means opening a panel over the picture you are judging the brush against.
+ * Two upright tracks on the glass are the smallest thing that keeps the promise: the value is
+ * visible, it is adjustable, and the picture underneath is uncovered while you adjust it.
+ *
+ * What they carry follows the tool, because a control that always shows the same parameter is a
+ * control that is wrong most of the time. Painting shows size and flow; anything else shows the
+ * selected layer's opacity, which is the one value every kind of layer has.
+ */
+@Composable
+private fun CanvasSliders(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
+    val painting = state.tool == Tool.BRUSH || state.tool == Tool.RETOUCH
+    Row(
+        modifier.padding(start = Space.medium),
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        if (painting) {
+            val preset = model.paint.preset
+            Dial(
+                label = "اندازه",
+                fraction = ((preset.size - BRUSH_MIN) / (BRUSH_MAX - BRUSH_MIN)).coerceIn(0f, 1f),
+                readout = Digits.technical(preset.size.roundToInt()),
+            ) { fraction ->
+                model.paint.preset = preset.copy(size = BRUSH_MIN + fraction * (BRUSH_MAX - BRUSH_MIN))
+            }
+            Dial(
+                label = "جریان",
+                fraction = preset.flow.coerceIn(0f, 1f),
+                readout = "${Digits.technical((preset.flow * 100f).roundToInt())}%",
+            ) { fraction ->
+                model.paint.preset = preset.copy(flow = fraction.coerceIn(0.01f, 1f))
+            }
+        } else {
+            val layer = state.primaryLayer ?: return@Row
+            Dial(
+                label = "شفافیت",
+                fraction = layer.opacity.coerceIn(0f, 1f),
+                readout = "${Digits.technical((layer.opacity * 100f).roundToInt())}%",
+            ) { fraction ->
+                // Continuous, so a drag records one history entry rather than one per pixel moved.
+                model.act { setLayerOpacity(layer.id, fraction, continuous = true) }
+            }
+        }
+    }
+}
+
+/**
+ * One upright track: a fill that rises from the bottom, its word under it, its value under that.
+ *
+ * The visible track is 28dp because that is what reads as a dial rather than as a scrollbar; the
+ * *target* around it is the platform minimum, which is the distinction that keeps this from being a
+ * pretty control nobody can hit. The gesture is a drag rather than a tap-to-position because a tap
+ * on a 150dp track is a jump, and a jump on brush size while a stroke is half-drawn is an undo.
+ */
+@Composable
+private fun Dial(label: String, fraction: Float, readout: String, onChange: (Float) -> Unit) {
+    val density = LocalDensity.current
+    val travel = with(density) { DIAL_HEIGHT.toPx() }
+    Column(
+        // Pinned to the width of its own target so the word and the value underneath cannot run out
+        // past the edge of the screen, which is exactly what they did at their natural width.
+        Modifier.width(Space.touch),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Space.tight),
+    ) {
+        Box(
+            Modifier
+                .width(Space.touch)
+                .height(DIAL_HEIGHT)
+                .draggable(
+                    orientation = Orientation.Vertical,
+                    state = rememberDraggableState { delta ->
+                        // Upwards is more, which is why the delta is subtracted: the gesture stream
+                        // counts downwards from the top of the screen.
+                        onChange((fraction - delta / travel).coerceIn(0f, 1f))
+                    },
+                )
+                .semantics {
+                    contentDescription = label
+                    stateDescription = readout
+                },
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Box(
+                Modifier
+                    .width(DIAL_TRACK)
+                    .fillMaxHeight()
+                    .clip(Corners.chip)
+                    .background(Ink.Overlay)
+                    .border(1.dp, Ink.Divider, Corners.chip),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(fraction)
+                        .background(Ink.Accent),
+                )
+            }
+        }
+        Text(
+            label,
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            color = Ink.TextMuted,
+            maxLines = 1,
+        )
+        Text(readout, style = NumericStyle, color = Ink.Text, maxLines = 1)
+    }
+}
+
+private val DIAL_HEIGHT = 132.dp
+private val DIAL_TRACK = 28.dp
+
+/** Clear of the zoom read-out, which is the row directly above. */
+private val DIALS_TOP = 56.dp
+
+/** The range the brush panel offers, so the dial and the panel cannot disagree about the ends. */
+private const val BRUSH_MIN = 1f
+private const val BRUSH_MAX = 400f
+
+/**
+ * The tools, down the leading edge of the canvas. Console only.
+ *
+ * ### Why it is not on every direction
+ *
+ * The brief gives the three directions three different answers to "where do the tools live":
+ * Ember docks a contextual ribbon under the canvas, Iris hides the chrome until it is needed, and
+ * Console lays a rail down the side and an inspector down the other — which is the desktop answer,
+ * and the one that suits somebody who already knows which tool they want. A rail on all four would
+ * not be denser; it would be a fifth control competing with the ribbon for the same job, and the
+ * user would have two places to look for the brush.
+ *
+ * ### A column, not an overlay
+ *
+ * It floated on the artwork in the first attempt, for the reasonable-sounding reason that a
+ * permanent 44dp gutter is eleven percent of a 411dp phone. The first screenshot showed why that was
+ * wrong twice over: a rail drawn on the picture covers the part of the picture nearest the hand —
+ * which is the part being worked on — and the inspector on the other edge ran straight over the
+ * contextual bar. The brief lays all three out as siblings in a row, and it is right. The canvas
+ * gives up a gutter and gets to be *whole* in what remains.
+ */
+@Composable
+private fun ToolRail(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxHeight()) {
+        Column(
+            Modifier
+                .width(RAIL_WIDTH)
+                .fillMaxHeight()
+                .background(Ink.Chrome)
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = Space.small),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(Space.tight),
+        ) {
+            for (entry in RAIL) {
+                val active = state.tool == entry.tool
+                Box(
+                    Modifier
+                        .size(RAIL_BUTTON)
+                        .clip(Corners.button)
+                        .background(if (active) Ink.Accent else Color.Transparent)
+                        .clickable(onClick = { model.act { setTool(entry.tool) } }, onClickLabel = entry.label)
+                        .semantics {
+                            contentDescription = entry.label
+                            role = Role.Button
+                            selected = active
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        entry.icon,
+                        contentDescription = null,
+                        tint = if (active) Ink.OnAccent else Ink.Text,
+                        modifier = Modifier.size(Frame.icon),
+                    )
+                }
+            }
+        }
+        Hairline()
+    }
+}
+
+/**
+ * Wide enough for the platform's touch minimum and no wider.
+ *
+ * Forty-four rather than the brief's forty-four *pixels*: the mock-up is a browser at desktop
+ * density, and forty-four device pixels on a phone is a target a finger misses. The button inside
+ * it is 44dp square, which is the tightest the platform's own guidance allows for a control in a
+ * dense row of its own kind — the rail is a column of identical targets with no gaps, so a miss
+ * lands on a neighbouring tool rather than on the artwork.
+ */
+private val RAIL_WIDTH = 48.dp
+private val RAIL_BUTTON = 44.dp
+
+/** The one-pixel rule the brief draws between every two structural panes. */
+@Composable
+private fun Hairline() {
+    Box(Modifier.width(1.dp).fillMaxHeight().background(Ink.Divider))
+}
+
+/**
+ * Console's inspector: the layer stack, permanently on screen.
+ *
+ * ### What it shows and what it deliberately does not
+ *
+ * The brief's inspector carries a histogram, a levels read-out and the stack. The stack is here;
+ * the histogram is not, and that is a decision rather than an omission. A real histogram means
+ * reading back the composited frame from the GPU every time anything changes — a full-canvas
+ * `glReadPixels` per edit — and the mock-up's version is twelve bars of sample data. Shipping
+ * twelve bars that do not describe the artwork would be a lie drawn in the interface, and this
+ * application already has a panel-shaped hole where a real one belongs: `AdjustmentSheet` computes
+ * the true histogram from an actual render, on demand, which is where it can afford to.
+ *
+ * What is here is real, cheap and the thing people actually look at: what is stacked, in what
+ * order, at what opacity, and which of it is switched off.
+ *
+ * Bottom-most layer last, matching how a stack is drawn everywhere else — the document stores paint
+ * order, which is the opposite.
+ */
+@Composable
+private fun LayerInspector(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
+    val layers = state.document.layers.asReversed()
+    Row(modifier.fillMaxHeight()) {
+        Hairline()
+        Column(
+            Modifier
+                .width(INSPECTOR)
+                .fillMaxHeight()
+                .background(Ink.Chrome),
+        ) {
+        // The read-out block the brief puts above the stack, carrying what is true rather than what
+        // was drawn: the document's own size and the count. The mock-up's histogram and its
+        // `BLK 12 · GAM 1.08 · WHT 241` are sample data — a real histogram means reading the
+        // composited frame back off the GPU on every edit, which is what `AdjustmentSheet` does on
+        // demand, where it can afford to. Twelve bars that do not describe the artwork would be a
+        // lie drawn in the interface.
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Space.small, vertical = Space.tight),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            InspectorLabel("سند")
+            Text(
+                "${Digits.technical(state.document.canvas.width)} × " +
+                    Digits.technical(state.document.canvas.height),
+                style = NumericStyle,
+                color = Ink.Text,
+            )
+            // Not the zoom as well: the zoom is already on a plate over the canvas, and a second
+            // copy of it here is one more thing to read and one more place to disagree.
+            Text(
+                "${Digits.technical(layers.size)} لایه",
+                style = MeasureStyle,
+                color = Ink.TextMuted,
+                maxLines = 1,
+            )
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Ink.Divider))
+        Box(Modifier.padding(horizontal = Space.small, vertical = Space.tight)) {
+            InspectorLabel("لایه‌ها")
+        }
+        // Capped and scrolling. A document with forty layers would otherwise push the inspector off
+        // both ends of the screen, and an inspector taller than the canvas is not an inspector.
+        Column(
+            Modifier
+                .heightIn(max = INSPECTOR_MAX)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            for (layer in layers) {
+                val chosen = layer.id == state.selection.primary
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = INSPECTOR_ROW)
+                        .background(if (chosen) Ink.AccentSoft else Color.Transparent)
+                        .clickable(onClickLabel = layer.name) { model.act { select(layer.id) } }
+                        .padding(horizontal = Space.tight, vertical = 2.dp)
+                        .semantics {
+                            role = Role.Button
+                            selected = chosen
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Space.tight),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            layer.name,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                            color = if (layer.visible) Ink.Text else Ink.TextDisabled,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        // Opacity always, blend only when it is not Normal. The Persian blend
+                        // names are long — «روشنایی رنگی» is five times the width of «۱۰۰٪» — so
+                        // showing both unconditionally truncated the number, which is the half
+                        // somebody is actually reading.
+                        Text(
+                            buildString {
+                                append(Digits.technical((layer.opacity * 100).roundToInt()))
+                                append('%')
+                                if (layer.blendMode != ir.pixellab.core.model.BlendMode.NORMAL) {
+                                    append(" · ")
+                                    append(layer.blendMode.persianLabel)
+                                }
+                            },
+                            style = NumericStyle,
+                            color = Ink.TextMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    // Its own target rather than part of the row: hiding a layer and selecting one
+                    // are different intentions, and merging them means every glance at the stack
+                    // risks switching something off.
+                    Box(
+                        Modifier
+                            .size(28.dp)
+                            .clip(Corners.button)
+                            .clickable(onClickLabel = "نمایش ${layer.name}") {
+                                model.act { setLayerVisible(layer.id, !layer.visible) }
+                            }
+                            .semantics { role = Role.Switch },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            if (layer.visible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
+                            contentDescription = "نمایش ${layer.name}",
+                            tint = if (layer.visible) Ink.Text else Ink.TextDisabled,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+        }
+        }
+    }
+}
+
+/** The inspector's section heading: small, wide-tracked, and never a control. */
+@Composable
+private fun InspectorLabel(text: String) {
+    Text(
+        text,
+        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+        color = Ink.TextMuted,
+        maxLines = 1,
+    )
+}
+
+/** Narrow enough to leave the canvas usable on a 411dp phone, wide enough for a Persian layer name. */
+private val INSPECTOR = 132.dp
+private val INSPECTOR_MAX = 260.dp
+private val INSPECTOR_ROW = 34.dp
+
+/** One rail entry: the tool it chooses and the word a screen reader says for it. */
+private class RailTool(val tool: Tool, val icon: ImageVector, val label: String)
+
+/**
+ * Eight, in the order the brief's rail has them.
+ *
+ * Deliberately not every tool in the application — a rail that listed all of them would scroll, and
+ * a rail that scrolls is a menu with extra steps. These are the eight that own a drag on the canvas
+ * or change what a drag means, which is the property that makes a tool worth a permanent home.
+ */
+private val RAIL = listOf(
+    RailTool(Tool.BRUSH, Icons.Outlined.Brush, "قلم"),
+    RailTool(Tool.SELECT, Icons.Outlined.Crop, "انتخاب"),
+    RailTool(Tool.PEN, Icons.Outlined.Draw, "قلم مسیر"),
+    RailTool(Tool.RETOUCH, Icons.Outlined.AutoFixHigh, "ترمیم"),
+    RailTool(Tool.TEXT, Icons.Outlined.TextFields, "متن"),
+    RailTool(Tool.SHAPE, Icons.Outlined.Category, "شکل"),
+    RailTool(Tool.IMAGE, Icons.Outlined.Image, "عکس"),
+    RailTool(Tool.ADJUST, Icons.Outlined.Tune, "تنظیم"),
+)
+
+/**
+ * The work panel: always on screen, the active tab's body above its five tabs.
+ *
+ * ### What this replaces, and why the replacement is not a refactor
+ *
+ * There used to be a contextual ribbon and a dock of five *kinds of work*, with every real panel
+ * behind a modal sheet that covered the canvas when it opened. Three things were wrong with that
+ * and only the third is obvious: the ribbon changed under the user as they switched dock entries;
+ * the sheets were reachable only through it, so most of the application was two taps behind a row
+ * of buttons nobody read; and the sheet covered the artwork it was editing.
+ *
+ * The brief answers all three with one shape. The panel is *there*, at a fixed height. Its body is
+ * whichever of five places you are looking at. Nothing it contains has to open over the canvas,
+ * because it never needed the whole screen — it needed a home.
+ *
+ * ### The three directions meet the canvas differently here
+ *
+ * Ember and Console dock it: flat, full width, one hairline along the top. Iris floats it — inset
+ * on three sides, every corner rounded, translucent — so the artwork runs *behind* the panel
+ * rather than stopping at it. That single decision is most of what makes the directions feel like
+ * different applications, which is why it is expressed here rather than in a colour table.
+ */
+@Composable
+private fun WorkPanel(
+    tab: PanelTab,
+    onPickTab: (PanelTab) -> Unit,
+    state: EditorState,
+    model: EditorViewModel,
+    height: androidx.compose.ui.unit.Dp,
+    onOpenTextStudio: (LayerId) -> Unit,
+    onOpenRetouch: () -> Unit,
+    onOpenBrush: () -> Unit,
+    onPickImage: () -> Unit,
+    onPickPhotos: () -> Unit,
+    onImportPreset: () -> Unit,
+    onImportLut: () -> Unit,
+    render: suspend (ir.pixellab.core.model.Document) -> ir.pixellab.core.codec.RasterImage?,
+) {
+    val skin = LocalThemeSkin.current
+    val floating = skin.layout == PanelLayout.FLOATING
+    val inset = skin.panelInset
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = inset, end = inset, bottom = inset)
+            .clip(if (floating) Corners.panel else Corners.sheet)
+            .then(
+                if (floating) {
+                    // Translucent rather than blurred: a real backdrop blur needs a RenderEffect
+                    // the platform only offers from API 31, and one direction that looks different
+                    // on new phones is worse than one that looks the same everywhere.
+                    Modifier
+                        .background(Ink.Chrome.copy(alpha = 0.94f))
+                        .border(1.dp, Ink.Divider, Corners.panel)
+                } else {
+                    Modifier.background(Ink.Chrome)
+                },
+            ),
+    ) {
+        // **A detail replaces the tab's body; it does not cover the canvas.**
+        //
+        // Everything below used to be a modal sheet that slid up over the artwork. Twenty-one of
+        // them, and the one thing they all had in common is the thing that was wrong with them:
+        // every panel in this application hid the picture it was editing. The canvas panned out
+        // from under a sheet, which softened it and was never the fix — a colour curve you cannot
+        // watch land is a colour curve you adjust by guessing.
+        //
+        // The tabs stay visible underneath, so leaving a detail is one press and so is going
+        // somewhere else entirely. That is what makes this a place rather than a modal.
+        val detail = state.sheet.content
+        if (detail != null) {
+            Column(Modifier.height(height)) {
+                SheetHeader(state, model)
+                DetailBody(
+                    content = detail,
+                    state = state,
+                    model = model,
+                    onPickImage = onPickImage,
+                    onPickPhotos = onPickPhotos,
+                    onImportPreset = onImportPreset,
+                    onImportLut = onImportLut,
+                    render = render,
+                )
+            }
+        } else {
+            PanelBody(
+                tab = tab,
+                state = state,
+                model = model,
+                onOpenTextStudio = onOpenTextStudio,
+                onOpenRetouch = onOpenRetouch,
+                onOpenBrush = onOpenBrush,
+                onImportPreset = onImportPreset,
+                onImportLut = onImportLut,
+                render = render,
+                modifier = Modifier.height(height),
+            )
+        }
+        // No tab is current while a detail is open, and that is not a detail of styling: the body
+        // on screen belongs to the panel you drilled into, not to the tab you came from. Showing
+        // «لایه‌ها» lit while the adjustments panel is up says the opposite of what is true.
+        PanelTabRow(current = if (detail != null) null else tab, onPick = onPickTab)
+    }
+}
+
+/**
+ * The read-outs that float on the canvas: zoom, document size, and the two zoom steps.
+ *
+ * ### Why these are not in the header
+ *
+ * They are facts about the **view**, not about the document. A header that says `IMG_4821` and `۶۸٪`
+ * in the same row invites the reading that sixty-eight percent is a property of the file. Sitting on
+ * a plate over the artwork, they read the way a camera's viewfinder overlay reads — information
+ * about what you are looking through, drawn on the glass.
+ *
+ * The plates are [Ink.Overlay] rather than a surface colour with alpha, and that is the whole reason
+ * the token exists: a translucent panel colour over a white sky is white, and the read-out
+ * disappears exactly when the user has zoomed into something bright.
+ *
+ * Both numbers are set in [NumericStyle] — tabular figures — because the zoom counts while a pinch
+ * is in progress, and proportional digits make a read-out that jitters sideways under the finger.
+ */
+@Composable
+private fun CanvasReadout(state: EditorState, model: EditorViewModel, modifier: Modifier = Modifier) {
+    val zoom = state.viewport.zoom
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = Space.medium),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+    ) {
+        Plate {
+            Text(
+                "${Digits.technical((zoom * 100f).roundToInt())}%",
+                style = NumericStyle,
+                color = Ink.Text,
+            )
+        }
+        Plate {
+            // The one line of metadata that changes what somebody does next. Not the colour space
+            // or the bit depth, which are the same for every document this application makes and
+            // would be decoration dressed as information.
+            Text(
+                "${Digits.technical(state.document.canvas.width)} × " +
+                    Digits.technical(state.document.canvas.height),
+                style = NumericStyle,
+                color = Ink.TextMuted,
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        // Steps rather than only pinch. Pinch is two fingers on a phone held in one hand, which is
+        // the gesture people cannot do while the other hand is holding the phone.
+        PlateIcon(Icons.Outlined.Remove, "کوچک‌نمایی") { model.stepZoom(1f / ZOOM_STEP) }
+        PlateIcon(Icons.Outlined.Add, "بزرگ‌نمایی") { model.stepZoom(ZOOM_STEP) }
+    }
+}
+
+/** A read-out plate: the shape every floating label on the canvas shares. */
+@Composable
+private fun Plate(content: @Composable () -> Unit) {
+    Box(
+        Modifier
+            .clip(Corners.button)
+            .background(Ink.Overlay)
+            .padding(horizontal = Space.small, vertical = Space.tight),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
+    }
+}
+
+/** The same plate, sized as a touch target and carrying an icon. */
+@Composable
+private fun PlateIcon(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(Space.touch)
+            .clip(Corners.button)
+            .background(Ink.Overlay)
+            .clickable(onClick = onClick, onClickLabel = label)
+            .semantics {
+                contentDescription = label
+                role = Role.Button
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = Ink.Text, modifier = Modifier.size(Frame.icon))
+    }
+}
+
+/** One tap is a quarter of an octave. Small enough to frame with, large enough to be worth a tap. */
+private const val ZOOM_STEP = 1.25f
+
+// Internal rather than private so TouchTargetTest can measure it on its own. The strip is empty
+// until the user has done something, so it is invisible to a test that renders a fresh editor —
+// and it held the smallest target in the application.
+@Composable
+internal fun HistoryStrip(model: EditorViewModel, modifier: Modifier = Modifier) {
+    val length = model.historyLength
+    if (length == 0) {
+        Box(modifier)
+        return
+    }
+    Row(
+        modifier.horizontalScroll(rememberScrollState()),
+        // No gap. The targets are adjacent on purpose: a gap between two 24dp targets is space the
+        // finger can land in that belongs to neither of them, and WCAG's dense-control allowance
+        // only holds while nothing eats into the target. The *marks* are still visibly separated,
+        // because each one is a 6dp dot centred in its own target.
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Zero is the document as it was opened, so there are length + 1 positions to stand at.
+        for (position in 0..length) {
+            val here = position == model.historyPosition
+            Box(
+                Modifier
+                    // The target, which is not the graphic. This was the graphic: a 6dp square
+                    // carrying the click, which is a control no finger can hit — the single worst
+                    // touch target in the application, and one that costs an accidental jump
+                    // through history when the neighbouring dot answers instead.
+                    .size(width = MARK_TARGET, height = Space.touch)
+                    .clickable(onClickLabel = "گام ${Digits.prose(position)}") { model.jumpTo(position) }
+                    .semantics {
+                        role = Role.Button
+                        selected = here
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier
+                        .size(width = if (here) MARK_WIDE else MARK, height = MARK)
+                        .clip(Corners.chip)
+                        .background(if (here) Ink.Accent else Ink.Outline),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The contextual ribbon. Eighty-eight points, directly under the canvas.
+ *
+ * What it holds changes with the dock, and that is the whole reason the dock could shrink to five
+ * entries: every tool the old nine-entry toolbar carried is still one tap away, but it is now
+ * grouped with the work it belongs to instead of competing with tools from four other jobs.
+ */
+@Composable
+internal fun Ribbon(
+    dock: Dock,
+    state: EditorState,
+    model: EditorViewModel,
+    onPickImage: () -> Unit,
+    onAddText: () -> Unit,
+    onEditText: (LayerId) -> Unit,
+    onExport: () -> Unit,
+    onSave: () -> Unit,
+    onOpen: () -> Unit,
+) {
+    val scroll = rememberScrollState()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(Frame.ribbon)
+            .background(Ink.Chrome)
+            // A fade at whichever end still has something behind it.
+            //
+            // The strip scrolls and gave no sign of it, so the last entries were simply sliced off
+            // by the edge of the screen — a user photographed «خط د…» cut in half and reasonably
+            // read it as broken layout rather than as more controls.
+            .edgeFade(scroll, Ink.Chrome)
+            .horizontalScroll(scroll)
+            .padding(horizontal = Space.small),
+        horizontalArrangement = Arrangement.spacedBy(Space.small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // **What is selected wins over what the dock says.**
+        //
+        // The dock names a *kind of work* and that is the right thing for it to name — until
+        // something is selected, at which point the only question anybody has is "what can I do to
+        // this?". Keying the whole ribbon to the dock meant tapping a piece of text and being shown
+        // the photograph tools, with its own font, colour and shadow three panels away behind a
+        // menu that gave no sign of holding them. That is the difference between an editor and a
+        // puzzle, and it is what made the simplest job in the application the hardest one.
+        val selected = state.primaryLayer
+        if (selected is Layer.Text) {
+            TextRibbon(selected.id, state, model, onEditText)
+            return@Row
+        }
+
+        when (dock) {
+            Dock.PHOTO -> {
+                RibbonAction(Icons.Outlined.Image, "افزودن", Tool.IMAGE, state, model, onPickImage)
+                RibbonSheet(Icons.Outlined.GridView, "کلاژ", Tool.IMAGE, SheetContent.Collage, state, model)
+                RibbonSheet(Icons.Outlined.Crop, "بوم", Tool.IMAGE, SheetContent.CanvasTools, state, model)
+                RibbonSheet(Icons.Outlined.Highlight, "انتخاب", Tool.SELECT, SheetContent.PixelSelection, state, model, SheetDetent.PEEK)
+                RibbonSheet(Icons.Outlined.AutoFixHigh, "ترمیم", Tool.RETOUCH, SheetContent.Retouch, state, model)
+                RibbonSheet(Icons.Outlined.Face, "پرتره", Tool.RETOUCH, SheetContent.Portrait, state, model)
+                RibbonSheet(Icons.Outlined.Tune, "تنظیم", Tool.ADJUST, SheetContent.Adjustments, state, model)
+                RibbonAction(Icons.Outlined.Brush, "قلم‌مو", Tool.BRUSH, state, model) {
+                    // A brush needs somewhere to paint. Creating the layer on the first press
+                    // rather than asking for one is the difference between a tool that works and a
+                    // tool that reports that it cannot.
+                    if (state.primaryLayer !is Layer.Image) model.addPaintLayer()
+                    model.act { openSheet(SheetContent.BrushSettings, SheetDetent.HALF) }
+                }
+            }
+
+            Dock.TEXT -> {
+                // First, and it did not exist. Writing a word required opening the font picker and
+                // tapping a face — a typographic decision demanded before a single letter could be
+                // typed, in the one dock named after typing.
+                RibbonAction(Icons.Outlined.TextFields, "افزودن متن", Tool.TEXT, state, model, onAddText)
+                RibbonSheet(Icons.Outlined.FontDownload, "فونت", Tool.TEXT, SheetContent.FontPicker, state, model)
+                RibbonSheet(Icons.Outlined.TextFields, "تایپوگرافی", Tool.TEXT, SheetContent.Typography, state, model)
+                RibbonSheet(Icons.Outlined.Category, "شکل", Tool.SHAPE, SheetContent.ShapeTools, state, model)
+                RibbonSheet(Icons.Outlined.Draw, "قلم", Tool.PEN, SheetContent.Vector, state, model)
+                RibbonSheet(Icons.Outlined.Star, "سبک", Tool.TEXT, SheetContent.StyleLibrary, state, model)
+            }
+
+            Dock.DIMENSIONAL -> {
+                RibbonSheet(Icons.Outlined.ViewInAr, "صحنه", Tool.TEXT, SheetContent.Dimensional, state, model)
+                RibbonSheet(Icons.Outlined.Star, "لوک", Tool.TEXT, SheetContent.LibraryPanel, state, model)
+            }
+
+            Dock.LAYERS -> {
+                RibbonSheet(Icons.Outlined.Layers, "لایه‌ها", Tool.LAYERS, SheetContent.LayerList, state, model, SheetDetent.HALF)
+                RibbonSheet(Icons.AutoMirrored.Outlined.AlignHorizontalLeft, "چیدمان", Tool.LAYERS, SheetContent.Arrange, state, model)
+                RibbonSheet(Icons.Outlined.Grid4x4, "راهنما", Tool.LAYERS, SheetContent.Guides, state, model)
+            }
+
+            Dock.EXPORT -> {
+                BarAction(Icons.Outlined.IosShare, "خروجی", onClick = onExport)
+                BarAction(Icons.Outlined.Save, "ذخیره", onClick = onSave)
+                BarAction(Icons.Outlined.FolderOpen, "باز کردن", onClick = onOpen)
+                RibbonSheet(Icons.Outlined.Star, "کتابخانه", Tool.LAYERS, SheetContent.LibraryPanel, state, model)
+            }
+        }
+    }
+}
+
+/**
+ * Everything you can do to a piece of text, in the order you reach for it.
+ *
+ * Ordered by how often a hand goes there rather than by how the model is shaped: the words first,
+ * then the face, then the colour, then the things that make it a title. Each effect is **one press**
+ * that applies a usable version and opens its own numbers — a chip that only opened a panel would
+ * make the user press twice to find out what it even does, and a chip that applied without opening
+ * anything would leave them with no way to change it.
+ *
+ * The defaults are chosen to be *visible at a glance and immediately adjustable*, not to be subtle.
+ * A drop shadow at two per cent is indistinguishable from a broken button.
+ */
+@Composable
+private fun TextRibbon(
+    id: LayerId,
+    state: EditorState,
+    model: EditorViewModel,
+    onEditText: (LayerId) -> Unit,
+) {
+    BarAction(Icons.Outlined.TextFields, "ویرایش") { onEditText(id) }
+    for (section in RIBBON_SECTIONS) {
+        val target = SheetContent.TextStudio(id, section)
+        BarAction(
+            icon = section.ribbonIcon,
+            label = section.persianLabel,
+            selected = state.sheet.content == target,
+        ) {
+            model.act {
+                setTool(Tool.TEXT)
+                openSheet(target, SheetDetent.FULL)
+            }
+        }
+    }
+    RibbonSheet(Icons.Outlined.Star, "سبک آماده", Tool.TEXT, SheetContent.StyleLibrary, state, model)
+}
+
+/**
+ * Which sections earn a place on the ribbon itself.
+ *
+ * Not all fourteen: the ribbon is eighty-eight points of the screen and the panel already carries
+ * the full list. These are the ones a hand goes to without thinking, and the rest are one tap
+ * further in — which is the same trade the reference editor makes.
+ */
+private val RIBBON_SECTIONS = listOf(
+    TextSection.FONT,
+    TextSection.COLOR,
+    TextSection.METRICS,
+    TextSection.STROKE,
+    TextSection.SHADOW,
+    TextSection.GLOW,
+    TextSection.DIMENSIONAL,
+)
+
+private val TextSection.ribbonIcon: ImageVector
+    get() = when (this) {
+        TextSection.FONT -> Icons.Outlined.FontDownload
+        TextSection.COLOR -> Icons.Outlined.FormatColorFill
+        TextSection.METRICS -> Icons.Outlined.Tune
+        TextSection.STROKE -> Icons.Outlined.BorderColor
+        TextSection.SHADOW -> Icons.Outlined.Layers
+        TextSection.GLOW -> Icons.Outlined.Lightbulb
+        else -> Icons.Outlined.ViewInAr
+    }
+
+/** A ribbon entry that opens a panel and takes its tool. */
+@Composable
+private fun RibbonSheet(
+    icon: ImageVector,
+    label: String,
+    tool: Tool,
+    content: SheetContent,
+    state: EditorState,
+    model: EditorViewModel,
+    /**
+     * Half the screen, not nine tenths.
+     *
+     * A panel is a tool, and a tool that covers the artwork is a dialog. At FULL there is one tenth
+     * of the screen left and the top bar sits in most of it, so a user adjusting a headline could
+     * not see the headline — which turns every control into a guess and every guess into an undo.
+     * The grip still walks the detents for a panel somebody wants to browse rather than operate.
+     */
+    detent: SheetDetent = SheetDetent.HALF,
+) {
+    BarAction(icon, label, selected = state.tool == tool && state.sheet.content == content) {
+        model.act {
+            setTool(tool)
+            openSheet(content, detent)
+        }
+    }
+}
+
+/** A ribbon entry that does something rather than opening a panel. */
+@Composable
+private fun RibbonAction(
+    icon: ImageVector,
+    label: String,
+    tool: Tool,
+    state: EditorState,
+    model: EditorViewModel,
+    onClick: () -> Unit,
+) {
+    BarAction(icon, label, selected = state.tool == tool) {
+        model.act { setTool(tool) }
+        onClick()
+    }
+}
+
+/**
+ * The main dock. Five entries, sixty-four points, no scrolling.
+ *
+ * The active entry is a filled pill rather than a tinted icon. A tint alone is the state that
+ * disappears in a screenshot, at a glance, and for anyone with any degree of colour blindness — a
+ * filled shape survives all three.
+ */
+@Composable
+internal fun MainDock(
+    dock: Dock,
+    state: EditorState,
+    model: EditorViewModel,
+    onDock: (Dock) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Ink.Chrome)
+            .systemBarsPadding()
+            .height(Frame.dock),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Dock.entries.forEach { entry ->
+            DockButton(entry, active = entry == dock) {
+                onDock(entry)
+                // Switching the kind of work also switches the tool, so that the canvas gesture
+                // matches the ribbon the user is now looking at. Without this, tapping «متن» leaves
+                // a brush armed and the first touch paints on the artwork.
+                model.act { setTool(entry.defaultTool(state)) }
+            }
+        }
+    }
+}
+
+/**
+ * The docks where a Persian cluster is the thing being worked on.
+ *
+ * Text and 3D. On the photo dock a selected text layer is incidental — the user is retouching a
+ * photograph the caption happens to sit on — and taking the ribbon's eighty-eight points there would
+ * push the retouch tools off the screen for a caption nobody is editing.
+ */
+private val TYPESETTING = setOf(Dock.TEXT, Dock.DIMENSIONAL)
+
+/**
+ * Applies a stretch, in either direction.
+ *
+ * A negative amount is a drag back towards the start, which has to *remove* kashida rather than add
+ * a negative number of them — so it re-stretches the cluster from its unstretched form, which is
+ * also what makes the gesture exactly reversible instead of accumulating rounding.
+ */
+private fun stretched(
+    text: String,
+    cluster: ir.pixellab.core.text.TextCluster,
+    amount: Int,
+): String {
+    val plain = ir.pixellab.core.text.Clusters.resetElongation(text, cluster)
+    val already = cluster.text.count { it == ir.pixellab.core.text.ArabicJoining.TATWEEL }
+    val wanted = (already + amount).coerceAtLeast(0)
+    if (wanted == 0) return plain
+    // Re-split, because removing the kashida moved every offset after this cluster.
+    val target = ir.pixellab.core.text.Clusters.of(plain)
+        .firstOrNull { it.start <= cluster.start && it.text.isNotBlank() && it.joined }
+        ?: return plain
+    return ir.pixellab.core.text.Clusters.elongate(plain, target, wanted)
+}
+
+/** The tool a dock entry arms. Chosen so the first canvas touch after a switch does the obvious. */
+private fun Dock.defaultTool(state: EditorState): Tool = when (this) {
+    Dock.PHOTO -> if (state.tool in PHOTO_TOOLS) state.tool else Tool.IMAGE
+    Dock.TEXT -> Tool.TEXT
+    Dock.DIMENSIONAL -> Tool.TEXT
+    Dock.LAYERS -> Tool.LAYERS
+    Dock.EXPORT -> state.tool
+}
+
+private val PHOTO_TOOLS = setOf(Tool.IMAGE, Tool.SELECT, Tool.RETOUCH, Tool.ADJUST, Tool.BRUSH)
+
+@Composable
+private fun DockButton(entry: Dock, active: Boolean, onClick: () -> Unit) {
+    Column(
+        Modifier
+            .width(DOCK_ENTRY)
+            .clip(Corners.card)
+            .clickable(onClick = onClick, onClickLabel = entry.label)
+            .padding(vertical = Space.small)
+            .semantics {
+                role = Role.Tab
+                selected = active
+            },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Space.tight),
+    ) {
+        Box(
+            Modifier
+                .size(width = DOCK_PILL, height = DOCK_PILL_HEIGHT)
+                .clip(Corners.chip)
+                .background(if (active) Ink.AccentSoft else Color.Transparent),
+            contentAlignment = Alignment.Center,
+        ) {
+            androidx.compose.material3.Icon(
+                entry.icon,
+                contentDescription = null,
+                tint = if (active) Ink.Accent else Ink.TextMuted,
+                modifier = Modifier.size(Frame.icon),
+            )
+        }
+        Text(
+            entry.label,
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            color = if (active) Ink.Accent else Ink.TextMuted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * The contextual bar — what to do next, given what is in front of you.
+ *
+ * ### What it was, and why that was not enough
+ *
+ * It offered the same six actions no matter what was selected — only «متن» was conditional — and it
+ * appeared **only when a layer was selected**. That left the two moments a beginner is most stuck
+ * showing nothing at all:
+ *
+ *   - a fresh document with an empty canvas, where the honest question is "how do I put something
+ *     here", and
+ *   - a live pixel selection with marching ants on screen, which is the single state where a
+ *     contextual bar earns its place, because *every* useful next step is a different panel.
+ *
+ * The deep Photoshop reading behind this session put its Contextual Task Bar at the top of what
+ * their interface gets right, and the reason is precisely this: it is not a toolbar, it is a
+ * **guess at the next step**, and a guess that is the same in every state is not a guess.
+ *
+ * ### The four states
+ *
+ * Ordered by how specific the answer is, most specific first. A pixel selection wins over a layer
+ * selection because you almost always have both and the marching ants are the thing you just made.
+ *
+ * The bar stays small on purpose — one row of icons on a pill over the artwork. This is the
+ * *opposite* of the panel that covered the canvas: it names the next step and gets out of the way,
+ * and the panel it opens is the thing that takes room.
+ */
+@Composable
+internal fun SelectionCard(
+    state: EditorState,
+    model: EditorViewModel,
+    onEditText: (LayerId) -> Unit,
+    onOpenTextStudio: (LayerId, TextSection) -> Unit = { _, _ -> },
+) {
+    val actions = LocalEditorActions.current
+    val id = state.selection.primary
+    val layer = state.selectedLayers.firstOrNull { it.id == id }
+
+    Row(
+        Modifier
+            .padding(horizontal = Space.large, vertical = Space.small)
+            .clip(Corners.chip)
+            .background(Ink.ChromeRaised)
+            .border(1.dp, Ink.Outline, Corners.chip)
+            .padding(horizontal = Space.small, vertical = Space.small),
+        horizontalArrangement = Arrangement.spacedBy(Space.tight),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        when {
+            // ---- a live pixel selection ----------------------------------------------------
+            //
+            // Marching ants on screen and, until now, nothing offered. Every entry here is a
+            // different destination, which is exactly what a contextual bar is for.
+            model.select.selection != null -> {
+                BarAction(Icons.Outlined.Tune, "اصلاح لبه") {
+                    model.act { openSheet(SheetContent.PixelSelection, SheetDetent.HALF) }
+                }
+                BarAction(Icons.Outlined.Flip, "معکوس") {
+                    model.select.invert(state.document.canvas.width, state.document.canvas.height)
+                }
+                // Only when there is a layer to put it on. A mask button that silently does
+                // nothing is worse than one that is not there.
+                if (id != null) {
+                    BarAction(Icons.Outlined.Layers, "ماسک") { model.maskFromSelection() }
+                }
+                BarAction(Icons.Outlined.Close, "لغو انتخاب") { model.select.clear() }
+            }
+
+            // ---- a text layer ---------------------------------------------------------------
+            id != null && layer is Layer.Text -> {
+                BarAction(Icons.Outlined.TextFields, "متن") { onEditText(id) }
+                BarAction(Icons.Outlined.FontDownload, "فونت") {
+                    model.act { openSheet(SheetContent.FontPicker, SheetDetent.FULL) }
+                }
+                BarAction(Icons.Outlined.AutoAwesome, "افکت") {
+                    onOpenTextStudio(id, TextSection.STROKE)
+                }
+                LayerActions(id, model)
+            }
+
+            // ---- a picture ------------------------------------------------------------------
+            id != null && layer is Layer.Image -> {
+                BarAction(Icons.Outlined.Tune, "تنظیم") {
+                    model.act { openSheet(SheetContent.Adjustments, SheetDetent.FULL) }
+                }
+                BarAction(Icons.Outlined.AutoFixHigh, "جدا کردن سوژه") {
+                    model.act { openSheet(SheetContent.PixelSelection, SheetDetent.HALF) }
+                }
+                BarAction(Icons.Outlined.AutoAwesome, "افکت") { addStarterStroke(id, model) }
+                LayerActions(id, model)
+            }
+
+            // ---- anything else that is selected ---------------------------------------------
+            id != null -> {
+                BarAction(Icons.Outlined.Tune, "لایه") {
+                    model.act { openSheet(SheetContent.LayerParameters(id), SheetDetent.FULL) }
+                }
+                BarAction(Icons.Outlined.AutoAwesome, "افکت") { addStarterStroke(id, model) }
+                LayerActions(id, model)
+            }
+
+            // ---- nothing selected -----------------------------------------------------------
+            //
+            // The state the old bar had no answer for, and the one a new user starts in. Two ways
+            // to put something on the canvas, and the way to a ready-made layout.
+            else -> {
+                BarAction(Icons.Outlined.Image, "افزودن عکس", onClick = actions.pickImage)
+                BarAction(Icons.Outlined.TextFields, "افزودن متن", onClick = actions.addText)
+                BarAction(Icons.Outlined.GridView, "قالب") {
+                    model.act { openSheet(SheetContent.LibraryPanel, SheetDetent.FULL) }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The four things that apply to any layer, in the order people reach for them.
+ *
+ * Shared rather than repeated in each branch: they were already identical across the old bar's one
+ * state, and three copies of «کپی · به جلو · حذف» is three chances for them to drift apart.
+ */
+@Composable
+private fun LayerActions(id: LayerId, model: EditorViewModel) {
+    BarAction(Icons.AutoMirrored.Outlined.AlignHorizontalLeft, "چیدمان") {
+        model.act { openSheet(SheetContent.Arrange, SheetDetent.HALF) }
+    }
+    BarAction(Icons.Outlined.ContentCopy, "کپی") {
+        // The id comes from the document rather than from a count: a count collides the first
+        // time a layer is deleted, and two layers with one id is an editor that loses work.
+        model.act { duplicateLayer(id, nextLayerId(id.value)) }
+    }
+    BarAction(Icons.Outlined.VerticalAlignTop, "به جلو") { model.act { bringToFront(id) } }
+    BarAction(Icons.Outlined.Delete, "حذف", tint = Ink.Danger) { model.act { deleteLayer(id) } }
+}
+
+/**
+ * A white stroke, because it is the effect people reach for first and it is immediately visible.
+ *
+ * The sheet that opens then has something to show. Opening an empty effect panel and asking someone
+ * to pick from fourteen kinds is the version where nothing happens on the first tap.
+ */
+private fun addStarterStroke(id: LayerId, model: EditorViewModel) {
+    model.act {
+        addEffect(id, Effect.Stroke(8f, Fill.Solid(ir.pixellab.core.model.Color.WHITE)))
+    }
+}
+
+/**
+ * The sheet's head: cancel, what this sheet is, and confirm — with a grip between them.
+ *
+ * **A tool is a transaction.** Every sheet here writes its change the moment a control moves, and
+ * until now the only way back was undo — so a user who opened a panel, moved four sliders and
+ * thought better of it had to press undo four times and count. Every one of the eight reference apps
+ * frames a tool as ✕ and ✓ with a live preview between them, and that framing is most of what makes
+ * them read as easy. It costs no algorithm at all.
+ *
+ * The title is not decoration either. A sheet that says what it is can be opened from anywhere —
+ * ribbon, quick action, another sheet — and still be read without working out how you got there.
+ *
+ * No divider under it. On a card already a step lighter than the ground, a line immediately below
+ * the grip is a third horizontal edge within twenty points of two others.
+ */
+@Composable
+private fun SheetHeader(state: EditorState, model: EditorViewModel) {
+    // A new sheet is a new transaction. Keyed on the content's *identity* rather than the content,
+    // so re-opening the same panel for a different layer starts again — but moving between the
+    // sections of one panel does not. Without that distinction, «انصراف» in the text studio would
+    // only undo back to the last section tap: set a shadow, glance at the colour section, and
+    // cancelling silently stops removing the shadow.
+    LaunchedEffect(state.sheet.content?.identity) { model.noteSheetOpened() }
+
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = Space.medium, vertical = Space.small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BarIcon(Icons.Outlined.Close, "انصراف", tint = Ink.TextMuted) { model.cancelSheet() }
+
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            SheetGrip(
+                Modifier.clickable {
+                    // Tapping the grip walks the detents, so the sheet can be grown without a drag.
+                    model.act {
+                        setSheetDetent(
+                            when (state.sheet.detent) {
+                                SheetDetent.PEEK -> SheetDetent.HALF
+                                SheetDetent.HALF -> SheetDetent.FULL
+                                else -> SheetDetent.PEEK
+                            },
+                        )
+                    }
+                },
+            )
+            state.sheet.content?.let { content ->
+                Text(
+                    sheetTitle(content),
+                    style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                    color = Ink.Text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        // Amber once there is something to keep, muted before that — so the tick reads as the
+        // outcome of the work rather than as a second, differently-shaped close button.
+        BarIcon(
+            Icons.Outlined.Check,
+            "تأیید",
+            tint = if (model.sheetHasChanges) Ink.Accent else Ink.TextMuted,
+        ) { model.confirmSheet() }
+    }
+}
+
+/** What each sheet calls itself. Read straight off the header, so it has to match the ribbon. */
+private fun sheetTitle(content: SheetContent): String = when (content) {
+    is SheetContent.EffectParameters -> "افکت"
+    is SheetContent.LayerParameters -> "لایه"
+    SheetContent.LayerList -> "لایه‌ها"
+    SheetContent.StyleLibrary -> "سبک"
+    SheetContent.FontPicker -> "فونت"
+    SheetContent.BrushSettings -> "قلم‌مو"
+    SheetContent.PixelSelection -> "انتخاب"
+    SheetContent.Adjustments -> "تنظیم"
+    SheetContent.Retouch -> "ترمیم"
+    SheetContent.Portrait -> "پرتره"
+    SheetContent.Vector -> "قلم و مسیر"
+    SheetContent.LibraryPanel -> "لوک"
+    SheetContent.Collage -> "کلاژ"
+    SheetContent.CanvasTools -> "بوم"
+    SheetContent.ShapeTools -> "شکل"
+    SheetContent.Arrange -> "چیدمان"
+    SheetContent.Guides -> "شبکه و راهنما"
+    SheetContent.Typography -> "تایپوگرافی"
+    SheetContent.Settings -> "تنظیمات"
+    SheetContent.Dimensional -> "صحنهٔ سه‌بعدی"
+    // Named after the section rather than the panel, because the panel is where the user already
+    // is: a header that said «کارگاه متن» through fourteen different screens would be the one piece
+    // of text on the page that never tells them anything.
+    is SheetContent.TextStudio -> "متن · ${content.section.persianLabel}"
+}
+
+/** How much of the chrome colour the top bar carries. The canvas stays faintly visible behind it. */
+private const val SCRIM = 0.92f
+
+/** 411dp ÷ 5 with the dock's own padding taken off. */
+private val DOCK_ENTRY = 72.dp
+private val DOCK_PILL = 48.dp
+private val DOCK_PILL_HEIGHT = 28.dp
+
+/** How much of the ribbon's edge the fade covers. Wide enough to read as a fade, not a border. */
+private val FADE = 28.dp
+
+/** History marks. Small: there can be two hundred of them and they are a strip, not a control. */
+private val MARK = 6.dp
+private val MARK_WIDE = 18.dp
+
+/**
+ * What the finger gets for one history step.
+ *
+ * The one control in the application that cannot have the full [Space.touch] on both axes: the
+ * count is unbounded — two hundred steps at 48dp is nine metres of scroller — so the strip takes
+ * WCAG 2.2's allowance for dense repeated controls instead. 2.5.8 AA asks 24dp *provided the
+ * targets do not encroach on one another*, which is why the row's gap is zero, and the full 48dp
+ * is still spent on the axis that is free.
+ *
+ * The honest statement of the remaining weakness: a row of unlabelled dots tells you where you are
+ * but not what each step *was*. Photoshop names them. Replacing this with a named list is a real
+ * improvement and a separate piece of work; making it hittable is not.
+ */
+private val MARK_TARGET = 24.dp
+
+/** What the picker accepts. Every still image; video is deliberately not part of this app. */
+internal const val IMAGE_MIME = "image/*"
+
+/**
+ * What a batch writes.
+ *
+ * PNG rather than the format the source happened to be in: a batch re-encodes, and re-encoding a
+ * JPEG loses a little every time, which over a folder someone runs twice is visible. The user who
+ * wants JPEG has the export dialog for the one picture they care about.
+ */
+private val IMAGE_EXPORT_FORMAT = ir.pixellab.core.codec.Format.PNG
+
+/**
+ * Everything, because a `.acv` has no registered MIME type.
+ *
+ * Filtering on one Android does not recognise hides the very files the picker was opened for, which
+ * looks to the user like the presets are not there at all. The reader checks the content instead,
+ * and refuses anything that is not a preset.
+ */
+private const val PRESET_MIME = "*/*"
+
+/**
+ * Renders a document to pixels on the GL thread.
+ *
+ * The bridge merging and rasterising need: both replace layers with a picture, and the picture can
+ * only come from the renderer that draws the canvas. Kept here rather than in the view model
+ * because it needs the view, and a view model that holds a view holds the whole activity with it.
+ */
+private suspend fun renderDocument(
+    handle: CanvasHandle,
+    document: ir.pixellab.core.model.Document,
+): ir.pixellab.core.codec.RasterImage? {
+    val surface = handle.surface ?: return null
+    val result: ir.pixellab.engine.android.ExportResult = suspendCoroutine { continuation ->
+        surface.export(document, ir.pixellab.core.codec.Format.PNG, 1f) { continuation.resume(it) }
+    }
+    val success = result as? ir.pixellab.engine.android.ExportResult.Success ?: return null
+    return runCatching { ir.pixellab.core.codec.Codecs.decode(success.bytes) }.getOrNull()
+}
+
+/**
+ * A deeper place inside the work panel.
+ *
+ * ### What this is, and what it stopped being
+ *
+ * These are the same twenty-one bodies the application has always had, and not one of them is
+ * rewritten. What changed is the frame: they used to be **modal sheets** that slid up over the
+ * artwork, and now they are the panel's own body one level down, with the five tabs still on screen
+ * beneath them.
+ *
+ * That is the whole of the theme's argument about sheets, and it is right. A sheet is for work with
+ * a *flow* — start it, answer three questions, it ends. Choosing an export format is that. Nudging
+ * a drop shadow is not: it is a loop between a control and a picture, run twenty times, and putting
+ * the control on top of the picture breaks the loop. Twenty-one panels were modal because the first
+ * one was, and each of the next twenty followed the shape rather than the argument.
+ *
+ * ### What is still a sheet
+ *
+ * `ExportSheet`, and nothing else in the editor. It has a flow, it ends, and it does not need to
+ * see the canvas — the two read-outs on it already say what the file will be.
+ *
+ * ### Why the cases are not deleted from `SheetContent`
+ *
+ * The type still names every panel, because naming them is what `Editor.revealSubject` uses to
+ * decide which part of the artwork to keep clear of the panel — the layer a panel is *about* is a
+ * fact worth having whether the panel is modal or docked. Deleting the cases would trade a
+ * well-named enum for a second one shaped identically.
+ */
+@Composable
+private fun DetailBody(
+    content: SheetContent,
+    state: EditorState,
+    model: EditorViewModel,
+    onPickImage: () -> Unit,
+    onPickPhotos: () -> Unit,
+    onImportPreset: () -> Unit,
+    onImportLut: () -> Unit,
+    render: suspend (ir.pixellab.core.model.Document) -> ir.pixellab.core.codec.RasterImage?,
+) {
+    when (content) {
+        is SheetContent.EffectParameters -> ParameterSheetBody(state, content, model, Modifier.fillMaxHeight())
+        is SheetContent.LayerList -> LayerPanel(state, model)
+        is SheetContent.FontPicker -> FontPickerBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.BrushSettings -> BrushSheetBody(model, Modifier.fillMaxHeight())
+        is SheetContent.PixelSelection -> SelectionSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Adjustments -> AdjustmentSheetBody(
+            state = state,
+            model = model,
+            onImportPreset = onImportPreset,
+            onImportLut = onImportLut,
+            render = render,
+            modifier = Modifier.fillMaxHeight(),
+        )
+        is SheetContent.Retouch -> RetouchSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Portrait -> PortraitSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Vector -> VectorSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.LibraryPanel -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.LayerParameters ->
+            LayerParametersSheetBody(state, content, model, Modifier.fillMaxHeight())
+        is SheetContent.TextStudio -> TextStudioBody(state, content, model, Modifier.fillMaxHeight())
+        is SheetContent.CanvasTools -> CanvasSheetBody(
+            state = state,
+            model = model,
+            onPickImage = onPickImage,
+            modifier = Modifier.fillMaxHeight(),
+        )
+        is SheetContent.Collage -> CollageSheetBody(
+            model = model,
+            onPickPhotos = onPickPhotos,
+            modifier = Modifier.fillMaxHeight(),
+        )
+        is SheetContent.ShapeTools -> ShapeSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Guides -> GuideSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Typography -> TypeSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Settings -> SettingsSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Dimensional -> DimensionalSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Arrange -> ArrangeSheetBody(
+            state = state,
+            model = model,
+            render = render,
+            modifier = Modifier.fillMaxHeight(),
+        )
+        SheetContent.StyleLibrary -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
+    }
+}
+
+/**
+ * How much canvas a detail may never take.
+ *
+ * The point of docking these is that the artwork stays visible while it is being changed, so a
+ * detent asking for eighty percent of a tall phone is asking for something this panel is not
+ * allowed to give. Two hundred is about the shortest band in which a 1080-square document is still
+ * a picture rather than a stripe.
+ */
+private val MIN_CANVAS = 200.dp
