@@ -806,6 +806,23 @@ private fun buildNumericStyle(mono: Boolean): TextStyle =
 val NumericStyle: TextStyle get() = Metrics.numeric
 
 /**
+ * The same tabular figures, laid out in the *paragraph's* direction.
+ *
+ * ### When to reach for this instead of [NumericStyle]
+ *
+ * [NumericStyle] forces left-to-right, which is right for a run that is *only* numbers and symbols
+ * — `1080 × 1920`, `72%`, `#D92633`. It is wrong the moment a Persian word joins the run: the
+ * bidi algorithm lays the whole forced-LTR paragraph out left to right, so «۲ لایه» renders as
+ * «لایه ۲» and «۸ از ۲۴» as «۸ ۸ از». Four read-outs shipped that way, and every one of them was
+ * only visible in a screenshot — the string is right, the composable is right, and only the painted
+ * frame is wrong.
+ *
+ * So: a value with a unit word attached goes here, and the digits inside it still line up because
+ * `tnum` is kept. A bare measurement stays on [NumericStyle].
+ */
+val MeasureStyle: TextStyle get() = Metrics.numeric.copy(textDirection = TextDirection.Content)
+
+/**
  * Renders digits the way the specification asks for each context.
  *
  * §۱۳.۳ is explicit and easy to get backwards: **numeric panels use Latin digits**, because they are

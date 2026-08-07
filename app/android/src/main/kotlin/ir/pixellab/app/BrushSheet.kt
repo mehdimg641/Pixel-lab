@@ -224,7 +224,7 @@ private fun CloneSource(model: EditorViewModel) {
 }
 
 @Composable
-private fun PresetRow(current: BrushPreset, onPick: (BrushPreset) -> Unit) {
+internal fun PresetRow(current: BrushPreset, onPick: (BrushPreset) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -289,7 +289,7 @@ private fun ColorRow(current: Color, onPick: (Color) -> Unit) {
 }
 
 @Composable
-private fun BrushSlider(
+internal fun BrushSlider(
     label: String,
     value: Float,
     range: ClosedFloatingPointRange<Float>,

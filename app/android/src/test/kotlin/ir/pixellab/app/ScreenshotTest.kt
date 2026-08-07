@@ -326,6 +326,92 @@ class ScreenshotTest {
     }
 
     @Test
+    fun `the four studio screens draw`() {
+        // The wave that moved these out of sheets is exactly the kind that can leave a screen which
+        // routes correctly and renders as a grey rectangle: they compose panels that were written
+        // for a sheet's proportions, inside a header-canvas-panel column that no sheet ever had.
+        // Only a picture shows that, and [capture]'s distinct-colour floor is what makes it fail
+        // rather than merely produce one.
+        val model = EditorViewModel(ApplicationProvider.getApplicationContext())
+            .also { it.autoSave.stop() }
+        val headline = ir.pixellab.core.model.LayerId("headline")
+        model.act {
+            addLayer(
+                ir.pixellab.core.model.Layer.Text(
+                    id = headline,
+                    spec = ir.pixellab.core.model.TextSpec(
+                        text = "سلام دنیا",
+                        font = ir.pixellab.core.model.FontRef("Vazirmatn"),
+                    ),
+                    name = "تیتر",
+                ),
+            )
+            select(headline)
+        }
+
+        var frame by mutableStateOf(0)
+        compose.setContent {
+            PixelLabTheme(skin = ThemeSkin.EMBER, dark = true) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Box(Modifier.fillMaxSize()) {
+                        when (frame) {
+                            0 -> TemplatesScreen(onNew = {}, onBack = {})
+                            1 -> BrushStudioScreen(model, onBack = {}, onPickImage = {})
+                            2 -> RetouchStudioScreen(model, onBack = {})
+                            else -> TextStudioScreen(model, layer = headline, onDone = {})
+                        }
+                    }
+                }
+            }
+        }
+
+        for ((index, name) in STUDIOS.withIndex()) {
+            frame = index
+            capture(name)
+        }
+    }
+
+    @Test
+    fun `the text studio's section strip takes three shapes`() {
+        // The last of the brief's three-way splits: pill chips on Ember, a block of square tabs on
+        // Console, and the same pills on Iris's translucent plate with no rule under them. Three
+        // pictures because "the strip changed" is not something a colour assertion can see.
+        val model = EditorViewModel(ApplicationProvider.getApplicationContext())
+            .also { it.autoSave.stop() }
+        val headline = ir.pixellab.core.model.LayerId("headline")
+        model.act {
+            addLayer(
+                ir.pixellab.core.model.Layer.Text(
+                    id = headline,
+                    spec = ir.pixellab.core.model.TextSpec(
+                        text = "سلام دنیا",
+                        font = ir.pixellab.core.model.FontRef("Vazirmatn"),
+                    ),
+                    name = "تیتر",
+                ),
+            )
+            select(headline)
+        }
+
+        val frames = listOf(ThemeSkin.EMBER, ThemeSkin.IRIS, ThemeSkin.CONSOLE)
+        var frame by mutableStateOf(0)
+        compose.setContent {
+            PixelLabTheme(skin = frames[frame], dark = true) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Box(Modifier.fillMaxSize()) {
+                        TextStudioScreen(model, layer = headline, onDone = {})
+                    }
+                }
+            }
+        }
+
+        for ((index, skin) in frames.withIndex()) {
+            frame = index
+            capture("text-studio-${skin.name.lowercase()}")
+        }
+    }
+
+    @Test
     fun `the light theme draws`() {
         // The specification calls the light theme optional, which is exactly why it needs a picture:
         // an optional theme is the one that quietly stops being legible, and the failure is always
@@ -451,6 +537,9 @@ class ScreenshotTest {
     }
 
     private companion object {
+        /** In the order the frames are swapped above. */
+        val STUDIOS = listOf("templates", "brush-studio", "retouch-studio", "text-studio")
+
         /**
          * Enough distinct colours that something was genuinely drawn.
          *

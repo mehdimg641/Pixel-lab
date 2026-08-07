@@ -79,6 +79,15 @@ fun HomeScreen(
     onOpen: (File) -> Unit,
     onQuickAction: (QuickAction) -> Unit,
     onSettings: () -> Unit,
+    /**
+     * The way to the full library.
+     *
+     * This page shows the sizes because the first decision anybody makes is how big, but it shows
+     * them inside a page that also carries the jobs and the recent work — so the print sizes, which
+     * are the ones somebody goes looking for on purpose, are the ones below the fold. A page of
+     * their own is where browsing belongs. Defaulted so the screen still composes alone.
+     */
+    onAllTemplates: () -> Unit = {},
 ) {
     // Read here rather than inside the list: a lazy item's body is not a composable context, so
     // asking for the direction down there does not compile — and the layout choice belongs to the
@@ -107,7 +116,11 @@ fun HomeScreen(
         // application landed on a document nobody had chosen the shape of.
         item { SectionHeader("اندازه را انتخاب کنید") }
         item {
-            TemplateCategories(chosen = category, onPick = { category = it })
+            TemplateCategories(
+                chosen = category,
+                onPick = { category = it },
+                onAll = onAllTemplates,
+            )
         }
         templateSection(layout, visibleTemplates, onNew)
         item { SectionHeader("یا از این‌ها شروع کنید") }
@@ -361,7 +374,16 @@ enum class QuickAction(val icon: ImageVector, val label: String, val panelTab: P
  * recognise, and it is why the dimensions can stay small and grey underneath rather than competing.
  */
 @Composable
-private fun TemplateCategories(chosen: String, onPick: (String) -> Unit) {
+internal fun TemplateCategories(
+    chosen: String,
+    onPick: (String) -> Unit,
+    /**
+     * Null on the templates page itself, where there is nowhere further to go. The chip is the last
+     * entry rather than the first because the row's job is filtering, and a chip that navigates
+     * away sitting where «همه» belongs would be pressed by mistake by everybody.
+     */
+    onAll: (() -> Unit)? = null,
+) {
     // «همه» first, then the groups in the order the library declares them — alphabetical would put
     // «چاپ» before «شبکهٔ اجتماعی», and the social sizes are what nine users in ten came for.
     val groups = remember { listOf(ALL_TEMPLATES) + Library.templates.map { it.group }.distinct() }
@@ -369,6 +391,7 @@ private fun TemplateCategories(chosen: String, onPick: (String) -> Unit) {
         for (group in groups) {
             SheetChip(group, chosen = group == chosen) { onPick(group) }
         }
+        onAll?.let { SheetChip("همهٔ قالب‌ها", onClick = it) }
     }
 }
 
@@ -382,7 +405,7 @@ private fun TemplateCategories(chosen: String, onPick: (String) -> Unit) {
  * The blank canvas leads in every shape. It is the one entry that requires no decision, and putting
  * it after eight named sizes makes «I just want to start» the ninth-easiest thing to do.
  */
-private fun LazyListScope.templateSection(
+internal fun LazyListScope.templateSection(
     layout: PanelLayout,
     templates: List<TemplatePreset>,
     onNew: (TemplatePreset) -> Unit,
@@ -505,7 +528,7 @@ private fun TemplateRow(template: TemplatePreset, blank: Boolean, onNew: () -> U
 }
 
 /** The chip that means "no filter". Not a group name, so it cannot collide with one. */
-private const val ALL_TEMPLATES = "همه"
+internal const val ALL_TEMPLATES = "همه"
 
 private val TALL_TILE = 156.dp
 private val SHORT_TILE = 112.dp

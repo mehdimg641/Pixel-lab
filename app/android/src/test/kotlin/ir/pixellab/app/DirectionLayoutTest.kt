@@ -11,7 +11,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
@@ -50,7 +53,10 @@ import org.robolectric.annotation.Config
  * TalkBack.
  */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34], qualifiers = "fa")
+// A real phone's dimensions, not Robolectric's 320×470 default. Half of what this file asserts is
+// about what fits on a screen — a tool rail beside a canvas, fourteen tabs laid out at once — and
+// on a screen narrower than any phone shipped this decade, the answer is "nothing does".
+@Config(sdk = [34], qualifiers = "fa-w411dp-h891dp-xhdpi")
 class DirectionLayoutTest {
 
     @get:Rule
@@ -181,6 +187,54 @@ class DirectionLayoutTest {
                 )
             }
             assertTrue("خروجی is missing from ${direction.persianLabel}", texts("خروجی") > 0)
+        }
+    }
+
+    @Test
+    fun `the text studio's section strip takes a different shape in each direction`() {
+        // The brief's last three-way split, and the one most likely to be quietly lost: the strip
+        // is one composable with a branch in it, so a refactor that drops the branch leaves three
+        // directions looking identical and nothing failing.
+        //
+        // Asserted on what the shape *does* rather than on how it is drawn: Console's block lays
+        // every one of the fourteen sections out at once, and the scrolling strip the other three
+        // use puts most of them past the edge of the screen. «پیشرفته» is the last of the fourteen.
+        //
+        // On *displayed* rather than on present. A `horizontalScroll` is not lazy, so all fourteen
+        // are in the semantics tree either way — the difference is whether they are on the screen,
+        // which is also the difference a person experiences.
+        val model = EditorViewModel(ApplicationProvider.getApplicationContext())
+            .also { it.autoSave.stop() }
+        val headline = ir.pixellab.core.model.LayerId("headline")
+        model.act {
+            addLayer(
+                ir.pixellab.core.model.Layer.Text(
+                    id = headline,
+                    spec = ir.pixellab.core.model.TextSpec(
+                        text = "سلام",
+                        font = ir.pixellab.core.model.FontRef("Vazirmatn"),
+                    ),
+                    name = "تیتر",
+                ),
+            )
+            select(headline)
+        }
+        compose.setContent {
+            PixelLabTheme(skin = skin, dark = true) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Box(Modifier.fillMaxSize()) {
+                        TextStudioScreen(model, layer = headline, onDone = {})
+                    }
+                }
+            }
+        }
+
+        show(ThemeSkin.CONSOLE)
+        compose.onNodeWithText("پیشرفته").assertIsDisplayed()
+
+        for (direction in listOf(ThemeSkin.EMBER, ThemeSkin.IRIS, ThemeSkin.EMBER_FA)) {
+            show(direction)
+            compose.onNodeWithText("پیشرفته").assertIsNotDisplayed()
         }
     }
 

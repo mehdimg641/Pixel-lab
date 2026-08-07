@@ -81,6 +81,15 @@ fun TextStudioBody(
     content: SheetContent.TextStudio,
     model: EditorViewModel,
     modifier: Modifier = Modifier,
+    /**
+     * Where the chosen section is remembered.
+     *
+     * Null means "in the sheet", which is where it has always lived — the strip reopens the sheet
+     * at the new section and the sheet's own state carries it. `TextStudioScreen` passes its own,
+     * because a screen has no sheet to hold anything and reopening one from a screen would put a
+     * panel over the canvas the screen exists to keep visible.
+     */
+    onPickSection: ((TextSection) -> Unit)? = null,
 ) {
     val layer = state.document.findLayer(content.layer) as? Layer.Text
     if (layer == null) {
@@ -99,7 +108,11 @@ fun TextStudioBody(
 
     Column(modifier.fillMaxWidth()) {
         SectionStrip(content.section) { section ->
-            model.act { openSheet(SheetContent.TextStudio(content.layer, section), SheetDetent.FULL) }
+            if (onPickSection != null) {
+                onPickSection(section)
+            } else {
+                model.act { openSheet(SheetContent.TextStudio(content.layer, section), SheetDetent.FULL) }
+            }
         }
         if (content.section.aimable) TargetBar(state, layer, model)
 
@@ -175,13 +188,20 @@ private fun SectionStrip(current: TextSection, onPick: (TextSection) -> Unit) {
         return
     }
 
+    // Iris's third shape, and the last of the three the brief asks for: «glass card over canvas, no
+    // divider». The strip sits on the same translucent plate its floating panel uses rather than on
+    // a raised surface with a rule under it, so the artwork keeps running behind the chrome instead
+    // of stopping at it. Ember and «امبر — فارسی» keep the raised bar with the hairline.
+    val floating = Metrics.layout == PanelLayout.FLOATING
+    val plate = if (floating) Ink.Chrome.copy(alpha = 0.94f) else Ink.ChromeRaised
+
     val scroll = rememberScrollState()
     Row(
         Modifier
             .fillMaxWidth()
             .height(Frame.ribbon)
-            .background(Ink.ChromeRaised)
-            .edgeFade(scroll, Ink.ChromeRaised)
+            .background(plate)
+            .edgeFade(scroll, plate)
             .horizontalScroll(scroll)
             .padding(horizontal = Space.small),
         horizontalArrangement = Arrangement.spacedBy(Space.small),

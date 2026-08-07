@@ -142,6 +142,18 @@ fun EditorScreen(
     entry: QuickAction? = null,
     onEntryHandled: () -> Unit = {},
     onHome: (() -> Unit)? = null,
+    /**
+     * The way out to one of the studios.
+     *
+     * Three parameters rather than three callbacks because only one destination carries anything —
+     * the text studio needs to know *which* headline and, when the caller has an opinion, which
+     * section to open on. A separate `onOpenTextStudio` beside a general `onNavigate` would leave
+     * two ways to reach the same screen, and the second one always ends up wired differently.
+     *
+     * Defaulted to a no-op so the editor still composes on its own, which is what every screenshot
+     * and layout test does.
+     */
+    onNavigate: (Destination, LayerId?, TextSection?) -> Unit = { _, _, _ -> },
 ) {
     val state = model.state
     val bounds = model.bounds
@@ -167,7 +179,7 @@ fun EditorScreen(
      * empty canvas and then asking for a photo is the order that makes a quick action feel like a
      * detour; this way the picker comes first and the tool is waiting when the image arrives.
      */
-    var afterImport by remember { mutableStateOf<SheetContent?>(null) }
+    var afterImport by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     // Registered once for the screen rather than inside the sheet: a launcher created inside a
     // conditionally composed subtree is unregistered the moment that subtree leaves, and the result
@@ -180,7 +192,7 @@ fun EditorScreen(
                 loadImage(context, uri)
                     .onSuccess { (image, name) ->
                         model.placeImage(image, name)
-                        if (pending != null) model.act { openSheet(pending, SheetDetent.FULL) }
+                        pending?.invoke()
                     }
                     .onFailure { outcome = FileOutcome.Refused(it.message ?: "تصویر خوانده نشد") }
             }
@@ -279,28 +291,32 @@ fun EditorScreen(
                 setTool(Tool.TEXT)
                 openSheet(SheetContent.FontPicker, SheetDetent.FULL)
             }
+            // Straight into the studio: painting needs no photograph — a paint layer is made on
+            // the spot — so there is nothing to wait for.
             QuickAction.PAINT -> {
                 if (model.state.primaryLayer !is Layer.Image) model.addPaintLayer()
-                model.act {
-                    setTool(Tool.BRUSH)
-                    openSheet(SheetContent.BrushSettings, SheetDetent.HALF)
-                }
+                model.act { setTool(Tool.BRUSH) }
+                onNavigate(Destination.BRUSH, null, null)
             }
             QuickAction.EFFECTS -> model.act {
                 setTool(Tool.ADJUST)
                 openSheet(SheetContent.Adjustments, SheetDetent.FULL)
             }
-            // The three that need a photograph first. The tool is remembered and opens on arrival.
+            // The three that need a photograph first, and this is the whole reason the
+            // continuation is a *function* rather than a sheet to open: two of them still land on a
+            // panel and the third now lands on a different screen. "Remove the background" needs a
+            // background to remove, so the picker comes first and the destination is waiting when
+            // the picture arrives.
             QuickAction.PHOTO -> {
-                afterImport = SheetContent.CanvasTools
+                afterImport = { model.act { openSheet(SheetContent.CanvasTools, SheetDetent.FULL) } }
                 picking.launch(IMAGE_MIME)
             }
             QuickAction.CUTOUT -> {
-                afterImport = SheetContent.PixelSelection
+                afterImport = { model.act { openSheet(SheetContent.PixelSelection, SheetDetent.FULL) } }
                 picking.launch(IMAGE_MIME)
             }
             QuickAction.RETOUCH -> {
-                afterImport = SheetContent.Retouch
+                afterImport = { onNavigate(Destination.RETOUCH, null, null) }
                 picking.launch(IMAGE_MIME)
             }
         }
@@ -349,6 +365,7 @@ fun EditorScreen(
                     onSave = { scope.launch { outcome = saveProject(context, model.currentProject()) } },
                     onOpen = { opening = Storage.listProjects(context) },
                     onPickImage = { picking.launch(IMAGE_MIME) },
+                    onOpenRetouch = { onNavigate(Destination.RETOUCH, null, null) },
                 )
             }
 
@@ -434,7 +451,14 @@ fun EditorScreen(
                             enter = slideInVertically(tween(Motion.STANDARD, easing = Motion.ease)) { it },
                             exit = slideOutVertically(tween(Motion.STANDARD, easing = Motion.ease)) { it },
                         ) {
-                            SelectionCard(state, model, onEditText = { editingText = it })
+                            SelectionCard(
+                                state,
+                                model,
+                                onEditText = { editingText = it },
+                                onOpenTextStudio = { id, section ->
+                                    onNavigate(Destination.TEXT_STUDIO, id, section)
+                                },
+                            )
                         }
                         val editing = state.primaryLayer as? Layer.Text
                         if (editing != null && tab == PanelTab.TEXT && !state.sheet.isOpen) {
@@ -458,9 +482,11 @@ fun EditorScreen(
                 state = state,
                 model = model,
                 height = (screenHeight * skin.panelFraction).coerceIn(skin.panelMin, skin.panelMax),
-                onOpenTextStudio = { id ->
-                    model.act { openSheet(SheetContent.TextStudio(id), SheetDetent.FULL) }
-                },
+                // The studio is a screen now. It used to be a sheet over the canvas it was
+                // setting type against, which is the one thing a type studio must not be.
+                onOpenTextStudio = { id -> onNavigate(Destination.TEXT_STUDIO, id, null) },
+                onOpenRetouch = { onNavigate(Destination.RETOUCH, null, null) },
+                onOpenBrush = { onNavigate(Destination.BRUSH, null, null) },
                 onImportPreset = { pickingPreset.launch(PRESET_MIME) },
                 onImportLut = { pickingLut.launch(PRESET_MIME) },
                 render = { document -> renderDocument(handle, document) },
@@ -749,6 +775,7 @@ private fun MenuBar(
     onSave: () -> Unit,
     onOpen: () -> Unit,
     onPickImage: () -> Unit,
+    onOpenRetouch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxWidth().background(Ink.ChromeRaised)) {
@@ -797,8 +824,8 @@ private fun MenuBar(
             }
             Menu("هوش") { close ->
                 MenuEntry("جدا کردن سوژه") { close(); model.act { openSheet(SheetContent.PixelSelection, SheetDetent.HALF) } }
-                MenuEntry("پرتره") { close(); model.act { openSheet(SheetContent.Portrait, SheetDetent.FULL) } }
-                MenuEntry("ترمیم") { close(); model.act { openSheet(SheetContent.Retouch, SheetDetent.FULL) } }
+                MenuEntry("پرتره") { close(); onOpenRetouch() }
+                MenuEntry("ترمیم") { close(); onOpenRetouch() }
             }
 
             Spacer(Modifier.weight(1f))
@@ -808,14 +835,14 @@ private fun MenuBar(
             // is the moment after an edit landed.
             val heap = remember(state.document) { usedHeapMegabytes() }
             Text(
-                "${Digits.technical(heap)}م‌ب",
-                style = NumericStyle,
+                "${Digits.technical(heap)} م‌ب",
+                style = MeasureStyle,
                 color = Ink.TextMuted,
                 maxLines = 1,
             )
             Text(
-                "${megapixels(state.document.canvas.width, state.document.canvas.height)}مپ",
-                style = NumericStyle,
+                "${megapixels(state.document.canvas.width, state.document.canvas.height)} مپ",
+                style = MeasureStyle,
                 color = Ink.Accent,
                 maxLines = 1,
             )
@@ -1140,7 +1167,7 @@ private fun LayerInspector(state: EditorState, model: EditorViewModel, modifier:
             // copy of it here is one more thing to read and one more place to disagree.
             Text(
                 "${Digits.technical(layers.size)} لایه",
-                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                style = MeasureStyle,
                 color = Ink.TextMuted,
                 maxLines = 1,
             )
@@ -1293,6 +1320,8 @@ private fun WorkPanel(
     model: EditorViewModel,
     height: androidx.compose.ui.unit.Dp,
     onOpenTextStudio: (LayerId) -> Unit,
+    onOpenRetouch: () -> Unit,
+    onOpenBrush: () -> Unit,
     onImportPreset: () -> Unit,
     onImportLut: () -> Unit,
     render: suspend (ir.pixellab.core.model.Document) -> ir.pixellab.core.codec.RasterImage?,
@@ -1324,6 +1353,8 @@ private fun WorkPanel(
             state = state,
             model = model,
             onOpenTextStudio = onOpenTextStudio,
+            onOpenRetouch = onOpenRetouch,
+            onOpenBrush = onOpenBrush,
             onImportPreset = onImportPreset,
             onImportLut = onImportLut,
             render = render,
@@ -1822,7 +1853,12 @@ private fun DockButton(entry: Dock, active: Boolean, onClick: () -> Unit) {
  * and the panel it opens is the thing that takes room.
  */
 @Composable
-internal fun SelectionCard(state: EditorState, model: EditorViewModel, onEditText: (LayerId) -> Unit) {
+internal fun SelectionCard(
+    state: EditorState,
+    model: EditorViewModel,
+    onEditText: (LayerId) -> Unit,
+    onOpenTextStudio: (LayerId, TextSection) -> Unit = { _, _ -> },
+) {
     val actions = LocalEditorActions.current
     val id = state.selection.primary
     val layer = state.selectedLayers.firstOrNull { it.id == id }
@@ -1864,7 +1900,7 @@ internal fun SelectionCard(state: EditorState, model: EditorViewModel, onEditTex
                     model.act { openSheet(SheetContent.FontPicker, SheetDetent.FULL) }
                 }
                 BarAction(Icons.Outlined.AutoAwesome, "افکت") {
-                    model.act { openSheet(SheetContent.TextStudio(id, TextSection.STROKE), SheetDetent.FULL) }
+                    onOpenTextStudio(id, TextSection.STROKE)
                 }
                 LayerActions(id, model)
             }
@@ -2062,7 +2098,7 @@ private val MARK_WIDE = 18.dp
 private val MARK_TARGET = 24.dp
 
 /** What the picker accepts. Every still image; video is deliberately not part of this app. */
-private const val IMAGE_MIME = "image/*"
+internal const val IMAGE_MIME = "image/*"
 
 /**
  * What a batch writes.

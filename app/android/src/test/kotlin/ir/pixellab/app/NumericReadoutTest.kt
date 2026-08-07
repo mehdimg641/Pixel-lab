@@ -66,6 +66,35 @@ class NumericReadoutTest {
     }
 
     @Test
+    fun `a read-out with a unit word is laid out in the paragraph direction`() {
+        // The other half of the same bug, found the same way — in a screenshot.
+        //
+        // Forcing left-to-right is right for a run that is *only* numbers and symbols. It is wrong
+        // the moment a Persian word joins the run, because the whole forced-LTR paragraph is then
+        // laid out left to right: «۲ لایه» painted as «لایه ۲», «۸ از ۲۴» as «۸ ۲۴ از», and the
+        // console menu bar's «۱۸۷ م‌ب» as «م‌ب ۱۸۷». Four read-outs shipped that way.
+        //
+        // `Content` rather than `Rtl`: the direction should follow the text, so a value that
+        // happens to be all Latin still reads correctly.
+        assertEquals(
+            "MeasureStyle forces a direction again. It exists precisely because NumericStyle's " +
+                "forced Ltr reverses any read-out that carries a Persian unit word.",
+            TextDirection.Content,
+            MeasureStyle.textDirection,
+        )
+    }
+
+    @Test
+    fun `the two read-out styles differ only in direction`() {
+        // If they drift apart on anything else, the two halves of one read-out — «۱۰۸۰ × ۱۰۸۰» on
+        // one style and «۲ لایه» on the other, side by side in the same header — stop matching.
+        assertEquals(NumericStyle.fontFeatureSettings, MeasureStyle.fontFeatureSettings)
+        assertEquals(NumericStyle.fontSize, MeasureStyle.fontSize)
+        assertEquals(NumericStyle.fontFamily, MeasureStyle.fontFamily)
+        assertEquals(NumericStyle.fontWeight, MeasureStyle.fontWeight)
+    }
+
+    @Test
     fun `the read-out style keeps its tabular figures`() {
         // The other half of why this style exists, and the half a `copy()` is most likely to drop:
         // a proportional `1` is narrower than a `0`, so a value that counts while a slider moves

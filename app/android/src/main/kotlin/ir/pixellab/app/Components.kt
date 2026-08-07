@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -610,3 +612,79 @@ fun Modifier.edgeFade(scroll: ScrollState, background: Color): Modifier = drawWi
 
 /** Wide enough to read as a fade rather than as an edge artefact, narrow enough to hide nothing. */
 private val EDGE_FADE = 28.dp
+
+/**
+ * The header the three studios share.
+ *
+ * ### Why a studio has a header and the editor's is different
+ *
+ * A studio is somewhere you *went*, and the first question in one is "how do I get back". So it
+ * leads with the way out, names where you are, and ends with whatever this particular studio needs
+ * — a reset, a done button, a count. The editor's header is a different job: it names the *file*
+ * and carries undo, redo and export, none of which belong in a room you stepped into for one task.
+ *
+ * Forty-eight rather than the brief's forty-eight pixels, for the reason the tool rail is 48dp
+ * wide: the mock-up is a browser at desktop density and the back button has to be a target a thumb
+ * can hit. The row is the height of one touch minimum and no more.
+ *
+ * @param trailing whatever this studio puts at the end. Given as a slot rather than as three
+ *   optional parameters, because the three studios end their headers with three different kinds of
+ *   thing and a parameter list that covers all of them describes none of them.
+ */
+@Composable
+fun StudioHeader(
+    title: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    trailing: @Composable () -> Unit = {},
+) {
+    Column(modifier.fillMaxWidth().background(Ink.Chrome)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = STUDIO_HEADER)
+                .padding(horizontal = Space.small),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Space.small),
+        ) {
+            // Auto-mirrored, so it resolves to the right-pointing arrow that means "back" in a
+            // right-to-left interface.
+            BarIcon(Icons.AutoMirrored.Outlined.ArrowBack, "بازگشت", onClick = onBack)
+            Text(
+                title,
+                style = MaterialTheme.typography.labelLarge,
+                color = Ink.Text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            trailing()
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Ink.Divider))
+    }
+}
+
+private val STUDIO_HEADER = 48.dp
+
+/**
+ * A filled accent button with a word in it. The shape «تمام» and «خروجی» share.
+ *
+ * Its own composable rather than a copy in each studio, because the accent button is the loudest
+ * control on any screen that has one and three copies of it is three chances for them to drift into
+ * three different heights.
+ */
+@Composable
+fun AccentButton(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier
+            .heightIn(min = Space.touch)
+            .clip(Corners.button)
+            .background(Ink.Accent)
+            .clickable(onClick = onClick, onClickLabel = label)
+            .padding(horizontal = Space.medium)
+            .semantics { role = Role.Button },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = Ink.OnAccent, maxLines = 1)
+    }
+}

@@ -136,6 +136,8 @@ fun PanelBody(
     state: EditorState,
     model: EditorViewModel,
     onOpenTextStudio: (ir.pixellab.core.model.LayerId) -> Unit,
+    onOpenRetouch: () -> Unit,
+    onOpenBrush: () -> Unit,
     onImportPreset: () -> Unit,
     onImportLut: () -> Unit,
     render: suspend (ir.pixellab.core.model.Document) -> ir.pixellab.core.codec.RasterImage?,
@@ -152,7 +154,7 @@ fun PanelBody(
                 render = render,
             )
             PanelTab.FILTERS -> LibrarySheetBody(state, model)
-            PanelTab.AI -> AiTab(state, model)
+            PanelTab.AI -> AiTab(state, model, onOpenRetouch, onOpenBrush)
             PanelTab.TEXT -> TextTab(state, model, onOpenTextStudio)
         }
     }
@@ -266,7 +268,12 @@ private fun PanelIcon(
  * whether it leaves the device. It does not.
  */
 @Composable
-private fun AiTab(state: EditorState, model: EditorViewModel) {
+private fun AiTab(
+    state: EditorState,
+    model: EditorViewModel,
+    onOpenRetouch: () -> Unit,
+    onOpenBrush: () -> Unit,
+) {
     val actions = LocalEditorActions.current
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         Row(
@@ -284,13 +291,21 @@ private fun AiTab(state: EditorState, model: EditorViewModel) {
             AiTile(Icons.Outlined.Image, "جدا کردن سوژه", Modifier.weight(1f)) {
                 model.act { openSheet(SheetContent.PixelSelection, SheetDetent.HALF) }
             }
-            AiTile(Icons.Outlined.Face, "پرتره", Modifier.weight(1f)) {
-                model.act { openSheet(SheetContent.Portrait, SheetDetent.FULL) }
-            }
-            AiTile(Icons.Outlined.AutoFixHigh, "ترمیم", Modifier.weight(1f)) {
-                model.act { openSheet(SheetContent.Retouch, SheetDetent.FULL) }
-            }
+            // Both open the retouch studio, on its two halves. They are separate tiles because
+            // they answer separate questions — «this photograph has a face in it» and «this one
+            // does not» — and the studio's own tabs are where that split lives.
+            AiTile(Icons.Outlined.Face, "پرتره", Modifier.weight(1f), onClick = onOpenRetouch)
+            AiTile(Icons.Outlined.AutoFixHigh, "ترمیم", Modifier.weight(1f), onClick = onOpenRetouch)
             AiTile(Icons.Outlined.ZoomOutMap, "افزودن عکس", Modifier.weight(1f), onClick = actions.pickImage)
+        }
+        // The brush is not an AI tool and does not belong in that grid. It is here because this is
+        // the tab a hand is already in when it wants one, and because the studio it opens had no
+        // entry point at all outside Console's rail.
+        SheetChips {
+            SheetChip("استودیو قلم") {
+                if (state.primaryLayer !is Layer.Image) model.addPaintLayer()
+                onOpenBrush()
+            }
         }
         SheetHint("همه روی همین گوشی اجرا می‌شود — هیچ عکسی جایی فرستاده نمی‌شود")
         if (!state.hasSelection) SheetHint("برای بیشترشان اول یک لایه انتخاب کنید")
