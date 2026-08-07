@@ -198,18 +198,49 @@ private const val REGULAR = 400
  * Loaded from the file the catalogue already found, so the preview and the canvas are reading the
  * *same bytes* — a face that fails to parse for the rasteriser cannot silently succeed here.
  *
- * `remember`ed on the path because building a family opens and maps the file: doing that on every
- * recomposition of a scrolling list is a stutter per row.
+ * Cached across the whole list rather than per row, which is the difference between seven fonts and
+ * a hundred. `remember(path)` inside a `LazyColumn` item is scoped to that item: it is discarded the
+ * moment the row scrolls off and rebuilt when it scrolls back, so every fling re-opens and re-maps
+ * dozens of font files. Invisible at seven. Not at a hundred.
+ *
+ * The rasteriser has had exactly this for a while — `TypefaceLoader`, sixty-four entries keyed on
+ * path plus axes. This is a second cache rather than a share of that one, because the two hand back
+ * different things: an `android.graphics.Typeface` for shaping, a Compose `FontFamily` for a
+ * preview.
  */
-@Composable
-private fun previewFamily(face: Typeface): FontFamily? {
-    val path = previewFile(face)?.path ?: return null
-    return remember(path) {
+private object PreviewFamilies {
+
+    /** Access-ordered, so a fling evicts the rows nobody came back to. */
+    private val cache = object : LinkedHashMap<String, FontFamily?>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FontFamily?>?): Boolean =
+            size > LIMIT
+    }
+
+    fun of(path: String): FontFamily? {
+        // `containsKey`, not a null check: a face that failed to load caches its failure, or every
+        // scroll past a broken file retries it.
+        if (cache.containsKey(path)) return cache[path]
         // A font that parsed during the scan can still fail to load here — the file can be deleted
         // between the scan and the draw, and a throw during composition takes the whole picker down
         // rather than one row of it.
-        runCatching { Font(File(path)).toFontFamily() }.getOrNull()
+        val family = runCatching { Font(File(path)).toFontFamily() }.getOrNull()
+        cache[path] = family
+        return family
     }
+
+    /**
+     * Enough to hold a screen and the flings either side of it.
+     *
+     * A row is about 64dp, so a tall phone shows a dozen; ninety-six covers several screens of
+     * scrolling in both directions without pinning a hundred mapped files in memory at once.
+     */
+    private const val LIMIT = 96
+}
+
+@Composable
+private fun previewFamily(face: Typeface): FontFamily? {
+    val path = previewFile(face)?.path ?: return null
+    return remember(path) { PreviewFamilies.of(path) }
 }
 
 /**

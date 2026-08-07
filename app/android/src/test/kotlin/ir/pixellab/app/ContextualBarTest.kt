@@ -53,9 +53,11 @@ class ContextualBarTest {
 
     private fun editor(): EditorViewModel =
         EditorViewModel(ApplicationProvider.getApplicationContext()).also {
-            // The recovery timer schedules a delay on the main looper that never comes due, and
-            // Compose's idling check waits on that queue.
-            it.autoSave.stop()
+            // The recovery timer schedules a delay on the main looper that never comes due, and the
+            // startup coroutine scans the font library off-thread and resumes on Main.
+            // Compose's idling check waits on both queues; neither is anything this test
+            // measures.
+            it.stopBackgroundWork()
         }
 
     private fun show(model: EditorViewModel) {

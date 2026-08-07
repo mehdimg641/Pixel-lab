@@ -35,7 +35,7 @@ class TextStudioTest {
 
     private fun model(): Pair<EditorViewModel, LayerId> {
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
-        model.autoSave.stop()
+        model.stopBackgroundWork()
         // Built directly: `addTextLayer` needs a scanned font catalogue and this environment has
         // none, so going through it would leave every assertion below vacuously true.
         val id = LayerId("headline")

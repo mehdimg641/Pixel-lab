@@ -1,5 +1,6 @@
 package ir.pixellab.app
 
+import android.os.Looper
 import ir.pixellab.core.fonts.Script
 import ir.pixellab.engine.android.FontLibrary
 import io.kotest.matchers.collections.shouldNotBeEmpty
@@ -9,6 +10,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import org.robolectric.RuntimeEnvironment
 import java.io.File
@@ -65,6 +67,60 @@ class BundledFontsTest {
     }
 
     @Test
+    fun `the library is large enough to be worth calling a library`() {
+        // A floor, not an exact count — the manifest will grow and a test that pins the number
+        // would fail on every addition without anything being wrong. Eighty is well under the
+        // hundred-odd shipped and well over the seven this started as, so it fails on a broken
+        // fetch and on nothing else.
+        val catalog = seedAndScan()
+
+        (catalog.typefaces.size >= 80) shouldBe true
+    }
+
+    @Test
+    fun `every bundled file parses`() {
+        // `FontLibrary.failed` names anything that reached disk and would not parse. With a
+        // hundred-odd files fetched over the network, a truncated download is a real possibility
+        // and it would otherwise show up as one face quietly missing from the picker.
+        val context = RuntimeEnvironment.getApplication()
+        FontStore.seedBundled(context, context.assets)
+        val library = FontLibrary(listOf(FontStore.importDirectory(context)))
+        library.rescan()
+
+        library.failed shouldBe emptyList()
+    }
+
+    @Test
+    fun `there are many Persian families, not one`() {
+        // The point of the whole exercise. One Persian face satisfies «can it set Persian at all»
+        // and satisfies nobody designing a cover, which is a choice between faces.
+        val catalog = seedAndScan()
+
+        (catalog.byScript(Script.ARABIC).size >= 20) shouldBe true
+    }
+
+    @Test
+    fun `scanning the whole library stays quick`() {
+        // Measured because the plan guessed. A single 940 KB Nastaliq face parses in about two
+        // milliseconds, so a hundred should be well inside a second — but «should be» is how the
+        // startup cost of a font library gets away from you, and this scan sits between launch and
+        // the first frame of text.
+        val context = RuntimeEnvironment.getApplication()
+        FontStore.seedBundled(context, context.assets)
+        val library = FontLibrary(listOf(FontStore.importDirectory(context)))
+
+        val started = System.nanoTime()
+        library.rescan()
+        val millis = (System.nanoTime() - started) / 1_000_000
+
+        println("scanned ${library.fontCount} faces in ${millis}ms")
+        // Generous, because this runs on CI hardware of unknown speed alongside other tests. It is
+        // a guard against an order-of-magnitude regression — a per-file network call, a re-parse
+        // per family — not a benchmark.
+        (millis < 10_000) shouldBe true
+    }
+
+    @Test
     fun `at least one bundled face is a Persian display face`() {
         // Not merely Persian-capable — the system's Noto Naskh is that, and it is a *text* face.
         // The app exists to make cover art, so it has to bring at least one heavy display cut of
@@ -113,5 +169,52 @@ class BundledFontSeedingTest {
         FontStore.seedBundled(RuntimeEnvironment.getApplication().assets, target)
 
         mine.readText() shouldBe "not really a font, but it is mine"
+    }
+}
+
+/**
+ * That the seeding is actually *wired*, not merely written.
+ *
+ * [BundledFontsTest] calls `seedBundled` itself, which proves the function works and proves nothing
+ * about whether anything calls it — the exact gap that let four bundled faces ride along in every
+ * APK unread for months while the suite stayed green.
+ *
+ * So this asserts nothing about `seedBundled` at all. It builds the view model the application
+ * builds, lets its startup run to completion, and asks the catalogue for a face that can set a
+ * Persian word. Every link in the chain — the seed, the roots it seeds into, the scan, the
+ * catalogue — has to hold for that to come back non-empty, and no refactor can satisfy it by
+ * accident.
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class FontStoreWiringTest {
+
+    @Test
+    fun `the view model's own startup fills the catalogue on a fresh install`() {
+        val context = RuntimeEnvironment.getApplication()
+        FontStore.importDirectory(context).deleteRecursively()
+
+        val model = EditorViewModel(context)
+        model.autoSave.stop()
+
+        // Driven rather than joined. The startup deliberately bounces between `Dispatchers.IO` and
+        // the main looper, and Robolectric's main looper is paused — so `join()` inside
+        // `runBlocking` would hold the very thread the resumption is queued on and deadlock, and a
+        // virtual-time scheduler has nothing to advance while a real background thread reads real
+        // files. Idling in a loop is what actually lets both halves make progress.
+        val looper = Shadows.shadowOf(Looper.getMainLooper())
+        val deadline = System.currentTimeMillis() + STARTUP_BUDGET_MS
+        while (!model.startup.isCompleted && System.currentTimeMillis() < deadline) {
+            looper.idle()
+            Thread.sleep(5)
+        }
+        model.startup.isCompleted shouldBe true
+
+        model.fontStore.catalog.usableFor("گنجشک").shouldNotBeEmpty()
+    }
+
+    private companion object {
+        /** Generous: the first run of this test copies the whole bundle out of the APK. */
+        const val STARTUP_BUDGET_MS = 60_000L
     }
 }

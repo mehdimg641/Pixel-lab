@@ -171,7 +171,7 @@ class ScreenshotTest {
         // Recovery timer off: it schedules a delay on the main looper that never comes due,
         // and Compose's idling check waits on that queue. See TouchTargetTest.editor().
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
-            .also { it.autoSave.stop() }
+            .also { it.stopBackgroundWork() }
         model.act { select(state.document.layers.first().id) }
         page("editor-chrome-light", dark = false) {
             Column(
@@ -206,7 +206,7 @@ class ScreenshotTest {
         // Recovery timer off: it schedules a delay on the main looper that never comes due,
         // and Compose's idling check waits on that queue. See TouchTargetTest.editor().
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
-            .also { it.autoSave.stop() }
+            .also { it.stopBackgroundWork() }
         model.act { select(state.document.layers.first().id) }
         page("editor-chrome") {
             Column(
@@ -255,7 +255,7 @@ class ScreenshotTest {
         // is the only way the four directions' *structures* — Console's menu bar and its rail and
         // inspector columns, Iris's dials on the glass, Ember's plain docked panel — appear at all.
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
-            .also { it.autoSave.stop() }
+            .also { it.stopBackgroundWork() }
         model.act { select(state.document.layers.first().id) }
 
         val frames = ThemeSkin.entries.flatMap { skin -> listOf(skin to true, skin to false) }
@@ -318,7 +318,7 @@ class ScreenshotTest {
         // cannot tell a rail from its absence, and Console spent its first day being Ember in
         // different colours.
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
-            .also { it.autoSave.stop() }
+            .also { it.stopBackgroundWork() }
         model.act { select(state.document.layers.first().id) }
         page("console-chrome", dark = true, skin = ThemeSkin.CONSOLE) {
             EditorScreen(model = model)
@@ -333,7 +333,7 @@ class ScreenshotTest {
         // Only a picture shows that, and [capture]'s distinct-colour floor is what makes it fail
         // rather than merely produce one.
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
-            .also { it.autoSave.stop() }
+            .also { it.stopBackgroundWork() }
         val headline = ir.pixellab.core.model.LayerId("headline")
         model.act {
             addLayer(
@@ -377,7 +377,7 @@ class ScreenshotTest {
         // Console, and the same pills on Iris's translucent plate with no rule under them. Three
         // pictures because "the strip changed" is not something a colour assertion can see.
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
-            .also { it.autoSave.stop() }
+            .also { it.stopBackgroundWork() }
         val headline = ir.pixellab.core.model.LayerId("headline")
         model.act {
             addLayer(
@@ -417,7 +417,7 @@ class ScreenshotTest {
         // is *above* the panel: the artwork, the zoom read-out, and the header — all of which a
         // sheet at the same detent covered completely.
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
-            .also { it.autoSave.stop() }
+            .also { it.stopBackgroundWork() }
         model.act {
             select(state.document.layers.first().id)
             openSheet(ir.pixellab.core.editor.SheetContent.Adjustments, ir.pixellab.core.editor.SheetDetent.FULL)

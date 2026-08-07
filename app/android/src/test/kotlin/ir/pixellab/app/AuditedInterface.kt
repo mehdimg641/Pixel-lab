@@ -169,7 +169,7 @@ internal object AuditedInterface {
      */
     private fun editor(): EditorViewModel =
         EditorViewModel(ApplicationProvider.getApplicationContext())
-            .also { it.autoSave.stop() }
+            .also { it.stopBackgroundWork() }
 
     fun homeScreen() = Screen("the home screen") {
         HomeScreen(projects = emptyList(), onNew = {}, onOpen = {}, onQuickAction = {}, onSettings = {})

@@ -74,9 +74,11 @@ class DirectionLayoutTest {
 
     private fun editor() {
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
-            // The recovery timer schedules a delay on the main looper that never comes due, and
-            // Compose's idling check waits on that queue.
-            .also { it.autoSave.stop() }
+            // The recovery timer schedules a delay on the main looper that never comes due, and the
+            // startup coroutine scans the font library off-thread and resumes on Main.
+            // Compose's idling check waits on both queues; neither is anything this test
+            // measures.
+            .also { it.stopBackgroundWork() }
         model.act { select(state.document.layers.first().id) }
         compose.setContent {
             PixelLabTheme(skin = skin, dark = true) {
@@ -204,7 +206,7 @@ class DirectionLayoutTest {
         // are in the semantics tree either way — the difference is whether they are on the screen,
         // which is also the difference a person experiences.
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
-            .also { it.autoSave.stop() }
+            .also { it.stopBackgroundWork() }
         val headline = ir.pixellab.core.model.LayerId("headline")
         model.act {
             addLayer(

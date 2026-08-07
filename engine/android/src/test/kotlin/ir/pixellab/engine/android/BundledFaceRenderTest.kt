@@ -109,4 +109,29 @@ class BundledFaceRenderTest {
 
         (gulzar.height() / gulzar.width() > vazir.height() / vazir.width()) shouldBe true
     }
+
+    @Test
+    fun `every bundled Persian face shapes the word`() {
+        // The library went from three Persian faces to fifty-odd in one commit, fetched over the
+        // network from two upstreams. Checking three of them by name would leave the other fifty
+        // asserted by nobody — and a face that ships but will not shape is exactly the kind of
+        // thing that reaches a user before it reaches a test.
+        //
+        // Screened by coverage rather than by filename: the scanner decides which files are Arabic
+        // from their `cmap`, so this asserts over whatever is actually there, and keeps asserting
+        // as the manifest grows.
+        val scanned = FontLibrary(listOf(bundled)).rescan()
+        val persian = scanned.byScript(Script.ARABIC)
+
+        (persian.size >= 20) shouldBe true
+
+        val silent = persian.mapNotNull { typeface ->
+            val file = typeface.files.firstOrNull() ?: return@mapNotNull typeface.name
+            val box = bounds(file)
+            if (box.width() > 1f && box.height() > 1f) null else typeface.name
+        }
+        // Named, not counted. "Three faces draw nothing" sends you looking; a list tells you which
+        // three, and whether they have anything in common.
+        silent shouldBe emptyList()
+    }
 }

@@ -62,9 +62,11 @@ class NavigationTest {
 
     private fun editor(withText: Boolean = false): EditorViewModel {
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
-            // The recovery timer schedules a delay on the main looper that never comes due, and
-            // Compose's idling check waits on that queue.
-            .also { it.autoSave.stop() }
+            // The recovery timer schedules a delay on the main looper that never comes due, and the
+            // startup coroutine scans the font library off-thread and resumes on Main.
+            // Compose's idling check waits on both queues; neither is anything this test
+            // measures.
+            .also { it.stopBackgroundWork() }
         if (withText) {
             // Built directly: `addTextLayer` needs a scanned font catalogue and this environment
             // has none, so going through it would leave every assertion below vacuously true.

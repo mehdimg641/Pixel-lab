@@ -1,6 +1,7 @@
 package ir.pixellab.app
 
 import android.content.Context
+import ir.pixellab.engine.android.FontLibrary
 import java.io.File
 
 /**
@@ -25,10 +26,18 @@ enum class AssetKind(
     val extensions: Set<String>,
     val purpose: String,
 ) {
+    /**
+     * Extensions matched to `FontLibrary.FONT_EXTENSIONS`, not to what a font can be.
+     *
+     * `woff` and `woff2` used to be listed here and are gone. They are web wrappers, the scanner
+     * never walked them and the OpenType parser rejects them — so the only thing listing them
+     * achieved was a settings screen counting files the picker would then refuse to show. `otc`
+     * was missing for the opposite reason: the scanner reads collections and this forgot to say so.
+     */
     FONTS(
         directory = "fonts",
         label = "فونت",
-        extensions = setOf("ttf", "otf", "ttc", "woff", "woff2"),
+        extensions = FontLibrary.FONT_EXTENSIONS,
         purpose = "قلم‌های فارسی و لاتین شما — گروه‌بندی و جست‌وجو خودکار است",
     ),
 
@@ -157,5 +166,12 @@ object AssetLibrary {
         return if (at >= 0) "Android/data/" + absolute.substring(at + marker.length) else absolute
     }
 
-    private const val MAX_DEPTH = 4
+    /**
+     * Matched to `FontLibrary.MAX_DEPTH`.
+     *
+     * It was four here and six there, so a folder nested five deep counted in settings and was
+     * invisible to the picker — a disagreement nobody would think to look for, because both numbers
+     * are individually reasonable.
+     */
+    private const val MAX_DEPTH = FontLibrary.MAX_DEPTH
 }

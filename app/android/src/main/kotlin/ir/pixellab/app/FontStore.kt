@@ -131,44 +131,24 @@ class FontStore(private val library: FontLibrary) {
         }
 
         /**
-         * Unpacks the bundled faces, then builds the store around the directory holding them.
+         * The library the app runs on: the three roots, and nothing read yet.
          *
-         * **Eagerly, and on the calling thread.** Seeding began life inside the view model's
-         * startup coroutine and that was wrong in a way worth recording: the coroutine hops to
-         * `Dispatchers.IO` and has to resume on Main, and the interface audit composes with the
-         * main looper paused. With an empty directory the walk finished inside the drain window and
-         * nobody noticed; with real files to copy and parse it did not, so `waitForIdle` sat there
-         * until Espresso's sixty-second timeout and seven unrelated audit tests failed in CI.
+         * Deliberately cheap, because this is a property initialiser on a view model and therefore
+         * runs before the first frame. [seedBundled] is *not* called here — it is the first thing
+         * `EditorViewModel.startup` does on `Dispatchers.IO`, alongside the scan it feeds.
          *
-         * Here there is no coroutine to race. The first launch copies about 1.5 MB once; every
-         * launch after it is one `exists()` per bundled name, which is seven `stat` calls. The
-         * directory walk that follows is still asynchronous, exactly as before — that part was
-         * never the problem.
+         * That split is the whole fix, and it is worth recording why the obvious alternative is
+         * worse. Seeding here would put twenty-eight megabytes of copying in front of a cold
+         * launch. It would also run in every test that builds a view model to measure a touch
+         * target — even the ones that immediately call `stopBackgroundWork`, because a constructor
+         * cannot be cancelled. Those tests would then each pay for a copy they never look at, and
+         * the only way to stop them would be deleting the directory in `@Before`, which just makes
+         * the next test copy it all back.
+         *
+         * Inside the coroutine it is cancellable, so switching the background work off switches
+         * this off too, which is what "off" should have meant all along.
          */
-        /**
-         * **Not wired to [seedBundled] yet, and that is a deliberate stopping point.**
-         *
-         * Unpacking the bundled faces here is one line and it works. What it also does is give
-         * every Robolectric test a populated font directory for the first time, so screens that had
-         * always measured text to a placeholder box start shaping real type — and in a run where
-         * the app's merged resources also exist, the interface audit, the navigation tests and the
-         * screenshot tests stop reaching an idle state at all. `AuditedInterface.probe` already
-         * carries a long note about that wire; this pulls on it harder than the note's own fix
-         * covers.
-         *
-         * Three attempts are recorded so the next one does not repeat them. Pausing the clock the
-         * way `probe` does breaks the navigation tests outright — they click things and need frames
-         * to keep advancing, so the nodes they reach for never appear. Raising Espresso's idle
-         * timeout does not help either: the tree is not slow, it never settles, so a longer ceiling
-         * only makes the same failures take three minutes each. And moving the call between the
-         * view model's startup coroutine and here changes which tests fail, not whether they do.
-         *
-         * So the faces ship and stay unread for now, exactly as before — no regression, and no
-         * green build resting on a fix that does not work. The real repair is to stop these
-         * harnesses building a live `EditorViewModel` for a layout measurement, which is its own
-         * piece of work and not one to start at the end of another.
-         */
-        fun forApp(context: Context) = FontStore(FontLibrary(roots(context)))
+        fun forApp(context: Context): FontStore = FontStore(FontLibrary(roots(context)))
 
         private const val DIRECTORY = "fonts"
         private const val SYSTEM_FONTS = "/system/fonts"

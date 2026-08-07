@@ -39,6 +39,7 @@ import ir.pixellab.engine.android.LayerMeasure
 import ir.pixellab.engine.android.toMaskImage
 import ir.pixellab.engine.android.toRaster
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -125,6 +126,26 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
      */
     val autoSave = AutoSave(application, viewModelScope) { currentProject() }
 
+    /**
+     * The startup work, held so it can be stopped the way the autosave timer can.
+     *
+     * ### Why this needed a handle
+     *
+     * Fifteen test sites build a real view model and fourteen of them already call
+     * `autoSave.stop()` — "switch off the background work" was an established, accepted pattern.
+     * This coroutine was the one piece with no off switch, and that mattered the moment the bundled
+     * faces started being unpacked: it hops to `Dispatchers.IO` and has to resume on Main, and the
+     * interface audits compose with the main looper drained by hand. With an empty font directory
+     * the scan finished inside that window and nobody noticed. With real files it did not, and
+     * `waitForIdle` sat there until Espresso's sixty-second timeout — six unrelated audits red in
+     * CI, all pointing at the touch-target check, which had nothing to do with it.
+     *
+     * A test that measures a touch target or a navigation route does not need a scanned font
+     * library and never did; it only happened to have an empty one. Saying so out loud is the same
+     * move `autoSave.stop()` made for the timer, for the same reason.
+     */
+    val startup: Job
+
     init {
         // A smart object is measured through its source, and the source is wherever the document
         // currently has it — a captured copy would size an instance from a layer that has since
@@ -134,12 +155,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
         // Off the main thread from the first frame: the canvas has to draw before the library is
         // known, and text arrives when it is.
-        viewModelScope.launch {
+        startup = viewModelScope.launch {
             // Before the fonts, because a built-in style is only built-in if the texture it names
             // is already decoded the first time someone taps it. It is a handful of small files
             // and it settles long before anyone reaches the library.
             assetStore.loadBundled(application.assets)
 
+            // Unpacking the bundled faces is part of the scan, not part of construction. It is
+            // twenty-eight megabytes on a first launch and one `exists()` per name on every launch
+            // after, and neither belongs in front of the first frame — nor in front of a test that
+            // only wanted to measure a button.
+            withContext(Dispatchers.IO) { FontStore.seedBundled(application, application.assets) }
             fontStore.rescan()
             // The chrome measures through this too, so the handles would otherwise keep the
             // placeholder box the text was measured with before the scan landed. The screen
@@ -150,6 +176,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             // few small files should not sit in front of the thing the canvas needs to draw.
             lookStore.load(application)
         }
+    }
+
+    /**
+     * Stops every background task this view model started.
+     *
+     * One call rather than two, so a test cannot switch off half of it — which is exactly what
+     * every one of these sites was doing until the fonts made the other half matter.
+     */
+    fun stopBackgroundWork() {
+        autoSave.stop()
+        startup.cancel()
     }
 
     /**
