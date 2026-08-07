@@ -412,6 +412,20 @@ class ScreenshotTest {
     }
 
     @Test
+    fun `a panel docks into the work panel instead of covering the canvas`() {
+        // The picture of the change that ended twenty-one modal sheets. What matters in it is what
+        // is *above* the panel: the artwork, the zoom read-out, and the header — all of which a
+        // sheet at the same detent covered completely.
+        val model = EditorViewModel(ApplicationProvider.getApplicationContext())
+            .also { it.autoSave.stop() }
+        model.act {
+            select(state.document.layers.first().id)
+            openSheet(ir.pixellab.core.editor.SheetContent.Adjustments, ir.pixellab.core.editor.SheetDetent.FULL)
+        }
+        page("docked-panel") { EditorScreen(model = model) }
+    }
+
+    @Test
     fun `the light theme draws`() {
         // The specification calls the light theme optional, which is exactly why it needs a picture:
         // an optional theme is the one that quietly stops being legible, and the failure is always

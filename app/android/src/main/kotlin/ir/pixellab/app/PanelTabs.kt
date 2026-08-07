@@ -82,7 +82,7 @@ enum class PanelTab(val persianLabel: String, val icon: ImageVector) {
  * a tab strip that scrolls is one where the fifth tab does not exist until you discover it.
  */
 @Composable
-fun PanelTabRow(current: PanelTab, onPick: (PanelTab) -> Unit, modifier: Modifier = Modifier) {
+fun PanelTabRow(current: PanelTab?, onPick: (PanelTab) -> Unit, modifier: Modifier = Modifier) {
     Row(
         modifier
             .fillMaxWidth()

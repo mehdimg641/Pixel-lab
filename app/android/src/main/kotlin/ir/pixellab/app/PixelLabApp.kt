@@ -97,8 +97,16 @@ fun PixelLabApp(model: EditorViewModel) {
         when (where) {
             Destination.EDITOR -> {
                 BackHandler {
-                    where = Destination.GALLERY
-                    revision++
+                    // A panel one level down closes first. It is docked rather than modal now, so
+                    // nothing about it *looks* like something back would dismiss — which is exactly
+                    // why back has to do it: the alternative is that a user in the font picker
+                    // presses back and lands in the gallery.
+                    if (model.state.sheet.isOpen) {
+                        model.cancelSheet()
+                    } else {
+                        where = Destination.GALLERY
+                        revision++
+                    }
                 }
                 EditorScreen(
                     model = model,

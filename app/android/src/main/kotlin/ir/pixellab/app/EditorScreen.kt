@@ -334,6 +334,7 @@ fun EditorScreen(
         },
     )
 
+    CompositionLocalProvider(LocalEditorActions provides actions) {
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink.Ground)) {
         val screenHeight = maxHeight
         val skin = LocalThemeSkin.current
@@ -410,7 +411,12 @@ fun EditorScreen(
                         // On the glass rather than in the header: these are facts about the *view*,
                         // and a header that says `IMG_4821` and `۶۸٪` in one row invites the reading
                         // that sixty-eight percent is a property of the file.
-                        if (!state.sheet.isOpen) CanvasReadout(state, model)
+                        //
+                        // No longer hidden while a panel is open. It used to be, because the panel
+                        // was a sheet over the canvas and a zoom read-out describing a canvas
+                        // nobody could see was noise. The panel is docked now — the canvas is right
+                        // there — so the zoom is exactly what somebody adjusting a curve wants.
+                        CanvasReadout(state, model)
                         batch.progress?.let {
                             Text(
                                 "در حال اعمال روی عکس ${it.done + 1} از ${it.total} — ${it.current}",
@@ -428,7 +434,7 @@ fun EditorScreen(
 
                     // Iris's answer to «chrome hidden until needed»: the two numbers your hand is
                     // actually changing, upright on the glass, and nothing else.
-                    if (skin.layout == PanelLayout.FLOATING && !state.sheet.isOpen) {
+                    if (skin.layout == PanelLayout.FLOATING) {
                         // Under the zoom plate rather than centred on the canvas: centred put the
                         // value under the dial straight on top of the contextual bar, and the two
                         // controls a hand reaches for cannot be stacked on each other.
@@ -447,6 +453,10 @@ fun EditorScreen(
                         // the two states it used to skip — an empty canvas and a live pixel
                         // selection — are the two where somebody most needs to be told what next.
                         AnimatedVisibility(
+                            // Hidden only while a *detail* is open, and for a reason that survived
+                            // the panels being docked: the bar's job is "what do I do to this
+                            // next", and inside a panel the answer is the panel. It would be a
+                            // second, quieter suggestion competing with the one being acted on.
                             visible = !state.sheet.isOpen,
                             enter = slideInVertically(tween(Motion.STANDARD, easing = Motion.ease)) { it },
                             exit = slideOutVertically(tween(Motion.STANDARD, easing = Motion.ease)) { it },
@@ -481,7 +491,22 @@ fun EditorScreen(
                 onPickTab = { tab = it },
                 state = state,
                 model = model,
-                height = (screenHeight * skin.panelFraction).coerceIn(skin.panelMin, skin.panelMax),
+                // A detail is a *deeper* place in the same panel, so it gets the room it asks for
+                // — the detent it was opened at — floored at the tab's own height so drilling in
+                // never makes the panel smaller, and capped so the artwork it is editing keeps a
+                // band of screen. That cap is the whole reason these are panels and not sheets.
+                height = if (state.sheet.isOpen) {
+                    // The cap subtracts the header and the tab row as well as the band of canvas,
+                    // because all four are siblings in the same column. Subtracting only the band
+                    // left about sixty dp of artwork at the `FULL` detent — the document fitted
+                    // itself to that at ten percent, which is a thumbnail, not a canvas.
+                    (screenHeight * state.sheet.detent.screenFraction)
+                        .coerceIn(skin.panelMin, screenHeight - MIN_CANVAS - Frame.history - Frame.dock)
+                } else {
+                    (screenHeight * skin.panelFraction).coerceIn(skin.panelMin, skin.panelMax)
+                },
+                onPickImage = { picking.launch(IMAGE_MIME) },
+                onPickPhotos = { pickingCollage.launch(IMAGE_MIME) },
                 // The studio is a screen now. It used to be a sheet over the canvas it was
                 // setting type against, which is the one thing a type studio must not be.
                 onOpenTextStudio = { id -> onNavigate(Destination.TEXT_STUDIO, id, null) },
@@ -535,100 +560,7 @@ fun EditorScreen(
             }
         }
 
-        // The sheet sits above everything, and the canvas has already panned out from under it.
-        AnimatedVisibility(
-            visible = state.sheet.isOpen,
-            enter = slideInVertically(tween(Motion.SHEET, easing = Motion.ease)) { it },
-            exit = slideOutVertically(tween(Motion.SHEET, easing = Motion.ease)) { it },
-            modifier = Modifier.align(Alignment.BottomCenter),
-        ) {
-            // How the panel meets the canvas is the one decision that makes the four directions
-            // feel like different applications rather than four colour schemes of one. Ember and
-            // Console dock it — flat, full width, one hairline along the top. Iris floats it: an
-            // inset on three sides, every corner rounded, and a translucent fill so the artwork
-            // runs *behind* the panel instead of stopping at it.
-            val floating = LocalThemeSkin.current.layout == PanelLayout.FLOATING
-            val inset = LocalThemeSkin.current.panelInset
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(start = inset, end = inset, bottom = inset)
-                    .height(screenHeight * state.sheet.detent.screenFraction)
-                    .clip(if (floating) Corners.panel else Corners.sheet)
-                    .then(
-                        if (floating) {
-                            // Not an opaque panel. A real backdrop blur needs a RenderEffect the
-                            // platform only offers from API 31, so rather than a glass panel on new
-                            // phones and a flat one on old, every device gets the same translucent
-                            // plate — which is what actually carries the effect anyway, and it is
-                            // legible over any artwork because the fill is near-opaque.
-                            Modifier
-                                .background(Ink.Chrome.copy(alpha = 0.94f))
-                                .border(1.dp, Ink.Divider, Corners.panel)
-                        } else {
-                            Modifier.background(Ink.Chrome)
-                        },
-                    ),
-            ) {
-                Column(Modifier.fillMaxSize()) {
-                    SheetHeader(state, model)
-                    CompositionLocalProvider(LocalEditorActions provides actions) {
-                    when (val content = state.sheet.content) {
-                        is SheetContent.EffectParameters ->
-                            ParameterSheetBody(state, content, model, Modifier.fillMaxHeight())
-                        is SheetContent.LayerList -> LayerPanel(state, model)
-                        is SheetContent.FontPicker -> FontPickerBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.BrushSettings -> BrushSheetBody(model, Modifier.fillMaxHeight())
-                        is SheetContent.PixelSelection -> SelectionSheetBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.Adjustments -> AdjustmentSheetBody(
-                            state = state,
-                            model = model,
-                            onImportPreset = { pickingPreset.launch(PRESET_MIME) },
-                            onImportLut = { pickingLut.launch(PRESET_MIME) },
-                            render = { document -> renderDocument(handle, document) },
-                            modifier = Modifier.fillMaxHeight(),
-                        )
-                        is SheetContent.Retouch -> RetouchSheetBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.Portrait -> PortraitSheetBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.Vector -> VectorSheetBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.LibraryPanel -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.LayerParameters ->
-                            LayerParametersSheetBody(state, content, model, Modifier.fillMaxHeight())
-                        is SheetContent.TextStudio ->
-                            TextStudioBody(state, content, model, Modifier.fillMaxHeight())
-                        is SheetContent.CanvasTools -> CanvasSheetBody(
-                            state = state,
-                            model = model,
-                            onPickImage = { picking.launch(IMAGE_MIME) },
-                            modifier = Modifier.fillMaxHeight(),
-                        )
-                        is SheetContent.Collage -> CollageSheetBody(
-                            model = model,
-                            onPickPhotos = { pickingCollage.launch(IMAGE_MIME) },
-                            modifier = Modifier.fillMaxHeight(),
-                        )
-                        is SheetContent.ShapeTools -> ShapeSheetBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.Guides -> GuideSheetBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.Typography -> TypeSheetBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.Settings -> SettingsSheetBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.Dimensional ->
-                            DimensionalSheetBody(state, model, Modifier.fillMaxHeight())
-                        is SheetContent.Arrange -> ArrangeSheetBody(
-                            state = state,
-                            model = model,
-                            render = { document -> renderDocument(handle, document) },
-                            modifier = Modifier.fillMaxHeight(),
-                        )
-                        SheetContent.StyleLibrary -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
-                        // The sheet is open, so the content is never null; the branch is here
-                        // because the type says it could be and a silent `else` would swallow a
-                        // future case that genuinely needs a screen.
-                        null -> Box(Modifier.fillMaxSize())
-                    }
-                    }
-                }
-            }
-        }
+    }
     }
 }
 
@@ -1322,6 +1254,8 @@ private fun WorkPanel(
     onOpenTextStudio: (LayerId) -> Unit,
     onOpenRetouch: () -> Unit,
     onOpenBrush: () -> Unit,
+    onPickImage: () -> Unit,
+    onPickPhotos: () -> Unit,
     onImportPreset: () -> Unit,
     onImportLut: () -> Unit,
     render: suspend (ir.pixellab.core.model.Document) -> ir.pixellab.core.codec.RasterImage?,
@@ -1348,19 +1282,49 @@ private fun WorkPanel(
                 },
             ),
     ) {
-        PanelBody(
-            tab = tab,
-            state = state,
-            model = model,
-            onOpenTextStudio = onOpenTextStudio,
-            onOpenRetouch = onOpenRetouch,
-            onOpenBrush = onOpenBrush,
-            onImportPreset = onImportPreset,
-            onImportLut = onImportLut,
-            render = render,
-            modifier = Modifier.height(height),
-        )
-        PanelTabRow(current = tab, onPick = onPickTab)
+        // **A detail replaces the tab's body; it does not cover the canvas.**
+        //
+        // Everything below used to be a modal sheet that slid up over the artwork. Twenty-one of
+        // them, and the one thing they all had in common is the thing that was wrong with them:
+        // every panel in this application hid the picture it was editing. The canvas panned out
+        // from under a sheet, which softened it and was never the fix — a colour curve you cannot
+        // watch land is a colour curve you adjust by guessing.
+        //
+        // The tabs stay visible underneath, so leaving a detail is one press and so is going
+        // somewhere else entirely. That is what makes this a place rather than a modal.
+        val detail = state.sheet.content
+        if (detail != null) {
+            Column(Modifier.height(height)) {
+                SheetHeader(state, model)
+                DetailBody(
+                    content = detail,
+                    state = state,
+                    model = model,
+                    onPickImage = onPickImage,
+                    onPickPhotos = onPickPhotos,
+                    onImportPreset = onImportPreset,
+                    onImportLut = onImportLut,
+                    render = render,
+                )
+            }
+        } else {
+            PanelBody(
+                tab = tab,
+                state = state,
+                model = model,
+                onOpenTextStudio = onOpenTextStudio,
+                onOpenRetouch = onOpenRetouch,
+                onOpenBrush = onOpenBrush,
+                onImportPreset = onImportPreset,
+                onImportLut = onImportLut,
+                render = render,
+                modifier = Modifier.height(height),
+            )
+        }
+        // No tab is current while a detail is open, and that is not a detail of styling: the body
+        // on screen belongs to the panel you drilled into, not to the tab you came from. Showing
+        // «لایه‌ها» lit while the adjustments panel is up says the opposite of what is true.
+        PanelTabRow(current = if (detail != null) null else tab, onPick = onPickTab)
     }
 }
 
@@ -2136,3 +2100,99 @@ private suspend fun renderDocument(
     val success = result as? ir.pixellab.engine.android.ExportResult.Success ?: return null
     return runCatching { ir.pixellab.core.codec.Codecs.decode(success.bytes) }.getOrNull()
 }
+
+/**
+ * A deeper place inside the work panel.
+ *
+ * ### What this is, and what it stopped being
+ *
+ * These are the same twenty-one bodies the application has always had, and not one of them is
+ * rewritten. What changed is the frame: they used to be **modal sheets** that slid up over the
+ * artwork, and now they are the panel's own body one level down, with the five tabs still on screen
+ * beneath them.
+ *
+ * That is the whole of the theme's argument about sheets, and it is right. A sheet is for work with
+ * a *flow* — start it, answer three questions, it ends. Choosing an export format is that. Nudging
+ * a drop shadow is not: it is a loop between a control and a picture, run twenty times, and putting
+ * the control on top of the picture breaks the loop. Twenty-one panels were modal because the first
+ * one was, and each of the next twenty followed the shape rather than the argument.
+ *
+ * ### What is still a sheet
+ *
+ * `ExportSheet`, and nothing else in the editor. It has a flow, it ends, and it does not need to
+ * see the canvas — the two read-outs on it already say what the file will be.
+ *
+ * ### Why the cases are not deleted from `SheetContent`
+ *
+ * The type still names every panel, because naming them is what `Editor.revealSubject` uses to
+ * decide which part of the artwork to keep clear of the panel — the layer a panel is *about* is a
+ * fact worth having whether the panel is modal or docked. Deleting the cases would trade a
+ * well-named enum for a second one shaped identically.
+ */
+@Composable
+private fun DetailBody(
+    content: SheetContent,
+    state: EditorState,
+    model: EditorViewModel,
+    onPickImage: () -> Unit,
+    onPickPhotos: () -> Unit,
+    onImportPreset: () -> Unit,
+    onImportLut: () -> Unit,
+    render: suspend (ir.pixellab.core.model.Document) -> ir.pixellab.core.codec.RasterImage?,
+) {
+    when (content) {
+        is SheetContent.EffectParameters -> ParameterSheetBody(state, content, model, Modifier.fillMaxHeight())
+        is SheetContent.LayerList -> LayerPanel(state, model)
+        is SheetContent.FontPicker -> FontPickerBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.BrushSettings -> BrushSheetBody(model, Modifier.fillMaxHeight())
+        is SheetContent.PixelSelection -> SelectionSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Adjustments -> AdjustmentSheetBody(
+            state = state,
+            model = model,
+            onImportPreset = onImportPreset,
+            onImportLut = onImportLut,
+            render = render,
+            modifier = Modifier.fillMaxHeight(),
+        )
+        is SheetContent.Retouch -> RetouchSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Portrait -> PortraitSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Vector -> VectorSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.LibraryPanel -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.LayerParameters ->
+            LayerParametersSheetBody(state, content, model, Modifier.fillMaxHeight())
+        is SheetContent.TextStudio -> TextStudioBody(state, content, model, Modifier.fillMaxHeight())
+        is SheetContent.CanvasTools -> CanvasSheetBody(
+            state = state,
+            model = model,
+            onPickImage = onPickImage,
+            modifier = Modifier.fillMaxHeight(),
+        )
+        is SheetContent.Collage -> CollageSheetBody(
+            model = model,
+            onPickPhotos = onPickPhotos,
+            modifier = Modifier.fillMaxHeight(),
+        )
+        is SheetContent.ShapeTools -> ShapeSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Guides -> GuideSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Typography -> TypeSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Settings -> SettingsSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Dimensional -> DimensionalSheetBody(state, model, Modifier.fillMaxHeight())
+        is SheetContent.Arrange -> ArrangeSheetBody(
+            state = state,
+            model = model,
+            render = render,
+            modifier = Modifier.fillMaxHeight(),
+        )
+        SheetContent.StyleLibrary -> LibrarySheetBody(state, model, Modifier.fillMaxHeight())
+    }
+}
+
+/**
+ * How much canvas a detail may never take.
+ *
+ * The point of docking these is that the artwork stays visible while it is being changed, so a
+ * detent asking for eighty percent of a tall phone is asking for something this panel is not
+ * allowed to give. Two hundred is about the shortest band in which a 1080-square document is still
+ * a picture rather than a stripe.
+ */
+private val MIN_CANVAS = 200.dp
