@@ -83,7 +83,7 @@ class FormatTest {
     fun `a format that declares it can be read has a decoder, and the reverse`() {
         for (format in Format.entries) {
             val claimsOwnRead = format.canRead && format.backend == Backend.OWN
-            if (claimsOwnRead && format !in setOf(Format.PSD, Format.PSB, Format.HDR, Format.ICO)) {
+            if (claimsOwnRead && format !in setOf(Format.PSD, Format.PSB)) {
                 // A capability table that promises more than the build delivers is worse than no
                 // table: the interface offers the option and the user finds out on failure.
                 (Codecs.decoderFor(format) != null) shouldBe true

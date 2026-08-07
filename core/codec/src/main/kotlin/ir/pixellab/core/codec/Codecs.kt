@@ -17,6 +17,9 @@ object Codecs {
         register(TgaCodec)
         register(BmpCodec)
         register(TiffCodec)
+        register(IconCodec)
+        register(RadianceCodec)
+        registerEncoder(PhotoshopRawCodec)
     }
 
     fun registerDecoder(decoder: ImageDecoder) {

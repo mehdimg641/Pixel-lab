@@ -1417,6 +1417,31 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Path blur along one of the preset strokes.
+     *
+     * A stroke drawn on the canvas would be better and is not what this is. The four presets cover
+     * what the effect is reached for — a pan, a tilt, a diagonal whip and a swing — and each is laid
+     * out in the layer's own coordinates so it scales with the image rather than with the screen.
+     */
+    suspend fun pathBlur(shape: PathShape, amount: Float, startSpeed: Float, endSpeed: Float, reach: Float) {
+        val chosen = select.selection
+        transform { image ->
+            val w = image.width.toFloat()
+            val h = image.height.toFloat()
+            val points = when (shape) {
+                PathShape.HORIZONTAL -> listOf(Vec2(0f, h / 2f), Vec2(w, h / 2f))
+                PathShape.VERTICAL -> listOf(Vec2(w / 2f, 0f), Vec2(w / 2f, h))
+                PathShape.DIAGONAL -> listOf(Vec2(0f, 0f), Vec2(w, h))
+                // Three points, so the direction genuinely turns across the frame — which is the
+                // one thing a direction-and-distance blur cannot express.
+                PathShape.ARC -> listOf(Vec2(0f, h), Vec2(w / 2f, 0f), Vec2(w, h))
+            }
+            val path = ir.pixellab.core.imaging.PathBlur.Path(points, startSpeed, endSpeed)
+            ir.pixellab.engine.android.PixelFilters.path(image, listOf(path), amount, reach, chosen)
+        }
+    }
+
     suspend fun motionBlur(angle: Float, distance: Float) = transform { image ->
         ir.pixellab.engine.android.PixelFilters.motion(image, angle, distance, select.selection)
     }

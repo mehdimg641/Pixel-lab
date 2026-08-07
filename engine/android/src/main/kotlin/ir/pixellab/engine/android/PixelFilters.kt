@@ -2,6 +2,7 @@ package ir.pixellab.engine.android
 
 import ir.pixellab.core.codec.RasterImage
 import ir.pixellab.core.imaging.Blur
+import ir.pixellab.core.imaging.PathBlur
 import ir.pixellab.core.imaging.RadialBlur
 import ir.pixellab.core.imaging.Raster
 import ir.pixellab.core.model.Color
@@ -49,6 +50,30 @@ object PixelFilters {
     ): RasterImage {
         if (amount <= 0f) return source
         val smeared = RadialBlur.apply(source.toRaster().premultiplied(), centre, amount, kind)
+        return blend(source, smeared.unpremultiplied().toImage(), selection)
+    }
+
+    /**
+     * Path blur — motion that follows a stroke instead of a single vector.
+     *
+     * The one blur in Photoshop's menu this build did not have. It is here as its own entry rather
+     * than as an option on [motion] because the inputs are a different shape entirely: a direction
+     * and a distance against a list of strokes with a speed at each end.
+     *
+     * @param paths in the layer's own pixels.
+     * @param reach how far a stroke carries. Passed through rather than defaulted here so the sheet
+     *   can offer it — with one stroke it is the whole difference between blurring the background
+     *   and blurring the subject too.
+     */
+    fun path(
+        source: RasterImage,
+        paths: List<PathBlur.Path>,
+        amount: Float,
+        reach: Float,
+        selection: PixelSelection? = null,
+    ): RasterImage {
+        if (amount <= 0f || paths.isEmpty()) return source
+        val smeared = PathBlur.apply(source.toRaster().premultiplied(), paths, amount, reach)
         return blend(source, smeared.unpremultiplied().toImage(), selection)
     }
 

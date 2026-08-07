@@ -39,6 +39,10 @@ fun FilterSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
     var radius by remember { mutableStateOf(DEFAULT_RADIUS) }
     var amount by remember { mutableStateOf(DEFAULT_AMOUNT) }
     var angle by remember { mutableStateOf(0f) }
+    var pathAmount by remember { mutableStateOf(DEFAULT_AMOUNT) }
+    var pathStart by remember { mutableStateOf(DEFAULT_PATH_SPEED) }
+    var pathEnd by remember { mutableStateOf(DEFAULT_PATH_SPEED) }
+    var pathReach by remember { mutableStateOf(DEFAULT_REACH) }
     var distance by remember { mutableStateOf(DEFAULT_DISTANCE) }
     var blades by remember { mutableStateOf(0) }
     var shadowLift by remember { mutableStateOf(0f) }
@@ -131,6 +135,24 @@ fun FilterSheetBody(state: EditorState, model: EditorViewModel, modifier: Modifi
         SheetSlider("زاویه", angle, 0f..FULL_TURN, onChange = { value, _ -> angle = value })
         SheetSlider("مسافت", distance, 0f..MAX_DISTANCE, onChange = { value, _ -> distance = value })
         SheetAction("اعمال", enabled = onPixels) { scope.launch { model.motionBlur(angle, distance) } }
+
+        SheetSection("محو مسیری")
+        SheetSlider("شدت", pathAmount * PERCENT, 0f..PERCENT, onChange = { v, _ -> pathAmount = v / PERCENT })
+        // Two speeds rather than one: equal at both ends is a pan, unequal is a swing — slow at the
+        // top of the arc and fast at the bottom, which is what a hand actually does.
+        SheetSlider("سرعت آغاز", pathStart, 0f..MAX_DISTANCE, onChange = { v, _ -> pathStart = v })
+        SheetSlider("سرعت پایان", pathEnd, 0f..MAX_DISTANCE, onChange = { v, _ -> pathEnd = v })
+        // How far the stroke carries. With one stroke this is the whole difference between blurring
+        // the background and blurring the subject standing in front of it.
+        SheetSlider("گسترهٔ اثر", pathReach, MIN_REACH..MAX_REACH, onChange = { v, _ -> pathReach = v })
+        SheetChips {
+            for (shape in PathShape.entries) {
+                SheetChip(shape.persianLabel, enabled = onPixels) {
+                    scope.launch { model.pathBlur(shape, pathAmount, pathStart, pathEnd, pathReach) }
+                }
+            }
+        }
+        SheetHint("برخلاف محو حرکتی، جهت در سراسر قاب عوض می‌شود — «کمانی» همین را نشان می‌دهد")
 
         SheetSection("محو لنزی")
         SheetSlider("شعاع", radius, 0f..MAX_LENS_RADIUS, onChange = { value, _ -> radius = value })
@@ -301,6 +323,20 @@ private const val FULL_TURN = 360f
 private const val DEFAULT_DISTANCE = 24f
 private const val MAX_DISTANCE = 200f
 
+/** A visible smear without being a special effect, which is where a slider should start. */
+private const val DEFAULT_PATH_SPEED = 24f
+
+/**
+ * How far a motion stroke carries, in the layer's own pixels.
+ *
+ * The floor is not zero: a reach small enough to affect nothing would look like a broken filter
+ * rather than like a subtle one. The ceiling is past the diagonal of a large canvas, which is the
+ * desktop behaviour — one stroke moving the whole frame.
+ */
+private const val MIN_REACH = 32f
+private const val MAX_REACH = 3000f
+private const val DEFAULT_REACH = 600f
+
 /** Photoshop's own default radius for shadow/highlight, and a sane one on a phone-sized canvas. */
 private const val DEFAULT_LOCAL_RADIUS = 30f
 private const val MAX_LOCAL_RADIUS = 200f
@@ -350,3 +386,19 @@ private const val DEFAULT_RAY_INTENSITY = 0f
 
 private const val DEFAULT_GRAIN = 0.06f
 private const val MAX_GRAIN = 0.4f
+
+/**
+ * The four strokes path blur is offered along.
+ *
+ * A freehand stroke drawn on the canvas is the better control and is not what this is — it needs a
+ * drawing mode over the artwork, which is its own piece of work. These four are what the effect is
+ * actually reached for: a pan, a tilt, a diagonal whip, and a swing whose direction turns across
+ * the frame. The last one is the only one of the four that a direction-and-distance motion blur
+ * could not already do, and it is the reason the filter exists.
+ */
+enum class PathShape(val persianLabel: String) {
+    HORIZONTAL("افقی"),
+    VERTICAL("عمودی"),
+    DIAGONAL("مورب"),
+    ARC("کمانی"),
+}
