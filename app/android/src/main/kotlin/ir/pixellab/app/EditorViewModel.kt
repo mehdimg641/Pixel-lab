@@ -38,6 +38,7 @@ import ir.pixellab.engine.android.FontResolver
 import ir.pixellab.engine.android.LayerMeasure
 import ir.pixellab.engine.android.toMaskImage
 import ir.pixellab.engine.android.toRaster
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -139,6 +140,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             // and it settles long before anyone reaches the library.
             assetStore.loadBundled(application.assets)
 
+            // Unpacks the bundled faces before the walk that would otherwise not find them. See
+            // [FontStore.seedBundled]: an APK entry is not a `File`, so every face shipped in
+            // `assets/fonts/` was invisible until this line existed.
+            withContext(Dispatchers.IO) { FontStore.seedBundled(application, application.assets) }
             fontStore.rescan()
             // The chrome measures through this too, so the handles would otherwise keep the
             // placeholder box the text was measured with before the scan landed. The screen

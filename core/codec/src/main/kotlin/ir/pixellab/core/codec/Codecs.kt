@@ -16,6 +16,7 @@ object Codecs {
     init {
         register(TgaCodec)
         register(BmpCodec)
+        register(TiffCodec)
     }
 
     fun registerDecoder(decoder: ImageDecoder) {

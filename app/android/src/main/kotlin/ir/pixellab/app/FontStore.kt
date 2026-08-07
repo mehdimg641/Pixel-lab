@@ -59,6 +59,47 @@ class FontStore(private val library: FontLibrary) {
             File(context.filesDir, DIRECTORY).apply { mkdirs() }
 
         /**
+         * Copies the faces bundled in the APK into the import directory, once.
+         *
+         * ### Why this function has to exist
+         *
+         * [FontLibrary] walks `File` roots, and an entry inside an APK is not a file — it is a
+         * stream out of `AssetManager`. So the four display faces that have been shipping in
+         * `assets/fonts/` since the beginning were **never once loaded**: 478 KB in every APK,
+         * present in no font list, reachable by no code path. `AssetStore.loadBundled` is the only
+         * reader of bundled assets and it takes the `textures/` folder alone. The one thing that
+         * ever referenced these names is a test fixture, and it loads its own copy out of
+         * `src/test/resources/`.
+         *
+         * Unpacking them to `filesDir` is what makes them real, and it costs one copy on first
+         * launch. The alternative — teaching `FontLibrary` to walk assets — would put an Android
+         * type into a module that is deliberately plain `File`, to save a copy nobody notices.
+         *
+         * ### Once, and never over the user
+         *
+         * A name already present is skipped. Somebody who dropped a better cut of Vazirmatn into
+         * the folder keeps theirs: bundled faces seed an empty library, they do not maintain it.
+         */
+        fun seedBundled(context: Context, assets: android.content.res.AssetManager) {
+            val target = importDirectory(context)
+            val names = runCatching { assets.list(DIRECTORY) }.getOrNull().orEmpty()
+            for (name in names) {
+                val file = File(target, name)
+                if (file.exists()) continue
+                runCatching {
+                    assets.open("$DIRECTORY/$name").use { input ->
+                        file.outputStream().use(input::copyTo)
+                    }
+                }.onFailure {
+                    // A face that will not unpack is a face the picker simply will not list. It is
+                    // not worth failing a launch over, and `FontLibrary.failed` already exists to
+                    // name anything that makes it to disk and then will not parse.
+                    file.delete()
+                }
+            }
+        }
+
+        /**
          * The three places a font can come from.
          *
          * The external directory is the one that matters to this user: it is visible from any file

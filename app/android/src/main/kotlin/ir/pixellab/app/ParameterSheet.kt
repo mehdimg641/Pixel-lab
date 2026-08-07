@@ -33,6 +33,7 @@ import ir.pixellab.core.editor.Editor
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.editor.SheetContent
 import ir.pixellab.core.model.Color
+import ir.pixellab.core.model.Curve
 import ir.pixellab.core.model.Fill
 import ir.pixellab.core.render.ParameterSpec
 import ir.pixellab.core.render.ParameterValue
@@ -143,9 +144,30 @@ fun EffectControls(
                     )
                 }
 
-                // The curve editor is a control of its own and lands with the bevel LUTs; showing a
-                // dead placeholder would be worse than showing what it is.
-                is ParameterSpec.CurveEditor -> PendingRow(spec.label)
+                // Five parameters arrive here — the two shadow contours, the bevel profile, the
+                // gloss contour and the transition falloff — and every one of them has been
+                // implemented in the renderer, stored in the model and round-tripped through the
+                // project format the whole time. What was missing was this branch, which printed
+                // «به‌زودی» over a feature that already worked.
+                //
+                // The comment that used to sit here said the editor "lands with the bevel LUTs".
+                // The bevel LUTs landed. Nothing else had to.
+                is ParameterSpec.CurveEditor -> {
+                    Text(
+                        spec.label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Ink.TextMuted,
+                        modifier = Modifier.padding(start = 16.dp, top = 10.dp),
+                    )
+                    CurveEditor(
+                        curve = (value as? ParameterValue.Shape)?.value ?: Curve(),
+                        // `false` — the same live-write every other control here uses. A contour is
+                        // adjusted while watching the shadow it shapes, so a curve that only
+                        // committed on release would be set blind.
+                        onChange = { write(ParameterValue.Shape(it), false) },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    )
+                }
             }
         }
     }
@@ -235,16 +257,6 @@ private fun SwatchRow(label: String, color: Color, onChange: (Color) -> Unit) {
     }
 }
 
-@Composable
-private fun PendingRow(label: String) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = Ink.TextMuted)
-        Text("به‌زودی", style = MaterialTheme.typography.labelMedium, color = Ink.TextMuted)
-    }
-}
 
 /** Divider used between sections of a sheet. */
 @Composable
