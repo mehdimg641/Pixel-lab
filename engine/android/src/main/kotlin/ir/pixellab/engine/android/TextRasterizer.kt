@@ -142,11 +142,25 @@ class TextRasterizer(private val loader: TypefaceLoader = TypefaceLoader()) {
         // Ranges the user styled differently, moved onto the shaped string — tatweel elongation
         // inserts characters, and without the remap the colours would land on the wrong letters the
         // moment the kashida slider is touched.
-        val runs = StyleRuns.remap(spec.runs, spec.text, shaped)
-        val pieces = if (runs.isEmpty()) {
-            emptyList()
+        // Laid out horizontally first even when the layer is vertical, because that is where the
+        // shaping happens and the rotated mode's whole point is that it shapes before it turns.
+        // Nothing here runs for a horizontal layer.
+        val vertical = if (spec.paragraph.writingMode.isVertical) {
+            VerticalText.layout(
+                paint,
+                lines,
+                spec.paragraph.writingMode,
+                VerticalText.advance(paint, spec.paragraph.lineHeight),
+            )
         } else {
-            buildPieces(paint, typeface, spec, shaped, lines, runs, baseRtl, spec.path)
+            null
+        }
+
+        val runs = StyleRuns.remap(spec.runs, spec.text, shaped)
+        val pieces = when {
+            runs.isEmpty() -> emptyList()
+            vertical != null -> verticalPieces(paint, typeface, spec, shaped, lines, runs, baseRtl, vertical)
+            else -> buildPieces(paint, typeface, spec, shaped, lines, runs, baseRtl, spec.path)
         }
 
         // **Where the ranges only change paint, the outline is built exactly as it always was**,
@@ -162,10 +176,10 @@ class TextRasterizer(private val loader: TypefaceLoader = TypefaceLoader()) {
         // line genuinely is laid out differently — a silhouette drawn at the base size while the
         // paint sits at the new one would show a word wearing the wrong shape.
         val relaidOut = pieces.any { it.style.changesMetrics }
-        val straight = if (relaidOut) {
-            Path().apply { for (piece in pieces) addPath(piece.outline) }
-        } else {
-            buildOutline(paint, lines, spec.path)
+        val straight = when {
+            relaidOut -> Path().apply { for (piece in pieces) addPath(piece.outline) }
+            vertical != null -> vertical.outline
+            else -> buildOutline(paint, lines, spec.path)
         }
         // Warp is applied to the shaped *outline*, not to the baseline before it. Bending the
         // baseline leaves each letter upright and gives the row-of-flags result every naive
@@ -183,7 +197,11 @@ class TextRasterizer(private val loader: TypefaceLoader = TypefaceLoader()) {
         // behind arched text arches with it rather than staying a straight rectangle behind curved
         // words — which is what building it from the final bounds would give.
         val panel = spec.background?.let { background ->
-            val straightPanel = buildBackground(background, lines, paint)
+            val straightPanel = if (vertical != null) {
+                verticalBackground(background, vertical)
+            } else {
+                buildBackground(background, lines, paint)
+            }
             if (box != null) warp(straightPanel, spec.warp, box) else straightPanel
         }
 
@@ -212,6 +230,123 @@ class TextRasterizer(private val loader: TypefaceLoader = TypefaceLoader()) {
      * consecutive lines get panels of the same height whether or not either happens to contain a
      * descender. Sizing to the ink is the obvious alternative and it makes a stack of panels ripple.
      */
+    /**
+     * Styled stretches of a vertical layer.
+     *
+     * Two shapes of answer, because the two vertical modes are two different things.
+     *
+     * The **rotated** mode is a rigid motion, so the pieces are the ordinary horizontal pieces —
+     * bidi reordering, banding, re-laid-out sizes and all — put through the same matrix as the line
+     * they came from. Reimplementing any of that for the vertical case would be a second copy of
+     * the hardest code in this file, kept in sync by hope.
+     *
+     * The **stacked** mode has no matrix, so its pieces come from the same placement list the whole
+     * outline came from. That is the same guarantee the horizontal path has — one source of
+     * positions, so a range cannot land anywhere but on the letters it names — kept inside the
+     * mode rather than borrowed from it.
+     *
+     * A text-on-a-path guide is deliberately ignored here. A guide already decides which way the
+     * line runs, so "vertical, but also following this curve" names two different directions for
+     * the same line; the writing mode wins because it is the one the user just changed.
+     */
+    private fun verticalPieces(
+        paint: Paint,
+        typeface: Typeface,
+        spec: TextSpec,
+        shaped: String,
+        lines: List<TextLine>,
+        runs: List<StyleRun>,
+        baseRtl: Boolean,
+        vertical: VerticalText.Vertical,
+    ): List<StyledPiece> {
+        if (spec.paragraph.writingMode == ir.pixellab.core.model.WritingMode.VERTICAL_STACKED) {
+            val out = ArrayList<StyledPiece>()
+            for (line in lines) {
+                if (line.text.isEmpty()) continue
+                val segments =
+                    StyleRuns.segmentsIn(shaped, runs, line.start, line.start + line.text.length)
+                for (segment in segments) {
+                    val style = segment.style
+                    val own = Paint(paint).apply {
+                        this.typeface = typeface
+                        textSize = spec.size * style.sizeScale
+                        letterSpacing = style.letterSpacing ?: spec.paragraph.letterSpacing
+                    }
+                    // `segmentsIn` reports offsets within the line; the placements carry absolute
+                    // offsets into the shaped string, so the line's own start has to be added back.
+                    val start = line.start + segment.start
+                    val end = line.start + segment.end
+                    val outline = VerticalText.outlineOfRange(
+                        own,
+                        vertical.placements,
+                        start,
+                        end,
+                        // A lift is along the column here rather than across it, because the column
+                        // is the direction the text runs. Subtracted for the same reason as in the
+                        // horizontal case: y grows downwards.
+                        shift = -style.baselineShift * spec.size,
+                    )
+                    if (outline.isEmpty) continue
+                    out += StyledPiece(start = start, end = end, style = style, outline = outline)
+                }
+            }
+            return out
+        }
+
+        val flat = buildPieces(paint, typeface, spec, shaped, lines, runs, baseRtl, path = null)
+        return flat.map { piece ->
+            val index = lines.indexOfLast { it.start <= piece.start }.coerceAtLeast(0)
+            val matrix = vertical.perLine.getOrNull(index) ?: return@map piece
+            piece.copy(outline = Path(piece.outline).apply { transform(matrix) })
+        }
+    }
+
+    /**
+     * The panel behind a vertical layer, built from the columns rather than from the lines.
+     *
+     * A column's box is not a rotated line box: it is as wide as the column advance and as long as
+     * the column's content, which is what [VerticalText] hands back precisely so this does not have
+     * to reconstruct it from a matrix. The padding still reads as the user set it — `paddingX`
+     * across the column, `paddingY` along it — because that is what the two sliders are labelled,
+     * and swapping them under a rotation would make the panel controls do the opposite of what they
+     * say the moment a layer is turned.
+     */
+    private fun verticalBackground(
+        background: ir.pixellab.core.model.TextBackground,
+        vertical: VerticalText.Vertical,
+    ): Path {
+        val path = Path()
+        val radius = background.cornerRadius
+        val boxes = if (background.perLine) {
+            vertical.columns
+        } else {
+            if (vertical.columns.isEmpty()) return path
+            listOf(
+                RectF(
+                    vertical.columns.minOf { it.left },
+                    vertical.columns.minOf { it.top },
+                    vertical.columns.maxOf { it.right },
+                    vertical.columns.maxOf { it.bottom },
+                ),
+            )
+        }
+        for (box in boxes) {
+            path.addRoundRect(
+                RectF(
+                    box.left - background.paddingX,
+                    box.top - background.paddingY,
+                    box.right + background.paddingX,
+                    box.bottom + background.paddingY,
+                ),
+                radius,
+                radius,
+                Path.Direction.CW,
+            )
+        }
+        path.fillType = Path.FillType.WINDING
+        return path
+    }
+
     private fun buildBackground(
         background: ir.pixellab.core.model.TextBackground,
         lines: List<TextLine>,

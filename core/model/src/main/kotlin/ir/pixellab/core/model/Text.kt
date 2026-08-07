@@ -65,10 +65,58 @@ enum class TextDirection {
 @Serializable
 enum class KashidaMode { NONE, VARIABLE_AXIS, TATWEEL, AUTO }
 
+/**
+ * Which way a line runs.
+ *
+ * Two vertical modes rather than one, because "vertical Persian" is two different things and an
+ * editor that offers only one of them gets the other wrong.
+ *
+ * The distinction is joining. Arabic letters take their shape from the neighbours *beside* them, so
+ * the moment a letter is placed below its neighbour instead of next to it, the join has nowhere to
+ * go — every editor that stacks Persian produces isolated forms, and it looks like a mistake unless
+ * it was the mistake you wanted. So the two cases are named and separated rather than blended into
+ * one "vertical" switch that silently does the wrong one.
+ */
+@Serializable
+enum class WritingMode {
+    /** Lines run horizontally, stacked downward. Everything this app did before vertical existed. */
+    HORIZONTAL,
+
+    /**
+     * The line is shaped horizontally and then turned a quarter turn, so it reads downward.
+     *
+     * **Joining survives**, because the shaping happened before the rotation — the letters are
+     * connected in the geometry and the rotation moves the connections with them. This is what a
+     * Persian spine, a vertical banner, or a rotated caption actually wants, and it is the mode to
+     * reach for by default.
+     */
+    VERTICAL_ROTATED,
+
+    /**
+     * Each grapheme cluster sits upright, below the one before it.
+     *
+     * **Joining cannot survive this** and the letters come out in their isolated forms. That is not
+     * a limitation being apologised for — it is the look, and it is the one Persian shop signage
+     * and title lettering uses deliberately. Naming it separately is what keeps somebody from
+     * choosing it by accident and concluding the shaper is broken.
+     */
+    VERTICAL_STACKED,
+    ;
+
+    val isVertical: Boolean get() = this != HORIZONTAL
+}
+
 @Serializable
 data class ParagraphStyle(
     val align: TextAlign = TextAlign.START,
     val direction: TextDirection = TextDirection.AUTO,
+    /**
+     * Which way the line runs.
+     *
+     * Defaulted to [WritingMode.HORIZONTAL] and read in exactly one place, so a document that never
+     * touches it takes the byte-for-byte path it took before this field existed.
+     */
+    val writingMode: WritingMode = WritingMode.HORIZONTAL,
     /** Multiplier on the font's default line height. */
     val lineHeight: Float = 1.2f,
     /** Extra space between characters, in em units. */

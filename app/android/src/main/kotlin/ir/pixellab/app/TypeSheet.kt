@@ -11,9 +11,11 @@ import androidx.compose.material.icons.automirrored.outlined.FormatAlignLeft
 import androidx.compose.material.icons.automirrored.outlined.FormatAlignRight
 import androidx.compose.material.icons.automirrored.outlined.FormatTextdirectionLToR
 import androidx.compose.material.icons.automirrored.outlined.FormatTextdirectionRToL
+import androidx.compose.material.icons.automirrored.outlined.RotateRight
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.FormatAlignCenter
 import androidx.compose.material.icons.outlined.FormatAlignJustify
+import androidx.compose.material.icons.outlined.ViewDay
 import androidx.compose.ui.graphics.vector.ImageVector
 import ir.pixellab.core.editor.EditorState
 import ir.pixellab.core.model.FontRef
@@ -22,6 +24,7 @@ import ir.pixellab.core.model.Layer
 import ir.pixellab.core.model.TextAlign
 import ir.pixellab.core.model.TextBoxMode
 import ir.pixellab.core.model.TextDirection
+import ir.pixellab.core.model.WritingMode
 import ir.pixellab.core.model.TextWarp
 import ir.pixellab.core.model.WarpStyle
 
@@ -201,6 +204,21 @@ internal fun AlignmentControls(layer: Layer.Text, model: EditorViewModel) {
     // strong character, or the punctuation lands on the wrong end.
     SheetHint("خودکار جهت هر بند را از اولین حرف قوی می‌گیرد — درست برای متن فارسی و لاتین باهم")
 
+    // Two vertical modes rather than one switch, because "vertical Persian" is two different
+    // things — see `WritingMode`. The hint names the difference in the one word that decides it.
+    SheetChips {
+        for (mode in WritingMode.entries) {
+            SheetIconChip(mode.icon, mode.persianLabel, chosen = paragraph.writingMode == mode) {
+                model.setParagraph(id, paragraph.copy(writingMode = mode))
+            }
+        }
+    }
+    if (paragraph.writingMode == WritingMode.VERTICAL_STACKED) {
+        SheetHint("در حالت چیده، حرف‌ها جدا از هم می‌نشینند — همان شکلی که تابلوهای فارسی دارند")
+    } else if (paragraph.writingMode == WritingMode.VERTICAL_ROTATED) {
+        SheetHint("در حالت چرخیده، حرف‌ها به هم چسبیده می‌مانند — مناسب عطف کتاب و بنر عمودی")
+    }
+
     // A multiplier, not a point size: line height set in points has to be reset every time the type
     // size changes, and nobody remembers to.
     SheetSlider("ارتفاع خط", paragraph.lineHeight, MIN_LEADING..MAX_LEADING, onChange = { value, _ ->
@@ -303,6 +321,13 @@ private val TextDirection.persianLabel: String
         TextDirection.LTR -> "چپ به راست"
     }
 
+private val WritingMode.persianLabel: String
+    get() = when (this) {
+        WritingMode.HORIZONTAL -> "افقی"
+        WritingMode.VERTICAL_ROTATED -> "عمودی چرخیده"
+        WritingMode.VERTICAL_STACKED -> "عمودی چیده"
+    }
+
 private val KashidaMode.persianLabel: String
     get() = when (this) {
         KashidaMode.NONE -> "بدون"
@@ -347,6 +372,20 @@ private val TextAlign.icon: ImageVector
         TextAlign.CENTER -> Icons.Outlined.FormatAlignCenter
         TextAlign.END -> Icons.AutoMirrored.Outlined.FormatAlignLeft
         TextAlign.JUSTIFY -> Icons.Outlined.FormatAlignJustify
+    }
+
+/**
+ * A picture each, and the two vertical ones have to differ from each other.
+ *
+ * Rotation gets the rotate glyph and stacking gets the column of characters, because the difference
+ * between the two modes is exactly whether the letters turned or stayed upright — an icon pair that
+ * both just said "vertical" would leave the user to discover which is which by trying them.
+ */
+private val WritingMode.icon: ImageVector
+    get() = when (this) {
+        WritingMode.HORIZONTAL -> Icons.AutoMirrored.Outlined.FormatTextdirectionRToL
+        WritingMode.VERTICAL_ROTATED -> Icons.AutoMirrored.Outlined.RotateRight
+        WritingMode.VERTICAL_STACKED -> Icons.Outlined.ViewDay
     }
 
 private val TextDirection.icon: ImageVector
