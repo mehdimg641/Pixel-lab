@@ -451,7 +451,7 @@ object PsdReader {
         // The composite stores every channel's row counts up front, then every channel's data —
         // not interleaved. Decoding channel by channel with a shared cursor would read the second
         // channel's rows out of the first channel's table.
-        val counts = if (compression == PsdCompression.RLE) readRowCounts(reader, height * channels, false) else null
+        val counts = if (compression == PsdCompression.RLE) PackBits.rowCounts(reader, height * channels) else null
 
         val out = ArrayList<PsdChannelData>(channels)
         for (index in 0 until channels) {
@@ -459,7 +459,7 @@ object PsdReader {
                 PsdCompression.RAW -> reader.bytes(width * height * (depth / 8))
                 PsdCompression.RLE -> {
                     val rows = counts ?: return out
-                    decodeRle(reader, rows, index * height, height, width * (depth / 8))
+                    PackBits.decode(reader, rows, index * height, height, width * (depth / 8))
                 }
                 else -> {
                     warnings += "composite uses ${compression.name}, which is read per layer only"
@@ -483,8 +483,8 @@ object PsdReader {
         return when (compression) {
             PsdCompression.RAW -> reader.bytes(bytesPerRow * height)
             PsdCompression.RLE -> {
-                val counts = readRowCounts(reader, height, false)
-                decodeRle(reader, counts, 0, height, bytesPerRow)
+                val counts = PackBits.rowCounts(reader, height)
+                PackBits.decode(reader, counts, 0, height, bytesPerRow)
             }
             PsdCompression.ZIP -> inflate(reader.bytes(reader.remaining), bytesPerRow * height)
             PsdCompression.ZIP_PREDICTED -> {
@@ -497,51 +497,6 @@ object PsdReader {
         }
     }
 
-    /** @param large PSB widens the per-row byte counts from 16 to 32 bits. */
-    private fun readRowCounts(reader: ByteReader, rows: Int, large: Boolean): IntArray =
-        IntArray(rows) { if (large) reader.i32() else reader.u16() }
-
-    /**
-     * PackBits: a signed run header, then either that many literal bytes or one byte repeated.
-     *
-     * The row lengths are read from the table rather than trusting the run headers to land exactly
-     * on the row end. Real files contain rows whose runs overshoot by a byte, and following the
-     * runs alone shifts every subsequent row — the classic diagonal-tear artefact.
-     */
-    private fun decodeRle(
-        reader: ByteReader,
-        counts: IntArray,
-        firstRow: Int,
-        rows: Int,
-        bytesPerRow: Int,
-    ): ByteArray {
-        val out = ByteArray(bytesPerRow * rows)
-        var offset = 0
-        for (row in 0 until rows) {
-            val end = reader.position + counts[firstRow + row]
-            val rowEnd = offset + bytesPerRow
-            while (reader.position < end && offset < rowEnd) {
-                val header = reader.i8()
-                when {
-                    header >= 0 -> {
-                        val count = (header + 1).coerceAtMost(rowEnd - offset)
-                        repeat(count) { out[offset++] = reader.i8().toByte() }
-                    }
-                    header > -128 -> {
-                        val value = reader.i8().toByte()
-                        val count = (1 - header).coerceAtMost(rowEnd - offset)
-                        repeat(count) { out[offset++] = value }
-                    }
-                    // -128 is a no-op the specification reserves; treating it as a run would
-                    // consume a byte that belongs to the next header.
-                    else -> Unit
-                }
-            }
-            reader.position = end
-            offset = rowEnd
-        }
-        return out
-    }
 
     private fun inflate(compressed: ByteArray, expected: Int): ByteArray? = try {
         val out = ByteArray(expected)

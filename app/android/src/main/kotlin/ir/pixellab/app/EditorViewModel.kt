@@ -395,6 +395,101 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         paint.preset = paint.preset.copy(tip = ir.pixellab.core.paint.BrushTip.Sampled(id))
     }
 
+    /**
+     * The tips found in the user's `brushes/` folder, once [loadImportedTips] has looked.
+     *
+     * Empty until then and empty on a device with no folder, which is the ordinary case — the
+     * generated tips are what most work uses and nothing here is required for the brush to paint.
+     */
+    var importedTips: List<ImportedTip> by mutableStateOf(emptyList())
+        private set
+
+    var importingTips: Boolean by mutableStateOf(false)
+        private set
+
+    /**
+     * Reads `brushes/` and registers what it finds.
+     *
+     * ### The defect this closes
+     *
+     * `AssetKind.BRUSHES` has advertised `png` and `abr` since it was written, and **nothing read
+     * either**. A user who dropped a brush pack into that folder — which the settings screen names
+     * and creates for them — got no tips and no error, because no code path existed to produce
+     * either. It is the same shape as the four bundled fonts that shipped in every APK unread: the
+     * list says yes and the code says nothing.
+     *
+     * ### Why here rather than in `startup`
+     *
+     * A brush pack is a file the user copies in from *outside* the app, so there is no event to
+     * react to and no correct moment to scan except when the panel offering them is being drawn.
+     * That is the reasoning `DimensionalSheet` already applies to environment maps, and it is worth
+     * following rather than adding a second convention.
+     *
+     * Off the main thread and idempotent: the ids are derived from the file name and the index, so
+     * a second scan re-registers the same assets rather than filling the store with copies, and a
+     * preset saved in a document still finds its tip when the document is reopened.
+     */
+    suspend fun loadImportedTips() {
+        if (importingTips) return
+        importingTips = true
+        try {
+            val application = getApplication<Application>()
+            val found = withContext(Dispatchers.IO) {
+                val files = AssetLibrary.scan(application)
+                    .firstOrNull { it.kind == AssetKind.BRUSHES }?.files.orEmpty()
+                files.flatMap { file ->
+                    // One unreadable pack costs that pack. These files come off the internet in
+                    // bulk and a truncated download is ordinary; failing the whole scan over one
+                    // would hide the ninety-nine that are fine.
+                    runCatching { tipsIn(file) }.getOrDefault(emptyList())
+                }
+            }
+            for (tip in found) {
+                if (assetStore.source.load(tip.asset) == null) assetStore.put(tip.asset, tip.image)
+            }
+            importedTips = found.map { ImportedTip(it.asset, it.name) }
+        } finally {
+            importingTips = false
+        }
+    }
+
+    /** A decoded tip on its way to the store: the asset it will live under, and the pixels. */
+    private class LoadedTip(
+        val asset: ir.pixellab.core.model.AssetId,
+        val name: String,
+        val image: ir.pixellab.core.codec.RasterImage,
+    )
+
+    private fun tipsIn(file: java.io.File): List<LoadedTip> {
+        val stem = file.nameWithoutExtension
+        return if (file.extension.equals("abr", ignoreCase = true)) {
+            ir.pixellab.core.codec.AbrCodec.decode(file.readBytes()).mapIndexed { index, brush ->
+                LoadedTip(
+                    asset = ir.pixellab.core.model.AssetId("abr:$stem:$index"),
+                    name = brush.name,
+                    image = brush.toCoverageImage(),
+                )
+            }
+        } else {
+            // A plain image is a tip too, and the folder has always said so. Read as coverage: the
+            // greyscale becomes alpha and the colour is discarded, which is what the folder's own
+            // description promises the user.
+            val image = ir.pixellab.core.codec.Codecs.decode(file.readBytes())
+            listOf(
+                LoadedTip(
+                    asset = ir.pixellab.core.model.AssetId("tip-file:$stem"),
+                    name = stem,
+                    image = image.asCoverage(),
+                ),
+            )
+        }
+    }
+
+    /** Switches the brush onto one of the tips found in the folder. */
+    fun useImportedTip(asset: ir.pixellab.core.model.AssetId) {
+        paint.preset = paint.preset.copy(tip = ir.pixellab.core.paint.BrushTip.Sampled(asset))
+    }
+
     /** The same for a pattern tile, returning the asset a `Fill.Pattern` should point at. */
     fun registerPattern(kind: ir.pixellab.core.imaging.Procedural.Pattern): ir.pixellab.core.model.AssetId {
         val id = ir.pixellab.core.model.AssetId("pattern-${kind.name.lowercase()}")

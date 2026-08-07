@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,8 +76,34 @@ fun TipPicker(model: EditorViewModel, modifier: Modifier = Modifier) {
                     onClick = { model.useGeneratedTip(kind) },
                 )
             }
+            // Whatever the user put in `brushes/`, after the generated ones rather than before:
+            // the generated tips are exact at any size and are what most work uses, and a folder
+            // holding two hundred imported tips should not push them off the left of the row.
+            for (tip in model.importedTips) {
+                val swatch = remember(tip.asset) {
+                    model.assetStore.source.load(tip.asset)?.let(::storedBitmap)
+                } ?: continue
+                Swatch(
+                    bitmap = swatch,
+                    label = tip.name,
+                    chosen = chosen == tip.asset,
+                    onClick = { model.useImportedTip(tip.asset) },
+                )
+            }
         }
-        SheetHint("نوک‌ها ساخته می‌شوند، نه از فایل — پس در هر اندازه‌ای دقیق‌اند و جایی اشغال نمی‌کنند")
+        // Scanned when the panel is drawn, because a brush pack arrives from outside the app and
+        // there is no event to react to. Same reasoning `DimensionalSheet` applies to environments.
+        LaunchedEffect(Unit) { model.loadImportedTips() }
+
+        SheetHint(
+            when {
+                model.importingTips -> "در حال خواندن پوشهٔ قلم‌مو…"
+                model.importedTips.isEmpty() ->
+                    "نوک‌ها ساخته می‌شوند، نه از فایل — در هر اندازه‌ای دقیق‌اند. " +
+                        "برای افزودن، فایل ABR یا PNG را در پوشهٔ brushes بریزید"
+                else -> "${model.importedTips.size} نوک از پوشهٔ brushes خوانده شد"
+            },
+        )
     }
 }
 
@@ -158,6 +185,62 @@ private fun coverageBitmap(raster: Raster): ImageBitmap {
         .createBitmap(pixels, raster.width, raster.height, android.graphics.Bitmap.Config.ARGB_8888)
         .asImageBitmap()
 }
+
+/**
+ * The same swatch, for a tip that is already in the store rather than generated on the spot.
+ *
+ * An imported tip is stored exactly as a generated one is — white with the coverage in alpha — so
+ * this is a straight handover of the pixels. Re-deriving coverage here would give the picker a
+ * second opinion about what the tip looks like, and the swatch's whole job is to be the same
+ * opinion the stroke will have.
+ */
+private fun storedBitmap(image: RasterImage): ImageBitmap =
+    android.graphics.Bitmap
+        .createBitmap(image.pixels, image.width, image.height, android.graphics.Bitmap.Config.ARGB_8888)
+        .asImageBitmap()
+
+/** A tip found in the user's folder: what to draw with, and what to call it. */
+data class ImportedTip(val asset: AssetId, val name: String)
+
+/**
+ * A brush file's coverage mask as an image the asset store can hold.
+ *
+ * White with the mask in alpha, matching [Raster.toCoverageImage] exactly — the rasteriser reads
+ * alpha and ignores the colour, so a mask stored as grey would paint at the right shape and the
+ * wrong strength. The two conversions produce the same thing on purpose: a tip out of an `.abr` and
+ * a generated one have to be interchangeable, or the picker offers two kinds of swatch that behave
+ * differently.
+ */
+fun ir.pixellab.core.codec.AbrBrush.toCoverageImage(): RasterImage = RasterImage(
+    width = width,
+    height = height,
+    pixels = IntArray(width * height) { i ->
+        ((mask[i].toInt() and 0xFF) shl 24) or 0x00FFFFFF
+    },
+)
+
+/**
+ * A decoded picture read as coverage.
+ *
+ * Luminance rather than the alpha channel, because a brush tip saved as a PNG is almost always
+ * black on white with no transparency at all — reading its alpha would make every such file a
+ * fully opaque square. Where the file *does* carry alpha it is multiplied in, so a tip cut out on
+ * transparency still works.
+ */
+fun RasterImage.asCoverage(): RasterImage = RasterImage(
+    width = width,
+    height = height,
+    pixels = IntArray(width * height) { i ->
+        val argb = pixels[i]
+        val red = (argb shr 16) and 0xFF
+        val green = (argb shr 8) and 0xFF
+        val blue = argb and 0xFF
+        // Rec. 601 luma, and inverted: ink is dark in the file and opaque in the tip.
+        val luma = (red * 77 + green * 151 + blue * 28) shr 8
+        val alpha = (255 - luma) * ((argb ushr 24) and 0xFF) / 255
+        (alpha shl 24) or 0x00FFFFFF
+    },
+)
 
 /** The same conversion for the asset store, which stores images rather than coverage. */
 fun Raster.toCoverageImage(): RasterImage = RasterImage(
