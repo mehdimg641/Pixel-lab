@@ -170,11 +170,12 @@ fun PanelBody(
  */
 @Composable
 private fun LayersTab(state: EditorState, model: EditorViewModel) {
-    // **Not** wrapped in `verticalScroll`. `LayerPanel` ends in a `LazyColumn`, and a lazy list
-    // inside a scrolling column is measured with an infinite height — Compose throws rather than
-    // guessing. The header and the chips are fixed; the stack is the part that scrolls, which is
-    // also the right behaviour: the order buttons should not scroll away from the list they order.
-    Column(Modifier.fillMaxWidth()) {
+    // One scroller for the whole tab, which it could not have while `LayerPanel` ended in a
+    // `LazyColumn` — a lazy list inside a scrolling column is measured with an infinite height and
+    // Compose throws. The panel is 208dp in Console, and the fixed part above the stack is taller
+    // than that, so "only the stack scrolls" meant the stack was clipped to nothing. It is a plain
+    // column now and everything here scrolls together.
+    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -204,6 +205,16 @@ private fun LayersTab(state: EditorState, model: EditorViewModel) {
             }
         }
 
+        // **The stack, then the verbs.** This had it the other way round — four rows of buttons and
+        // bars above the first layer — and in a 208dp Console panel that meant a tab called
+        // «لایه‌ها» in which no layer was visible without scrolling. Photoshop has put the list at
+        // the top of this panel and the verbs along its foot since 3.0, and the reason is the one
+        // above: the panel is named after the list, so the list is what it opens on.
+        LayerStack(state, model)
+
+        LayerStructureBar(state, model)
+        LayerOrderBar(state, model)
+
         // «چیدمان» and «راهنما» ride here rather than in a ribbon: both act on the stack, and the
         // brief has exactly one place for things that act on the stack.
         SheetChips {
@@ -211,8 +222,6 @@ private fun LayersTab(state: EditorState, model: EditorViewModel) {
             SheetChip("راهنما") { model.act { openSheet(SheetContent.Guides, SheetDetent.HALF) } }
             SheetChip("بوم") { model.act { openSheet(SheetContent.CanvasTools, SheetDetent.HALF) } }
         }
-
-        LayerPanel(state, model)
     }
 }
 

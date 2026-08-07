@@ -246,6 +246,14 @@ class ScreenshotTest {
         //
         // One composition, swapped eight times, because `setContent` may only be called once per
         // test — which is worth stating, since the obvious loop around `page` throws.
+        //
+        // **The real screen, not an arrangement of its bars.** This used to compose `TopBar`,
+        // `Ribbon` and `MainDock` into a column by hand, which meant it went on passing after the
+        // editor stopped being built that way: the pictures showed a layout the application no
+        // longer had. A screenshot test that draws its own approximation of the screen is testing
+        // the test. `EditorScreen` is what ships, so `EditorScreen` is what is photographed — and it
+        // is the only way the four directions' *structures* — Console's menu bar and its rail and
+        // inspector columns, Iris's dials on the glass, Ember's plain docked panel — appear at all.
         val model = EditorViewModel(ApplicationProvider.getApplicationContext())
             .also { it.autoSave.stop() }
         model.act { select(state.document.layers.first().id) }
@@ -257,27 +265,7 @@ class ScreenshotTest {
             val (skin, dark) = frames[frame]
             PixelLabTheme(skin = skin, dark = dark) {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                    Column(
-                        Modifier.fillMaxSize().background(Ink.Surround),
-                        verticalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        TopBar(state = model.state, model = model, onHome = {})
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            SelectionCard(model.state, model, onEditText = {})
-                            Ribbon(
-                                dock = Dock.PHOTO,
-                                state = model.state,
-                                model = model,
-                                onPickImage = {},
-                                onAddText = {},
-                                onEditText = {},
-                                onExport = {},
-                                onSave = {},
-                                onOpen = {},
-                            )
-                            MainDock(Dock.PHOTO, model.state, model) {}
-                        }
-                    }
+                    Box(Modifier.fillMaxSize()) { EditorScreen(model = model) }
                 }
             }
         }

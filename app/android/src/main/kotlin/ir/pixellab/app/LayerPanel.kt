@@ -13,8 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -36,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,10 +63,36 @@ import ir.pixellab.core.model.VectorMask
 @Composable
 fun LayerPanel(state: EditorState, model: EditorViewModel) {
     Column(Modifier.fillMaxWidth()) {
-        StructureBar(state, model)
-        OrderBar(state, model)
-        LazyColumn(Modifier.fillMaxWidth()) {
-            items(flatten(state.document.layers), key = { it.layer.id.value }) { row ->
+        LayerStructureBar(state, model)
+        LayerOrderBar(state, model)
+        LayerStack(state, model)
+    }
+}
+
+/**
+ * The rows alone, so a host can decide what goes above and below them.
+ *
+ * The work panel puts the stack *first* and the verbs under it, which is where Photoshop has had
+ * them since 3.0 and is right for the same reason: a panel called «لایه‌ها» whose first four rows
+ * are buttons shows you no layers at all until you scroll, and at 208dp in Console it showed none
+ * at any point. A sheet has the room to lead with its controls; a docked panel does not.
+ */
+@Composable
+internal fun LayerStack(state: EditorState, model: EditorViewModel) {
+    Column(Modifier.fillMaxWidth()) {
+        // **A plain column, not a `LazyColumn`.**
+        //
+        // Virtualisation buys nothing here and costs the ability to put this panel anywhere: a lazy
+        // list may not sit inside a scrolling parent — Compose measures it with an infinite height
+        // and throws — so as long as this was lazy, the two bars above it could never scroll with
+        // it. In a 208dp Console panel that meant the bars filled the panel and the stack was
+        // clipped to nothing.
+        //
+        // `flatten` already builds every row eagerly, so nothing was being skipped anyway; the only
+        // thing that was lazy was the *composition* of rows past the fold, on a list whose realistic
+        // length is under fifty. The host decides where the scrolling happens now.
+        for (row in flatten(state.document.layers)) {
+            key(row.layer.id.value) {
                 LayerRow(row, selected = row.layer.id in state.selection, state = state, model = model)
             }
         }
@@ -101,7 +126,7 @@ private fun flatten(layers: List<Layer>, depth: Int = 0): List<PanelRow> =
  * is computed from the selection so a disabled button is a readable answer rather than a dead one.
  */
 @Composable
-private fun StructureBar(state: EditorState, model: EditorViewModel) {
+internal fun LayerStructureBar(state: EditorState, model: EditorViewModel) {
     val selected = state.selectedLayers
     val primary = state.selection.primary
     val topLevel = state.document.layers.map { it.id }.toSet()
@@ -176,7 +201,7 @@ private fun StructureBar(state: EditorState, model: EditorViewModel) {
  * unreliable. One press moving one place is slower to think about and never wrong.
  */
 @Composable
-private fun OrderBar(state: EditorState, model: EditorViewModel) {
+internal fun LayerOrderBar(state: EditorState, model: EditorViewModel) {
     val primary = state.selection.primary
     val layer = primary?.let { state.document.findLayer(it) }
     val target = primary?.let { groupBelow(state.document.layers, it) }

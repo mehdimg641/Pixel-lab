@@ -509,6 +509,22 @@ enum class ThemeSkin(
 
     /** The inset a floating panel keeps from the screen edge. Zero for the flat layouts. */
     val panelInset: Dp get() = if (layout == PanelLayout.FLOATING) 10.dp else 0.dp
+
+    /**
+     * The floor and ceiling on the work panel's height, in the brief's own numbers.
+     *
+     * [panelFraction] alone is not enough, and the failure runs both ways. Console asks for a third
+     * of the screen; on a tall phone a third is 280dp, which is a *taller* panel than Ember gets on
+     * a short one — so the direction that exists to be dense ends up the roomiest, purely because
+     * the user's phone is long. And on a small screen forty-two percent is 180dp, which is less than
+     * the layers tab needs before its list starts scrolling at three rows.
+     *
+     * A fraction says how the panel *shares* the screen; these say what it is *for*. Both are
+     * needed, so the fraction is clamped between them.
+     */
+    val panelMin: Dp get() = if (layout == PanelLayout.DENSE) 132.dp else 196.dp
+
+    val panelMax: Dp get() = if (layout == PanelLayout.DENSE) 208.dp else 340.dp
 }
 
 internal data class CornerSet(
